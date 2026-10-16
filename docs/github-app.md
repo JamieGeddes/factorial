@@ -62,7 +62,9 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    aws ssm put-parameter --name /factorial/github/installation-id --type String --value <installation id> --overwrite
    ```
 
-   Inside a harness session, `factorial-github-token` combines these with the private key secret to mint one-hour installation tokens, and git's credential helper uses it automatically for `github.com`.
+   Only the orchestrator's Lambda functions read these and the private key. They mint one-hour installation tokens scoped to the single target repository. The agent sandbox has no access to the key, the identifiers or any token.
+
+   Note that an installation token with `contents: write` can push to any branch of the repository, including `main`. On a private repository on the GitHub Free plan branch protection is unavailable, so the only safeguard is that the orchestrator pushes exclusively to `factorial/*` branches and the agent holds no token at all. Enable branch protection on `main` as soon as the plan allows it.
 
 ## 5. Verify the webhook
 

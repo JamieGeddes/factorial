@@ -86,7 +86,7 @@ jobs:
           set -euo pipefail
           # The tag is a hash of everything that goes into the image, so an
           # unchanged image is never rebuilt and a changed one always is.
-          tag=$(git rev-parse HEAD:agent-environment HEAD:packages/agent-tools HEAD:packages/github-app HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:agent-environment | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/agent-environment --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Agent image $tag already exists; skipping the build."

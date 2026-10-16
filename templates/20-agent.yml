@@ -137,18 +137,10 @@ Resources:
                 Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ModelApiKeySecretName}-*
-              # Used by factorial-github-token inside the session to mint
-              # short-lived GitHub App tokens for git and gh.
-              - Sid: GitHubAppCredentials
-                Effect: Allow
-                Action: secretsmanager:GetSecretValue
-                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/github/app-private-key-*
-              - Sid: GitHubAppParameters
-                Effect: Allow
-                Action:
-                  - ssm:GetParameter
-                  - ssm:GetParameters
-                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/github/*
+              # Deliberately no GitHub credentials: the agent never pushes or
+              # calls GitHub. The orchestrator clones before the agent runs and
+              # pushes after it finishes, with a short-lived, single-repository
+              # token that is never stored in the session.
               - Sid: LifecycleHook
                 Effect: Allow
                 Action: events:PutEvents
