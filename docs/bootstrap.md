@@ -9,7 +9,7 @@ The foundation stack (`templates/00-foundation.yml`) creates:
 | GitHub OIDC provider | Lets GitHub Actions obtain AWS credentials without stored keys. |
 | `factorial-deploy` role | Assumed only by Actions runs on `main` of this repository. Drives CloudFormation, publishes artefacts, and is the only principal that may move `live` aliases. It is explicitly denied from touching the foundation stack. |
 | `factorial-cloudformation` role | Assumed by CloudFormation to create resources in Factorial's stacks. Scoped to `factorial-*` resource names, and may only create IAM roles that carry the permissions boundary. |
-| `factorial-permissions-boundary` | Upper bound for every role Factorial creates. Denies deploying or promoting Factorial, mutating IAM, and touching the foundation. |
+| `factorial-permissions-boundary` | Upper bound for every role Factorial creates. An allowlist of the services Factorial uses at runtime, so IAM, CloudFormation changes and everything else are outside it by construction, plus explicit denies on promotion, deployment artefacts and the foundation itself. |
 | Artefact bucket | Packaged templates and Lambda bundles. |
 | `factorial/agent-environment` ECR repository | The agent harness container image. |
 
