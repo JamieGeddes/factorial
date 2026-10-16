@@ -1,0 +1,23 @@
+{
+  "name": "factorial",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Factorial: a self-building software factory on AWS AgentCore",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
+    "test": "npm test --workspaces --if-present",
+    "check:yml": "node --disable-warning=ExperimentalWarning scripts/check-yml-extension.ts",
+    "ci": "npm run typecheck && npm test && npm run check:yml"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.0",
+    "typescript": "^5.9.3"
+  }
+}

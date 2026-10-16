@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:workitem:v1",
+  "title": "WorkItem",
+  "description": "A single unit of work for Factorial. Every trigger adapter converts its input into exactly one WorkItem and places it on the Factorial event bus. This is Factorial's API: changing it is a deliberate, human-approved decision.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "id",
+    "source",
+    "repository",
+    "title",
+    "body",
+    "requestedBy",
+    "createdAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "id": {
+      "description": "Unique identifier for this WorkItem, assigned by the adapter that created it.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "source": {
+      "description": "Where the work came from. Enough to trace back to, and report against, the originating record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "url"],
+      "properties": {
+        "type": {
+          "description": "Trigger type in kebab-case, e.g. github-issue. New trigger types add a new value here without changing anything else in the contract.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
+        },
+        "id": {
+          "description": "Identifier of the originating record within its source system, e.g. the issue number.",
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "description": "Link to the originating record.",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "repository": {
+      "description": "The code repository the work applies to.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "owner", "name"],
+      "properties": {
+        "provider": {
+          "description": "Hosting provider. Only GitHub is supported in Stage 0.",
+          "type": "string",
+          "enum": ["github"]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 1
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "title": {
+      "description": "Short summary of the work.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "body": {
+      "description": "Full description of the work, in Markdown. May be empty.",
+      "type": "string",
+      "maxLength": 65536
+    },
+    "requestedBy": {
+      "description": "Identity of the requester as known to the source system, e.g. a GitHub login.",
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "description": "When the adapter created this WorkItem, as an RFC 3339 timestamp.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}

@@ -89,7 +89,7 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 
 ## Current stage
 
-**Stage 0: not started.** The `WorkItem` contract has not yet been defined.
+**Stage 0: in progress.** The `WorkItem` contract is defined in `contracts/workitem/v1/` (JSON Schema, with the event envelope and change process in `contracts/workitem/README.md`) and validated by the `@factorial/workitem` package. The repository scaffold and CI are in place. Nothing is deployed yet.
 
 ### Stage 0 scope
 
@@ -128,3 +128,5 @@ When a change completes or alters a stage, update **Current stage** in the same 
 - **Compute:** serverless resources are favoured over servers. Where a container is unavoidable, use Fargate, never EC2 instances.
 - **Security:** security is vital. The system must enforce suitable access controls at every level: IAM least privilege per role, no shared credentials, and agent roles that can never deploy or promote Factorial.
 - **Region:** Factorial and all its associated resources are deployed to `eu-west-1`.
+- **Repository layout:** `contracts/` holds versioned, language-neutral contracts (JSON Schema); `packages/` holds TypeScript workspaces; `templates/` holds CloudFormation; `scripts/` holds repository tooling; `.github/workflows/` holds CI and deployment. See `README.md`.
+- **Checks:** `npm run ci` runs typecheck, tests and the `.yml` extension check. CI runs the same on every push and PR.
