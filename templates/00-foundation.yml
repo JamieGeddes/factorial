@@ -293,6 +293,12 @@ Resources:
                 Effect: Allow
                 Action: iam:CreateServiceLinkedRole
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*
+              # Templates with Lambda functions use the Serverless transform,
+              # which CloudFormation expands under this role.
+              - Sid: ExpandServerlessTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
               - Sid: NeverRemoveABoundary
                 Effect: Deny
                 Action: iam:DeleteRolePermissionsBoundary
@@ -445,6 +451,10 @@ Resources:
                   - cloudformation:ListExports
                   - cloudformation:ValidateTemplate
                 Resource: '*'
+              - Sid: UseServerlessTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31
               - Sid: TheFoundationIsDeployedByHumans
                 Effect: Deny
                 Action: cloudformation:*
