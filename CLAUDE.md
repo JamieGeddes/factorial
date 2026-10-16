@@ -117,3 +117,7 @@ When a change completes or alters a stage, update **Current stage** in the same 
 - **Deployments:** all deployments run through GitHub Actions.
 - **Sandbox access:** agents in the inner loop may deploy to the sandbox environment and read its state directly to verify their work.
 - **Infrastructure as code:** Factorial's infrastructure is defined in CloudFormation templates written in YAML, using the `.yml` extension.
+- **Language:** all logic (agents, Lambdas, tooling) is implemented in TypeScript.
+- **Compute:** serverless resources are favoured over servers. Where a container is unavoidable, use Fargate, never EC2 instances.
+- **Security:** security is vital. The system must enforce suitable access controls at every level: IAM least privilege per role, no shared credentials, and agent roles that can never deploy or promote Factorial.
+- **Region:** Factorial and all its associated resources are deployed to `eu-west-1`.
