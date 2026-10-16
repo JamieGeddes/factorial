@@ -1,0 +1,10 @@
+# Local Claude Code settings (per-developer, may reference local AWS profiles)
+.claude/settings.local.json
+
+# Node
+node_modules/
+dist/
+coverage/
+
+# macOS
+.DS_Store
