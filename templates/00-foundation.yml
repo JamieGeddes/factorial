@@ -14,6 +14,18 @@ Parameters:
     Type: String
     Description: Name of the Factorial repository.
     AllowedPattern: '^[A-Za-z0-9._-]+$'
+  GitHubOwnerId:
+    Type: String
+    Description: >-
+      Numeric ID of the GitHub owner. GitHub issues OIDC tokens with an
+      immutable subject that embeds owner and repository IDs, so trust is bound
+      to this exact repository even if it is renamed or recreated.
+      Find it with: gh api repos/<owner>/<repo> --jq .owner.id
+    AllowedPattern: '^[0-9]+$'
+  GitHubRepositoryId:
+    Type: String
+    Description: 'Numeric ID of the repository. Find it with: gh api repos/<owner>/<repo> --jq .id'
+    AllowedPattern: '^[0-9]+$'
   DeployBranch:
     Type: String
     Default: main
@@ -413,7 +425,8 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/${DeployBranch}
+                # Immutable subject format: repo:<owner>@<ownerId>/<repo>@<repoId>:ref:<ref>
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/${DeployBranch}
       Policies:
         - PolicyName: factorial-deploy
           PolicyDocument:

@@ -27,17 +27,24 @@ The foundation stack (`templates/00-foundation.yml`) creates:
    cfn-lint
    ```
 
-2. Deploy the stack. Replace the owner and repository with the GitHub location of this codebase.
+2. Deploy the stack. GitHub issues OIDC tokens with an immutable subject that embeds the owner and repository IDs, so the deploy role's trust policy needs both the names and the IDs.
 
    ```sh
+   OWNER=<owner> REPO=<repository>
    aws cloudformation deploy \
      --stack-name factorial-foundation \
      --template-file templates/00-foundation.yml \
      --capabilities CAPABILITY_NAMED_IAM \
-     --parameter-overrides GitHubOwner=<owner> GitHubRepository=<repository> \
+     --parameter-overrides \
+       GitHubOwner="$OWNER" \
+       GitHubRepository="$REPO" \
+       GitHubOwnerId="$(gh api repos/$OWNER/$REPO --jq .owner.id)" \
+       GitHubRepositoryId="$(gh api repos/$OWNER/$REPO --jq .id)" \
      --tags Project=Factorial \
      --no-fail-on-empty-changeset
    ```
+
+   If a deploy run later fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, compare the subject GitHub is sending (`gh api repos/$OWNER/$REPO/actions/oidc/customization/sub`) with the trust policy on the `factorial-deploy` role.
 
 3. Give GitHub Actions the deploy role ARN. It contains the account ID, so it is a repository secret, never committed.
 

@@ -1,0 +1,107 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Factorial triggers: the work event bus and the GitHub issue adapter.
+  Deployed by GitHub Actions through the factorial-cloudformation role.
+
+Parameters:
+  TriggerLabel:
+    Type: String
+    Default: factorial
+    Description: Adding this label to a GitHub issue turns it into a WorkItem.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # The spine. Every trigger adapter puts WorkItem events here; the
+  # orchestration stack owns the single rule that starts work.
+  # ---------------------------------------------------------------------------
+  WorkBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: factorial-work
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # GitHub issue adapter.
+  # ---------------------------------------------------------------------------
+  # Generated here, never written by hand or committed. Its value is copied
+  # into the GitHub App's webhook settings; see docs/github-app.md.
+  WebhookSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: factorial/github/webhook-secret
+      Description: Shared secret GitHub uses to sign webhook deliveries to the Factorial issue adapter.
+      GenerateSecretString:
+        PasswordLength: 48
+        ExcludePunctuation: true
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  GitHubIssuesAdapterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-github-issues-adapter
+      RetentionInDays: !Ref LogRetentionDays
+
+  GitHubIssuesAdapter:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-github-issues-adapter
+      Description: Converts GitHub issue webhooks into WorkItem events on the Factorial bus.
+      CodeUri: ../packages/triggers-github-issues/dist/
+      Handler: index.handler
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 10
+      # Every deployment publishes a new version and moves the live alias.
+      # The function URL below is attached to the alias, not $LATEST.
+      AutoPublishAlias: live
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      LoggingConfig:
+        LogGroup: !Ref GitHubIssuesAdapterLogGroup
+      Environment:
+        Variables:
+          EVENT_BUS_NAME: !Ref WorkBus
+          WEBHOOK_SECRET_ARN: !Ref WebhookSecret
+          TRIGGER_LABEL: !Ref TriggerLabel
+          NODE_OPTIONS: --enable-source-maps
+      # Public endpoint by necessity (GitHub must reach it); every request is
+      # authenticated by HMAC signature in the handler before anything else.
+      FunctionUrlConfig:
+        AuthType: NONE
+      Policies:
+        - Statement:
+            - Sid: PutWorkItems
+              Effect: Allow
+              Action: events:PutEvents
+              Resource: !GetAtt WorkBus.Arn
+            - Sid: ReadWebhookSecret
+              Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref WebhookSecret
+      Tags:
+        Project: Factorial
+
+Outputs:
+  WorkBusName:
+    Value: !Ref WorkBus
+    Export:
+      Name: Factorial-WorkBusName
+  WorkBusArn:
+    Value: !GetAtt WorkBus.Arn
+    Export:
+      Name: Factorial-WorkBusArn
+  GitHubWebhookUrl:
+    Description: Webhook URL for the GitHub App.
+    Value: !GetAtt GitHubIssuesAdapterUrl.FunctionUrl
+  WebhookSecretArn:
+    Description: Secrets Manager ARN of the webhook secret to copy into the GitHub App.
+    Value: !Ref WebhookSecret

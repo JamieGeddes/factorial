@@ -25,13 +25,29 @@ env:
 jobs:
   deploy:
     name: Deploy Factorial stacks
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    # Deploy only from a successful CI run of a push to main in this repository
+    # (CI also runs for pull requests), or an on-demand run from main.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to full commit SHAs.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Build Lambda bundles
+        run: npm run build
 
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
@@ -66,17 +82,25 @@ jobs:
             echo "No deployable templates yet (only the human-deployed foundation exists)."
             exit 0
           fi
+          mkdir -p .packaged
           for template in "${templates[@]}"; do
             name=$(basename "$template" .yml)   # e.g. 10-triggers
             stack="factorial-${name#*-}"        # e.g. factorial-triggers
             echo "::group::Deploying $stack from $template"
+            # package uploads local artefacts (Lambda bundles) and rewrites
+            # their paths to S3 locations.
+            aws cloudformation package \
+              --template-file "$template" \
+              --s3-bucket "$BUCKET" \
+              --s3-prefix "artefacts/$stack" \
+              --output-template-file ".packaged/$name.yml"
             aws cloudformation deploy \
               --stack-name "$stack" \
-              --template-file "$template" \
+              --template-file ".packaged/$name.yml" \
               --role-arn "$CFN_ROLE" \
               --s3-bucket "$BUCKET" \
               --s3-prefix "templates/$stack" \
-              --capabilities CAPABILITY_NAMED_IAM \
+              --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
               --tags Project=Factorial \
               --no-fail-on-empty-changeset
             echo "::endgroup::"
