@@ -111,6 +111,55 @@ Resources:
               - iam:PassRole
               - sts:*
             Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:*
+          # Account-level IAM actions have no resource ARN, so the statement
+          # above cannot catch them. Deny them explicitly.
+          - Sid: DenyAccountLevelIamChanges
+            Effect: Deny
+            Action:
+              - iam:CreateAccountAlias
+              - iam:DeleteAccountAlias
+              - iam:UpdateAccountPasswordPolicy
+              - iam:DeleteAccountPasswordPolicy
+              - iam:SetSecurityTokenServicePreferences
+              - iam:CreateOpenIDConnectProvider
+              - iam:CreateSAMLProvider
+              - iam:UploadSigningCertificate
+              - iam:UploadServerCertificate
+              - iam:CreateVirtualMFADevice
+              - iam:DisableOrganizationsRootCredentialsManagement
+              - iam:DisableOrganizationsRootSessions
+              - iam:EnableOrganizationsRootCredentialsManagement
+              - iam:EnableOrganizationsRootSessions
+            Resource: '*'
+          # Deployment artefacts and the agent image are written only by the
+          # deploy role. A bounded role must never be able to substitute them.
+          - Sid: DenyWritingDeploymentArtefacts
+            Effect: Deny
+            Action:
+              - s3:Put*
+              - s3:Delete*
+              - s3:Create*
+              - s3:Restore*
+              - s3:Abort*
+              - s3:Replicate*
+            Resource:
+              - !GetAtt ArtefactBucket.Arn
+              - !Sub ${ArtefactBucket.Arn}/*
+          - Sid: DenyWritingAgentImages
+            Effect: Deny
+            Action:
+              - ecr:Put*
+              - ecr:Initiate*
+              - ecr:Upload*
+              - ecr:Complete*
+              - ecr:Delete*
+              - ecr:BatchDelete*
+              - ecr:Set*
+              - ecr:Start*
+              - ecr:Tag*
+              - ecr:Untag*
+              - ecr:Replicate*
+            Resource: !GetAtt AgentEnvironmentRepository.Arn
           # Bounded roles may only hand off to, or step into, other Factorial
           # roles, which carry this boundary themselves. Any account is allowed
           # so that the future sandbox-account roles work; the name prefix is
