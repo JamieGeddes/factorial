@@ -54,7 +54,15 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
 
 1. In the App's left nav click **Install App**, then **Install** next to your account.
 2. Choose **Only select repositories**, select the Factorial repository, and click **Install**.
-3. The URL you land on ends in the **installation ID**. Note it alongside the App ID.
+3. The URL you land on ends in the **installation ID**.
+4. Record both identifiers where the agent environment reads them:
+
+   ```sh
+   aws ssm put-parameter --name /factorial/github/app-id --type String --value <app id> --overwrite
+   aws ssm put-parameter --name /factorial/github/installation-id --type String --value <installation id> --overwrite
+   ```
+
+   Inside a harness session, `factorial-github-token` combines these with the private key secret to mint one-hour installation tokens, and git's credential helper uses it automatically for `github.com`.
 
 ## 5. Verify the webhook
 

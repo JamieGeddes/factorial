@@ -57,6 +57,25 @@ The foundation stack (`templates/00-foundation.yml`) creates:
 
 Everything else is deployed by the `deploy` workflow on merge to `main`, which passes the `factorial-cloudformation` role to CloudFormation and reads the other foundation outputs through their `Factorial-*` exports.
 
+## Human-provided secrets
+
+Two kinds of secret are created by a human, never by a template, because their values must not pass through CloudFormation or the repository. Templates reference them by name.
+
+**Model provider API key** (required before the agent stack can deploy). Enter the key at the prompt so it does not land in your shell history:
+
+```sh
+printf 'Model provider API key: '; read -rs MODEL_API_KEY; echo
+aws secretsmanager create-secret \
+  --name factorial/zai/api-key \
+  --description "Z.ai API key used by the Factorial builder harness" \
+  --secret-string "$(jq -n --arg apiKey "$MODEL_API_KEY" '{apiKey: $apiKey}')"
+unset MODEL_API_KEY
+```
+
+To rotate it later, use `put-secret-value` with the same shape. The harness reads the current value on every invocation.
+
+**GitHub App private key and identifiers**: see `docs/github-app.md`.
+
 ## Changing the foundation
 
 Changes to this stack change Factorial's safety limits. They are made by a human, reviewed as such, and deployed by re-running step 2. The deploy role cannot do it.

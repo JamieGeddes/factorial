@@ -1,0 +1,14 @@
+{
+  "name": "@factorial/github-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mint GitHub App installation tokens",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  }
+}

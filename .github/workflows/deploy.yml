@@ -64,16 +64,44 @@ jobs:
           set -euo pipefail
           cfn_role=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-CloudFormationRoleArn'].Value" --output text)
           bucket=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-ArtefactBucketName'].Value" --output text)
-          test -n "$cfn_role" && test -n "$bucket"
+          repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-AgentEnvironmentRepositoryUri'].Value" --output text)
+          test -n "$cfn_role" && test -n "$bucket" && test -n "$repo_uri"
           echo "::add-mask::$cfn_role"
           echo "::add-mask::$bucket"
+          echo "::add-mask::$repo_uri"
           echo "cfn_role=$cfn_role" >> "$GITHUB_OUTPUT"
           echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+          echo "repo_uri=$repo_uri" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build and push the agent environment image when its inputs change
+        id: image
+        env:
+          REPO_URI: ${{ steps.foundation.outputs.repo_uri }}
+        run: |
+          set -euo pipefail
+          # The tag is a hash of everything that goes into the image, so an
+          # unchanged image is never rebuilt and a changed one always is.
+          tag=$(git rev-parse HEAD:agent-environment HEAD:packages/agent-tools HEAD:packages/github-app HEAD:package-lock.json | sha256sum | cut -c1-32)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if aws ecr describe-images --repository-name factorial/agent-environment --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+            echo "Agent image $tag already exists; skipping the build."
+            exit 0
+          fi
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
+          docker buildx build --platform linux/arm64 --provenance=false --push \
+            --tag "$REPO_URI:$tag" agent-environment/
+          echo "Pushed agent image $tag."
 
       - name: Deploy stacks in order
         env:
           CFN_ROLE: ${{ steps.foundation.outputs.cfn_role }}
           BUCKET: ${{ steps.foundation.outputs.bucket }}
+          AGENT_IMAGE_TAG: ${{ steps.image.outputs.tag }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -87,6 +115,18 @@ jobs:
             name=$(basename "$template" .yml)   # e.g. 10-triggers
             stack="factorial-${name#*-}"        # e.g. factorial-triggers
             echo "::group::Deploying $stack from $template"
+            # A stack whose first creation failed sits in ROLLBACK_COMPLETE and
+            # cannot be updated. It never held anything, so remove it and retry.
+            status=$(aws cloudformation describe-stacks --stack-name "$stack" --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo NONE)
+            if [ "$status" = "ROLLBACK_COMPLETE" ]; then
+              echo "$stack is in ROLLBACK_COMPLETE from a failed first creation; deleting it before retrying."
+              aws cloudformation delete-stack --stack-name "$stack" --role-arn "$CFN_ROLE"
+              aws cloudformation wait stack-delete-complete --stack-name "$stack"
+            fi
+            params=()
+            case "$stack" in
+              factorial-agent) params=(--parameter-overrides "AgentImageTag=$AGENT_IMAGE_TAG") ;;
+            esac
             # package uploads local artefacts (Lambda bundles) and rewrites
             # their paths to S3 locations.
             aws cloudformation package \
@@ -102,6 +142,32 @@ jobs:
               --s3-prefix "templates/$stack" \
               --capabilities CAPABILITY_NAMED_IAM CAPABILITY_AUTO_EXPAND \
               --tags Project=Factorial \
-              --no-fail-on-empty-changeset
+              --no-fail-on-empty-changeset \
+              "${params[@]}"
             echo "::endgroup::"
           done
+
+      # Promotion is the last step of a successful deployment: the next
+      # WorkItem is handled by the version just deployed. Only this role may
+      # move a live endpoint; the permissions boundary denies it to every
+      # role Factorial creates for itself.
+      - name: Promote the builder harness live endpoint
+        run: |
+          set -euo pipefail
+          harness_id=$(aws cloudformation describe-stacks --stack-name factorial-agent \
+            --query "Stacks[0].Outputs[?OutputKey=='BuilderHarnessId'].OutputValue" --output text 2>/dev/null || true)
+          if [ -z "$harness_id" ] || [ "$harness_id" = "None" ]; then
+            echo "No agent stack yet; nothing to promote."
+            exit 0
+          fi
+          latest=$(aws bedrock-agentcore-control list-harness-versions --harness-id "$harness_id" \
+            --query 'max_by(harnessVersions, &to_number(harnessVersion)).harnessVersion' --output text)
+          current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
+            --query 'endpoint.targetVersion' --output text)
+          if [ "$latest" = "$current" ]; then
+            echo "live endpoint already at harness version $latest."
+            exit 0
+          fi
+          aws bedrock-agentcore-control update-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
+            --target-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
+          echo "live endpoint moved from harness version $current to $latest."

@@ -1,0 +1,268 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Factorial agent: the builder harness, its execution role, the model API key
+  credential and the live endpoint. Deployed by GitHub Actions.
+
+Parameters:
+  AgentImageTag:
+    Type: String
+    Description: Tag of the agent environment image in the factorial/agent-environment repository.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  ModelId:
+    Type: String
+    Default: glm-5.3-flash
+  ModelApiBase:
+    Type: String
+    Default: https://api.z.ai/api/paas/v4
+    Description: OpenAI-compatible endpoint of the model provider.
+  ModelApiKeySecretName:
+    Type: String
+    Default: factorial/zai/api-key
+    Description: >-
+      Secrets Manager secret holding {"apiKey": "..."} for the model provider.
+      Created by a human; see docs/bootstrap.md.
+  MaxIterations:
+    Type: Number
+    Default: 150
+    Description: Reasoning and tool cycles per invocation before the harness stops.
+  TimeoutSeconds:
+    Type: Number
+    Default: 3600
+    Description: Wall-clock limit for one invocation.
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Model credential. References a secret a human created; the key value never
+  # passes through CloudFormation. The harness fetches it at invocation time.
+  # ---------------------------------------------------------------------------
+  ModelApiKey:
+    Type: AWS::BedrockAgentCore::ApiKeyCredentialProvider
+    Properties:
+      Name: factorial-model-api-key
+      ApiKeySecretSource: EXTERNAL
+      ApiKeySecretConfig:
+        SecretId: !Ref ModelApiKeySecretName
+        JsonKey: apiKey
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Execution role. Carries the permissions boundary, so it can never deploy
+  # or promote Factorial whatever the agent attempts.
+  # ---------------------------------------------------------------------------
+  AgentRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-agent
+      Description: Execution role of the Factorial builder harness.
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-agent
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: PullAgentImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/agent-environment
+              - Sid: RegistryAuth
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr-public:GetAuthorizationToken
+                  - sts:GetServiceBearerToken
+                Resource: '*'
+              - Sid: Logs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                  - logs:DescribeLogStreams
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/runtimes/*:log-stream:*
+              - Sid: LogsAccountLevel
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:PutResourcePolicy
+                Resource: '*'
+              - Sid: Tracing
+                Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+              - Sid: Metrics
+                Effect: Allow
+                Action: cloudwatch:PutMetricData
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    cloudwatch:namespace: bedrock-agentcore
+              - Sid: WorkloadIdentity
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetWorkloadAccessToken
+                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_builder-*
+              - Sid: ModelApiKey
+                Effect: Allow
+                Action: bedrock-agentcore:GetResourceApiKey
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/apikeycredentialprovider/factorial-model-api-key
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_builder-*
+              - Sid: ModelApiKeySecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ModelApiKeySecretName}-*
+              # Used by factorial-github-token inside the session to mint
+              # short-lived GitHub App tokens for git and gh.
+              - Sid: GitHubAppCredentials
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/github/app-private-key-*
+              - Sid: GitHubAppParameters
+                Effect: Allow
+                Action:
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/github/*
+              - Sid: LifecycleHook
+                Effect: Allow
+                Action: events:PutEvents
+                Resource: !ImportValue Factorial-WorkBusArn
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # The builder. One agent that both plans and builds (Stage 0). Every update
+  # creates an immutable harness version; the live endpoint below is moved by
+  # the deploy workflow's promotion step, never by this template.
+  # ---------------------------------------------------------------------------
+  BuilderHarness:
+    Type: AWS::BedrockAgentCore::Harness
+    Metadata:
+      # cfn-lint's bundled schema predates OpenAiModelConfig.ApiBase, which the
+      # live CloudFormation registry schema does define (checked 2026-10-16).
+      cfn-lint:
+        config:
+          ignore_checks:
+            - E3002
+    Properties:
+      HarnessName: factorial_builder
+      ExecutionRoleArn: !GetAtt AgentRole.Arn
+      EnvironmentArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Join
+            - ':'
+            - - !ImportValue Factorial-AgentEnvironmentRepositoryUri
+              - !Ref AgentImageTag
+      Environment:
+        AgentCoreRuntimeEnvironment:
+          NetworkConfiguration:
+            NetworkMode: PUBLIC
+          LifecycleConfiguration:
+            IdleRuntimeSessionTimeout: 900
+            MaxLifetime: 14400
+      EnvironmentVariables:
+        AWS_REGION: !Ref AWS::Region
+        FACTORIAL_WORKSPACE: /workspace
+      Model:
+        OpenAiModelConfig:
+          ModelId: !Ref ModelId
+          ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
+          ApiBase: !Ref ModelApiBase
+          ApiFormat: chat_completions
+          MaxTokens: 16384
+      SystemPrompt:
+        - Text: |
+            You are Factorial's builder agent. Factorial is a software factory: you receive one unit of work (a WorkItem) per session and turn it into a reviewable change in a git repository.
+
+            Environment
+            - The repository is already cloned at /workspace/repo and checked out on a branch created for this work. Work only inside that directory.
+            - Available tools: bash shell and file operations. The shell has git, gh, node 22, npm, jq and curl. Do not install global tools.
+            - Your AWS session identity is read-only with respect to Factorial itself. You cannot deploy or promote anything, and you should not try.
+
+            How to work
+            1. Read CLAUDE.md, README.md and any contributing or conventions files first. Follow the repository's conventions exactly: language, style, layout, test framework, commit message style.
+            2. Understand the request before changing anything. Explore the code that the request touches.
+            3. Make the smallest change that fully satisfies the request. Do not refactor, reformat or "improve" unrelated code.
+            4. Add or update automated tests for behaviour you change. Run the repository's checks (tests, typecheck, lint) and fix any failure you caused.
+            5. Commit your work in one or a few focused commits. Write commit messages in the imperative mood. Do not amend or rewrite history that existed before your session.
+            6. Do not push, open pull requests, or change CI, deployment or credential configuration. The orchestrator pushes your branch and opens the pull request after you finish.
+            7. When done, write /workspace/summary.md containing: what changed and why, how you verified it, and anything a reviewer should look at. This file becomes the pull request description.
+
+            If the request is unclear, out of scope for a code change, or impossible, do not guess. Make no commits, and write /workspace/summary.md explaining what is missing or why it cannot be done.
+
+            Never run destructive commands: no force pushes, no deleting branches, no history rewrites, no removing files outside the change you are making.
+      AllowedTools:
+        - '@builtin'
+      Memory:
+        Disabled: {}
+      MaxIterations: !Ref MaxIterations
+      TimeoutSeconds: !Ref TimeoutSeconds
+      # Fires onto the work bus when an invocation finishes, with the stop
+      # reason and token usage. The orchestration stack listens for it to
+      # resume the state machine, so long builds never hold a connection open.
+      Hooks:
+        - AfterInvocation:
+            Name: work_complete
+            Target:
+              EventBridge:
+                Arn: !ImportValue Factorial-WorkBusArn
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # Created once at whatever version is current. TargetVersion is deliberately
+  # not managed here: promotion is the deploy workflow's final step.
+  LiveEndpoint:
+    Type: AWS::BedrockAgentCore::HarnessEndpoint
+    Properties:
+      HarnessId: !GetAtt BuilderHarness.HarnessId
+      EndpointName: live
+      Description: The builder version handling new WorkItems.
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+Outputs:
+  BuilderHarnessArn:
+    Value: !GetAtt BuilderHarness.Arn
+    Export:
+      Name: Factorial-BuilderHarnessArn
+  BuilderHarnessId:
+    Value: !GetAtt BuilderHarness.HarnessId
+    Export:
+      Name: Factorial-BuilderHarnessId
+  BuilderLiveEndpointArn:
+    Value: !GetAtt LiveEndpoint.Arn
+    Export:
+      Name: Factorial-BuilderLiveEndpointArn
+  AgentRoleArn:
+    Value: !GetAtt AgentRole.Arn
+    Export:
+      Name: Factorial-AgentRoleArn
