@@ -58,13 +58,19 @@ The system must be extensible for future requirements, including:
 - Orchestration stays deterministic; agents run inside the states, not around them.
 - Step Functions never deploys anything itself. It dispatches GitHub Actions workflows and waits for a callback (task token) with the result.
 
+### Agents: AgentCore Harness
+
+- Each agent is an AgentCore Harness. The agent loop is managed by AWS and declared as configuration: model, system prompt, tools, limits and container image are defined in CloudFormation and captured in an immutable harness version.
+- Model configuration is fixed on the harness version. Nothing passes model overrides at invoke time.
+- Deterministic steps around the agent (clone the repository, run tests, push the branch) run through the session command API, not through the model.
+
 ### Versioning and promotion: `live` aliases
 
 Factorial has three independently versioned parts. Each has a `live` alias pointing at the version currently in use:
 
 | Part | Versioned resource | `live` pointer |
 |---|---|---|
-| Agents | AgentCore Runtime | `RuntimeEndpoint` named `live` |
+| Agents | AgentCore Harness versions | `HarnessEndpoint` named `live` |
 | State machine | Step Functions versions | Alias named `live` |
 | Adapters and callbacks | Lambda versions | Alias named `live` |
 
@@ -92,7 +98,7 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 | Triggers | GitHub issues only |
 | EventBridge | One bus, one rule |
 | Step Functions | Three states: build → test → PR |
-| Agents | One agent that both plans and builds |
+| Agents | One Harness that both plans and builds, using GLM 5.3 Flash via the Z.ai API (general endpoint) |
 | Verification | Automated tests run via GitHub Actions; no sandbox smoke test yet |
 | Promotion | Move the `live` aliases after a successful deploy |
 
@@ -117,7 +123,8 @@ When a change completes or alters a stage, update **Current stage** in the same 
 - **Deployments:** all deployments run through GitHub Actions.
 - **Sandbox access:** agents in the inner loop may deploy to the sandbox environment and read its state directly to verify their work.
 - **Infrastructure as code:** Factorial's infrastructure is defined in CloudFormation templates written in YAML, using the `.yml` extension.
-- **Language:** all logic (agents, Lambdas, tooling) is implemented in TypeScript.
+- **Language:** all code Factorial owns (Lambdas, tooling, container images) is implemented in TypeScript. The agent loop itself is the managed AgentCore Harness, which is configuration, not code.
+- **Model credentials:** third-party model API keys are held in AgentCore Identity's token vault and referenced by ARN. They never appear in the repository, templates, parameters or logs.
 - **Compute:** serverless resources are favoured over servers. Where a container is unavoidable, use Fargate, never EC2 instances.
 - **Security:** security is vital. The system must enforce suitable access controls at every level: IAM least privilege per role, no shared credentials, and agent roles that can never deploy or promote Factorial.
 - **Region:** Factorial and all its associated resources are deployed to `eu-west-1`.
