@@ -94,8 +94,10 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 - The `WorkItem` contract is defined in `contracts/workitem/v1/` (JSON Schema, with the event envelope and change process in `contracts/workitem/README.md`) and validated by the `@factorial/workitem` package.
 - The repository scaffold and CI are in place.
 - The foundation stack (`factorial-foundation`) is deployed: GitHub OIDC provider, deploy role, CloudFormation execution role, permissions boundary, artefact bucket and the agent environment ECR repository. The deploy role ARN is the `AWS_DEPLOY_ROLE_ARN` repository secret.
+- The deploy workflow runs after CI on `main` and deploys every numbered template above `00`.
+- The triggers stack (`factorial-triggers`) is deployed: the `factorial-work` event bus, the webhook secret, and the GitHub issue adapter (`packages/triggers-github-issues`) behind a function URL on its `live` alias.
 
-Not yet built: the deploy workflow, the triggers stack, the orchestration stack, the harness and its container image, and the GitHub App.
+Not yet built: the GitHub App (`docs/github-app.md`), the orchestration stack, and the harness with its container image.
 
 ### Stage 0 scope
 
