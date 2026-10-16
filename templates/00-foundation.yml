@@ -59,10 +59,27 @@ Resources:
             Effect: Allow
             Action: '*'
             Resource: '*'
-          - Sid: DenyDeployingFactorial
+          # Bounded roles never deploy anything through CloudFormation, in any
+          # stack. Deployments happen only in GitHub Actions via the deploy role.
+          - Sid: DenyDeployingAnything
             Effect: Deny
-            Action: cloudformation:*
-            Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-*/*
+            Action:
+              - cloudformation:Create*
+              - cloudformation:Update*
+              - cloudformation:Delete*
+              - cloudformation:Execute*
+              - cloudformation:Set*
+              - cloudformation:Rollback*
+              - cloudformation:Cancel*
+              - cloudformation:Continue*
+              - cloudformation:Import*
+              - cloudformation:Register*
+              - cloudformation:Deregister*
+              - cloudformation:Activate*
+              - cloudformation:Deactivate*
+              - cloudformation:Publish*
+              - cloudformation:Signal*
+            Resource: '*'
           - Sid: DenyPromotingOrChangingLiveVersions
             Effect: Deny
             Action:
@@ -94,6 +111,22 @@ Resources:
               - iam:PassRole
               - sts:*
             Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:*
+          # Bounded roles may only hand off to, or step into, other Factorial
+          # roles, which carry this boundary themselves. Any account is allowed
+          # so that the future sandbox-account roles work; the name prefix is
+          # what closes the escalation path through pre-existing roles.
+          - Sid: DenyPassingNonFactorialRoles
+            Effect: Deny
+            Action: iam:PassRole
+            NotResource: !Sub arn:${AWS::Partition}:iam::*:role/factorial-*
+          - Sid: DenyAssumingNonFactorialRoles
+            Effect: Deny
+            Action:
+              - sts:AssumeRole
+              - sts:AssumeRoleWithWebIdentity
+              - sts:AssumeRoleWithSAML
+              - sts:TagSession
+            NotResource: !Sub arn:${AWS::Partition}:iam::*:role/factorial-*
           - Sid: DenyTouchingTheFoundation
             Effect: Deny
             Action: '*'
