@@ -44,152 +44,162 @@ Resources:
   # mechanical enforcement of "agents never deploy or promote Factorial" and of
   # "no privilege escalation": whatever a role's own policy says, it can never
   # exceed what is allowed here.
+  #
+  # It is an allowlist. Only the services and actions Factorial roles need at
+  # runtime are permitted; anything not listed (IAM, CloudFormation changes,
+  # Organizations, billing, access points, registry settings, ...) is outside
+  # the boundary by construction. The Deny statements at the end are defence
+  # in depth for the few allowed services that contain a dangerous subset.
   # ---------------------------------------------------------------------------
   PermissionsBoundary:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: factorial-permissions-boundary
       Description: >-
-        Upper bound for every role Factorial creates. Denies deploying or
-        promoting Factorial, mutating IAM, and touching the foundation.
+        Upper bound for every role Factorial creates. Allowlists the services
+        Factorial uses at runtime and denies deploying or promoting Factorial.
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Sid: AllowEverythingNotDeniedBelow
+          # --- What a Factorial role may do, at most ---
+          - Sid: AgentsAndModels
             Effect: Allow
-            Action: '*'
-            Resource: '*'
-          # Bounded roles never deploy anything through CloudFormation, in any
-          # stack. Deployments happen only in GitHub Actions via the deploy role.
-          - Sid: DenyDeployingAnything
-            Effect: Deny
             Action:
-              - cloudformation:Create*
-              - cloudformation:Update*
-              - cloudformation:Delete*
-              - cloudformation:Execute*
-              - cloudformation:Set*
-              - cloudformation:Rollback*
-              - cloudformation:Cancel*
-              - cloudformation:Continue*
-              - cloudformation:Import*
-              - cloudformation:Register*
-              - cloudformation:Deregister*
-              - cloudformation:Activate*
-              - cloudformation:Deactivate*
-              - cloudformation:Publish*
-              - cloudformation:Signal*
-              - cloudformation:Start*
-              - cloudformation:Stop*
-              - cloudformation:Tag*
-              - cloudformation:Untag*
-              - cloudformation:Record*
-              - cloudformation:Test*
+              - bedrock-agentcore:*
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:ApplyGuardrail
             Resource: '*'
-          # Backstop for the verb list above: no CloudFormation action of any
-          # kind on Factorial's own stacks.
-          - Sid: DenyAnyCloudFormationOnFactorial
-            Effect: Deny
-            Action: cloudformation:*
+          - Sid: Orchestration
+            Effect: Allow
+            Action:
+              - states:*
+              - lambda:InvokeFunction
+              - lambda:InvokeFunctionUrl
+              - lambda:GetFunction
+              - lambda:GetAlias
+              - events:PutEvents
+              - sqs:*
+              - sns:Publish
+            Resource: '*'
+          - Sid: Telemetry
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:PutResourcePolicy
+              - logs:DescribeLogGroups
+              - logs:DescribeLogStreams
+              - logs:FilterLogEvents
+              - logs:GetLogEvents
+              - logs:StartQuery
+              - logs:GetQueryResults
+              - cloudwatch:PutMetricData
+              - cloudwatch:GetMetricData
+              - cloudwatch:GetMetricStatistics
+              - xray:*
+            Resource: '*'
+          - Sid: FactorialData
+            Effect: Allow
+            Action:
+              - dynamodb:*
+              - s3:*
+              - ssm:GetParameter
+              - ssm:GetParameters
+              - ssm:GetParametersByPath
             Resource:
-              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-*/*
-              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/factorial-*/*
-          - Sid: DenyPromotingOrChangingLiveVersions
+              - !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/factorial-*
+              - !Sub arn:${AWS::Partition}:s3:::factorial-*
+              - !Sub arn:${AWS::Partition}:s3:::factorial-*/*
+              - !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/*
+          - Sid: Secrets
+            Effect: Allow
+            Action:
+              - secretsmanager:GetSecretValue
+              - secretsmanager:DescribeSecret
+            Resource:
+              - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/*
+              - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/*
+          - Sid: ContainerImagesReadOnly
+            Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchCheckLayerAvailability
+              - ecr:DescribeImages
+              - ecr:DescribeRepositories
+              - ecr-public:GetAuthorizationToken
+              - sts:GetServiceBearerToken
+            Resource: '*'
+          - Sid: Encryption
+            Effect: Allow
+            Action:
+              - kms:Decrypt
+              - kms:Encrypt
+              - kms:GenerateDataKey
+              - kms:GenerateDataKeyWithoutPlaintext
+              - kms:DescribeKey
+            Resource: '*'
+          - Sid: ReadStackState
+            Effect: Allow
+            Action:
+              - cloudformation:Describe*
+              - cloudformation:Get*
+              - cloudformation:List*
+            Resource: '*'
+          - Sid: WhoAmI
+            Effect: Allow
+            Action: sts:GetCallerIdentity
+            Resource: '*'
+          # Bounded roles may only hand off to, or step into, other Factorial
+          # roles, which carry this boundary themselves. Any account is allowed
+          # so that the future sandbox-account roles work.
+          - Sid: AssumeOrPassFactorialRolesOnly
+            Effect: Allow
+            Action:
+              - sts:AssumeRole
+              - sts:TagSession
+              - iam:PassRole
+            Resource: !Sub arn:${AWS::Partition}:iam::*:role/factorial-*
+          # --- Dangerous subsets of the allowed services ---
+          - Sid: DenyPromotingOrChangingVersions
             Effect: Deny
             Action:
+              - bedrock-agentcore:CreateHarness
+              - bedrock-agentcore:UpdateHarness
+              - bedrock-agentcore:DeleteHarness
               - bedrock-agentcore:CreateHarnessEndpoint
               - bedrock-agentcore:UpdateHarnessEndpoint
               - bedrock-agentcore:DeleteHarnessEndpoint
-              - bedrock-agentcore:UpdateHarness
+              - bedrock-agentcore:CreateAgentRuntime
+              - bedrock-agentcore:UpdateAgentRuntime
+              - bedrock-agentcore:DeleteAgentRuntime
               - bedrock-agentcore:CreateAgentRuntimeEndpoint
               - bedrock-agentcore:UpdateAgentRuntimeEndpoint
               - bedrock-agentcore:DeleteAgentRuntimeEndpoint
-              - bedrock-agentcore:UpdateAgentRuntime
+              - states:CreateStateMachine
+              - states:UpdateStateMachine
+              - states:DeleteStateMachine
+              - states:PublishStateMachineVersion
+              - states:DeleteStateMachineVersion
               - states:CreateStateMachineAlias
               - states:UpdateStateMachineAlias
               - states:DeleteStateMachineAlias
-              - states:UpdateStateMachine
-              - states:PublishStateMachineVersion
-              - lambda:CreateAlias
-              - lambda:UpdateAlias
-              - lambda:DeleteAlias
-              - lambda:UpdateFunctionCode
-              - lambda:UpdateFunctionConfiguration
-              - lambda:PublishVersion
             Resource: '*'
-          - Sid: DenyIamMutation
-            Effect: Deny
-            NotAction:
-              - iam:Get*
-              - iam:List*
-              - iam:PassRole
-              - sts:*
-            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:*
-          # Account-level IAM actions have no resource ARN, so the statement
-          # above cannot catch them. Deny them explicitly.
-          - Sid: DenyAccountLevelIamChanges
-            Effect: Deny
-            Action:
-              - iam:CreateAccountAlias
-              - iam:DeleteAccountAlias
-              - iam:UpdateAccountPasswordPolicy
-              - iam:DeleteAccountPasswordPolicy
-              - iam:SetSecurityTokenServicePreferences
-              - iam:CreateOpenIDConnectProvider
-              - iam:CreateSAMLProvider
-              - iam:UploadSigningCertificate
-              - iam:UploadServerCertificate
-              - iam:CreateVirtualMFADevice
-              - iam:DisableOrganizationsRootCredentialsManagement
-              - iam:DisableOrganizationsRootSessions
-              - iam:EnableOrganizationsRootCredentialsManagement
-              - iam:EnableOrganizationsRootSessions
-            Resource: '*'
-          # Deployment artefacts and the agent image are written only by the
-          # deploy role. A bounded role must never be able to substitute them.
+          # Deployment artefacts are written only by the deploy role. A bounded
+          # role must never be able to substitute them.
           - Sid: DenyWritingDeploymentArtefacts
             Effect: Deny
-            Action:
-              - s3:Put*
-              - s3:Delete*
-              - s3:Create*
-              - s3:Restore*
-              - s3:Abort*
-              - s3:Replicate*
+            NotAction:
+              - s3:Get*
+              - s3:List*
             Resource:
               - !GetAtt ArtefactBucket.Arn
               - !Sub ${ArtefactBucket.Arn}/*
-          - Sid: DenyWritingAgentImages
-            Effect: Deny
-            Action:
-              - ecr:Put*
-              - ecr:Initiate*
-              - ecr:Upload*
-              - ecr:Complete*
-              - ecr:Delete*
-              - ecr:BatchDelete*
-              - ecr:Set*
-              - ecr:Start*
-              - ecr:Tag*
-              - ecr:Untag*
-              - ecr:Replicate*
-            Resource: !GetAtt AgentEnvironmentRepository.Arn
-          # Bounded roles may only hand off to, or step into, other Factorial
-          # roles, which carry this boundary themselves. Any account is allowed
-          # so that the future sandbox-account roles work; the name prefix is
-          # what closes the escalation path through pre-existing roles.
-          - Sid: DenyPassingNonFactorialRoles
-            Effect: Deny
-            Action: iam:PassRole
-            NotResource: !Sub arn:${AWS::Partition}:iam::*:role/factorial-*
-          - Sid: DenyAssumingNonFactorialRoles
-            Effect: Deny
-            Action:
-              - sts:AssumeRole
-              - sts:AssumeRoleWithWebIdentity
-              - sts:AssumeRoleWithSAML
-              - sts:TagSession
-            NotResource: !Sub arn:${AWS::Partition}:iam::*:role/factorial-*
+          # factorial-deploy and factorial-cloudformation match the factorial-*
+          # prefix above, so they must be excluded explicitly.
           - Sid: DenyTouchingTheFoundation
             Effect: Deny
             Action: '*'
@@ -198,7 +208,6 @@ Resources:
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
-
   # ---------------------------------------------------------------------------
   # CloudFormation execution role. CloudFormation assumes this to create the
   # resources in Factorial's stacks, so the deploy role itself never needs
