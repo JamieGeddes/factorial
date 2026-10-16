@@ -79,7 +79,21 @@ Resources:
               - cloudformation:Deactivate*
               - cloudformation:Publish*
               - cloudformation:Signal*
+              - cloudformation:Start*
+              - cloudformation:Stop*
+              - cloudformation:Tag*
+              - cloudformation:Untag*
+              - cloudformation:Record*
+              - cloudformation:Test*
             Resource: '*'
+          # Backstop for the verb list above: no CloudFormation action of any
+          # kind on Factorial's own stacks.
+          - Sid: DenyAnyCloudFormationOnFactorial
+            Effect: Deny
+            Action: cloudformation:*
+            Resource:
+              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-*/*
+              - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/factorial-*/*
           - Sid: DenyPromotingOrChangingLiveVersions
             Effect: Deny
             Action:
