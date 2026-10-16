@@ -1,0 +1,511 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  Factorial foundation: GitHub OIDC provider, deployment role, CloudFormation
+  execution role, permissions boundary, artefact bucket and container registry.
+  Deployed once by a human (see docs/bootstrap.md). This is the one exception to
+  deploying through GitHub Actions, because it creates the deployment role itself.
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Description: GitHub user or organisation that owns the Factorial repository.
+    AllowedPattern: '^[A-Za-z0-9-]+$'
+  GitHubRepository:
+    Type: String
+    Description: Name of the Factorial repository.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  DeployBranch:
+    Type: String
+    Default: main
+    Description: Only GitHub Actions runs on this branch may assume the deployment role.
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Identity for GitHub Actions. No stored AWS keys anywhere.
+  # ---------------------------------------------------------------------------
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # AWS validates GitHub's certificate chain directly; these are kept for
+      # completeness and older partitions.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+        - 1c58a3a8518e8759bf075b76b750d4f2df264fcd
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Permissions boundary. Every IAM role Factorial creates for itself (Lambdas,
+  # the state machine, the agent harness) must carry this boundary. It is the
+  # mechanical enforcement of "agents never deploy or promote Factorial" and of
+  # "no privilege escalation": whatever a role's own policy says, it can never
+  # exceed what is allowed here.
+  # ---------------------------------------------------------------------------
+  PermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-permissions-boundary
+      Description: >-
+        Upper bound for every role Factorial creates. Denies deploying or
+        promoting Factorial, mutating IAM, and touching the foundation.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowEverythingNotDeniedBelow
+            Effect: Allow
+            Action: '*'
+            Resource: '*'
+          - Sid: DenyDeployingFactorial
+            Effect: Deny
+            Action: cloudformation:*
+            Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-*/*
+          - Sid: DenyPromotingOrChangingLiveVersions
+            Effect: Deny
+            Action:
+              - bedrock-agentcore:CreateHarnessEndpoint
+              - bedrock-agentcore:UpdateHarnessEndpoint
+              - bedrock-agentcore:DeleteHarnessEndpoint
+              - bedrock-agentcore:UpdateHarness
+              - bedrock-agentcore:CreateAgentRuntimeEndpoint
+              - bedrock-agentcore:UpdateAgentRuntimeEndpoint
+              - bedrock-agentcore:DeleteAgentRuntimeEndpoint
+              - bedrock-agentcore:UpdateAgentRuntime
+              - states:CreateStateMachineAlias
+              - states:UpdateStateMachineAlias
+              - states:DeleteStateMachineAlias
+              - states:UpdateStateMachine
+              - states:PublishStateMachineVersion
+              - lambda:CreateAlias
+              - lambda:UpdateAlias
+              - lambda:DeleteAlias
+              - lambda:UpdateFunctionCode
+              - lambda:UpdateFunctionConfiguration
+              - lambda:PublishVersion
+            Resource: '*'
+          - Sid: DenyIamMutation
+            Effect: Deny
+            NotAction:
+              - iam:Get*
+              - iam:List*
+              - iam:PassRole
+              - sts:*
+            Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:*
+          - Sid: DenyTouchingTheFoundation
+            Effect: Deny
+            Action: '*'
+            Resource:
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-deploy
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+
+  # ---------------------------------------------------------------------------
+  # CloudFormation execution role. CloudFormation assumes this to create the
+  # resources in Factorial's stacks, so the deploy role itself never needs
+  # permissions on individual services. Scoped to factorial-* resource names.
+  # ---------------------------------------------------------------------------
+  CloudFormationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-cloudformation
+      Description: Assumed by CloudFormation to deploy Factorial's own stacks.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudformation.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-cloudformation
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # --- IAM: Factorial roles must carry the permissions boundary ---
+              - Sid: CreateFactorialRolesOnlyWithBoundary
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:PutRolePermissionsBoundary
+                  - iam:PutRolePolicy
+                  - iam:AttachRolePolicy
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-*
+                Condition:
+                  StringEquals:
+                    iam:PermissionsBoundary: !Ref PermissionsBoundary
+              - Sid: ManageFactorialRoles
+                Effect: Allow
+                Action:
+                  - iam:DeleteRole
+                  - iam:UpdateRole
+                  - iam:UpdateRoleDescription
+                  - iam:UpdateAssumeRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:TagRole
+                  - iam:UntagRole
+                  - iam:GetRole
+                  - iam:GetRolePolicy
+                  - iam:ListRolePolicies
+                  - iam:ListAttachedRolePolicies
+                  - iam:ListRoleTags
+                  - iam:PassRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-*
+              - Sid: ManageFactorialPolicies
+                Effect: Allow
+                Action:
+                  - iam:CreatePolicy
+                  - iam:DeletePolicy
+                  - iam:CreatePolicyVersion
+                  - iam:DeletePolicyVersion
+                  - iam:SetDefaultPolicyVersion
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
+                  - iam:ListPolicyVersions
+                  - iam:TagPolicy
+                  - iam:UntagPolicy
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-*
+              - Sid: ServiceLinkedRoles
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/aws-service-role/*
+              - Sid: NeverRemoveABoundary
+                Effect: Deny
+                Action: iam:DeleteRolePermissionsBoundary
+                Resource: '*'
+              - Sid: NeverTouchTheFoundation
+                Effect: Deny
+                Action: '*'
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-deploy
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+              # --- Services Factorial is built from, scoped by name ---
+              - Sid: EventBridge
+                Effect: Allow
+                Action: events:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:event-bus/factorial-*
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/factorial-*
+                  - !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/factorial-*/*
+              - Sid: StepFunctions
+                Effect: Allow
+                Action: states:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:factorial-*
+              - Sid: Lambda
+                Effect: Allow
+                Action: lambda:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:factorial-*
+              - Sid: Logs
+                Effect: Allow
+                Action: logs:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/factorial/*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/factorial-*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/vendedlogs/states/factorial-*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/events/factorial-*
+                  - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/*
+              - Sid: LogDeliveryForVendedLogs
+                Effect: Allow
+                Action:
+                  - logs:DescribeLogGroups
+                  - logs:DescribeResourcePolicies
+                  - logs:PutResourcePolicy
+                  - logs:DeleteResourcePolicy
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                Resource: '*'
+              - Sid: CloudWatch
+                Effect: Allow
+                Action:
+                  - cloudwatch:PutMetricAlarm
+                  - cloudwatch:DeleteAlarms
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:TagResource
+                  - cloudwatch:UntagResource
+                  - cloudwatch:PutDashboard
+                  - cloudwatch:DeleteDashboards
+                  - cloudwatch:GetDashboard
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:factorial-*
+                  - !Sub arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/factorial-*
+              - Sid: AgentCore
+                Effect: Allow
+                Action: bedrock-agentcore:*
+                Resource: '*'
+              - Sid: ContainerRegistry
+                Effect: Allow
+                Action: ecr:*
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/*
+              - Sid: ContainerRegistryRead
+                Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:DescribeRepositories
+                Resource: '*'
+              - Sid: S3
+                Effect: Allow
+                Action: s3:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:s3:::factorial-*
+                  - !Sub arn:${AWS::Partition}:s3:::factorial-*/*
+              - Sid: DynamoDB
+                Effect: Allow
+                Action: dynamodb:*
+                Resource: !Sub arn:${AWS::Partition}:dynamodb:${AWS::Region}:${AWS::AccountId}:table/factorial-*
+              - Sid: Queues
+                Effect: Allow
+                Action: sqs:*
+                Resource: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:factorial-*
+              - Sid: Topics
+                Effect: Allow
+                Action: sns:*
+                Resource: !Sub arn:${AWS::Partition}:sns:${AWS::Region}:${AWS::AccountId}:factorial-*
+              - Sid: Secrets
+                Effect: Allow
+                Action: secretsmanager:*
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/*
+              - Sid: Parameters
+                Effect: Allow
+                Action: ssm:*
+                Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/*
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Deployment role. Assumable only by GitHub Actions runs on the deploy branch
+  # of the Factorial repository. It drives CloudFormation (which does the real
+  # work through the execution role), publishes artefacts, and is the ONLY
+  # principal allowed to move the live aliases.
+  # ---------------------------------------------------------------------------
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-deploy
+      Description: Assumed by GitHub Actions to deploy and promote Factorial.
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !Ref GitHubOidcProvider
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}/${GitHubRepository}:ref:refs/heads/${DeployBranch}
+      Policies:
+        - PolicyName: factorial-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: DeployFactorialStacks
+                Effect: Allow
+                Action: cloudformation:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-*/*
+                  - !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/factorial-*/*
+              - Sid: CloudFormationReadOnly
+                Effect: Allow
+                Action:
+                  - cloudformation:ListStacks
+                  - cloudformation:ListExports
+                  - cloudformation:ValidateTemplate
+                Resource: '*'
+              - Sid: TheFoundationIsDeployedByHumans
+                Effect: Deny
+                Action: cloudformation:*
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-foundation/*
+              - Sid: HandWorkToCloudFormation
+                Effect: Allow
+                Action: iam:PassRole
+                Resource: !GetAtt CloudFormationRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: cloudformation.amazonaws.com
+              - Sid: PublishArtefacts
+                Effect: Allow
+                Action:
+                  - s3:ListBucket
+                  - s3:GetBucketLocation
+                  - s3:ListBucketMultipartUploads
+                Resource: !GetAtt ArtefactBucket.Arn
+              - Sid: PublishArtefactObjects
+                Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:AbortMultipartUpload
+                Resource: !Sub ${ArtefactBucket.Arn}/*
+              - Sid: ContainerRegistryAuth
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Sid: PushAgentEnvironmentImage
+                Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeImages
+                  - ecr:DescribeRepositories
+                  - ecr:ListImages
+                Resource: !GetAtt AgentEnvironmentRepository.Arn
+              - Sid: PromoteLiveAliases
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetHarness
+                  - bedrock-agentcore:ListHarnessVersions
+                  - bedrock-agentcore:GetHarnessEndpoint
+                  - bedrock-agentcore:ListHarnessEndpoints
+                  - bedrock-agentcore:UpdateHarnessEndpoint
+                  - bedrock-agentcore:UpdateAgentRuntimeEndpoint
+                  - states:DescribeStateMachine
+                  - states:ListStateMachineVersions
+                  - states:DescribeStateMachineAlias
+                  - states:UpdateStateMachineAlias
+                  - lambda:GetFunction
+                  - lambda:ListVersionsByFunction
+                  - lambda:GetAlias
+                  - lambda:UpdateAlias
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*
+                  - !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:factorial-*
+                  - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:factorial-*
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Artefacts: packaged templates and Lambda bundles uploaded by deployments.
+  # ---------------------------------------------------------------------------
+  ArtefactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub factorial-artefacts-${AWS::AccountId}-${AWS::Region}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldArtefactVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  ArtefactBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ArtefactBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RequireTls
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt ArtefactBucket.Arn
+              - !Sub ${ArtefactBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  # ---------------------------------------------------------------------------
+  # Container registry for the agent harness environment image.
+  # ---------------------------------------------------------------------------
+  AgentEnvironmentRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: factorial/agent-environment
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the most recent 20 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+Outputs:
+  GitHubOidcProviderArn:
+    Value: !Ref GitHubOidcProvider
+    Export:
+      Name: Factorial-GitHubOidcProviderArn
+  DeployRoleArn:
+    Description: Role GitHub Actions assumes. Store as the AWS_DEPLOY_ROLE_ARN repository secret.
+    Value: !GetAtt DeployRole.Arn
+    Export:
+      Name: Factorial-DeployRoleArn
+  CloudFormationRoleArn:
+    Description: Pass as --role-arn on every Factorial stack deployment.
+    Value: !GetAtt CloudFormationRole.Arn
+    Export:
+      Name: Factorial-CloudFormationRoleArn
+  PermissionsBoundaryArn:
+    Description: Every role in Factorial's stacks must set this as its PermissionsBoundary.
+    Value: !Ref PermissionsBoundary
+    Export:
+      Name: Factorial-PermissionsBoundaryArn
+  ArtefactBucketName:
+    Value: !Ref ArtefactBucket
+    Export:
+      Name: Factorial-ArtefactBucketName
+  AgentEnvironmentRepositoryUri:
+    Value: !GetAtt AgentEnvironmentRepository.RepositoryUri
+    Export:
+      Name: Factorial-AgentEnvironmentRepositoryUri

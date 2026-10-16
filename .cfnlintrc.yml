@@ -1,0 +1,4 @@
+templates:
+  - templates/*.yml
+regions:
+  - eu-west-1

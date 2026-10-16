@@ -14,7 +14,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
     "test": "npm test --workspaces --if-present",
     "check:yml": "node --disable-warning=ExperimentalWarning scripts/check-yml-extension.ts",
-    "ci": "npm run typecheck && npm test && npm run check:yml"
+    "lint:cfn": "cfn-lint",
+    "ci": "npm run typecheck && npm test && npm run check:yml && npm run lint:cfn"
   },
   "devDependencies": {
     "@types/node": "^22.19.0",

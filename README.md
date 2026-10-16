@@ -17,9 +17,11 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 
 ## Development
 
-Requires Node 22.18 or later (see `.nvmrc`). TypeScript runs directly under Node's type stripping, so there is no build step for tests or scripts.
+Requires Node 22.18 or later (see `.nvmrc`) and `cfn-lint` (`uv tool install cfn-lint` or `pipx install cfn-lint`). TypeScript runs directly under Node's type stripping, so there is no build step for tests or scripts.
 
 ```sh
 npm ci
-npm run ci        # typecheck, test, and the .yml extension check
+npm run ci        # typecheck, tests, the .yml extension check, cfn-lint
 ```
+
+Setting up a new AWS account for Factorial is described in `docs/bootstrap.md`.
