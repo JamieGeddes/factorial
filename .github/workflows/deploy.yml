@@ -1,0 +1,83 @@
+name: Deploy
+
+# Runs after CI succeeds on main, or on demand. Assumes the factorial-deploy
+# role through GitHub OIDC (no stored keys) and deploys Factorial's stacks in
+# order. The foundation stack (00-*) is excluded: it is deployed by a human.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-factorial
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  deploy:
+    name: Deploy Factorial stacks
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      # Actions are pinned to full commit SHAs.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: factorial-deploy-${{ github.run_id }}
+
+      - name: Confirm identity
+        run: aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<account>/'
+
+      - name: Read foundation exports
+        id: foundation
+        run: |
+          set -euo pipefail
+          cfn_role=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-CloudFormationRoleArn'].Value" --output text)
+          bucket=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-ArtefactBucketName'].Value" --output text)
+          test -n "$cfn_role" && test -n "$bucket"
+          echo "::add-mask::$cfn_role"
+          echo "::add-mask::$bucket"
+          echo "cfn_role=$cfn_role" >> "$GITHUB_OUTPUT"
+          echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy stacks in order
+        env:
+          CFN_ROLE: ${{ steps.foundation.outputs.cfn_role }}
+          BUCKET: ${{ steps.foundation.outputs.bucket }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          templates=(templates/[1-9]*.yml)
+          if [ ${#templates[@]} -eq 0 ]; then
+            echo "No deployable templates yet (only the human-deployed foundation exists)."
+            exit 0
+          fi
+          for template in "${templates[@]}"; do
+            name=$(basename "$template" .yml)   # e.g. 10-triggers
+            stack="factorial-${name#*-}"        # e.g. factorial-triggers
+            echo "::group::Deploying $stack from $template"
+            aws cloudformation deploy \
+              --stack-name "$stack" \
+              --template-file "$template" \
+              --role-arn "$CFN_ROLE" \
+              --s3-bucket "$BUCKET" \
+              --s3-prefix "templates/$stack" \
+              --capabilities CAPABILITY_NAMED_IAM \
+              --tags Project=Factorial \
+              --no-fail-on-empty-changeset
+            echo "::endgroup::"
+          done
