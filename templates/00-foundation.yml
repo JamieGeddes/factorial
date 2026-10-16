@@ -487,7 +487,12 @@ Resources:
                 Resource: !Sub ${ArtefactBucket.Arn}/*
               - Sid: ContainerRegistryAuth
                 Effect: Allow
-                Action: ecr:GetAuthorizationToken
+                Action:
+                  - ecr:GetAuthorizationToken
+                  # Authenticated pulls of the base image from ECR Public;
+                  # anonymous pulls are rate-limited on shared CI runners.
+                  - ecr-public:GetAuthorizationToken
+                  - sts:GetServiceBearerToken
                 Resource: '*'
               - Sid: PushAgentEnvironmentImage
                 Effect: Allow

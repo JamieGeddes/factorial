@@ -92,6 +92,10 @@ jobs:
             echo "Agent image $tag already exists; skipping the build."
             exit 0
           fi
+          # Authenticate to both registries: ECR Public for the base image
+          # (anonymous pulls are rate-limited on shared runners) and the
+          # private repository for the push.
+          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
           aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
           docker buildx build --platform linux/arm64 --provenance=false --push \
             --tag "$REPO_URI:$tag" agent-environment/
