@@ -41,10 +41,11 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # No Actions cache: the dispatched test workflow runs untrusted code on a
+      # main-branch ref, and a poisoned cache must never reach this job.
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .nvmrc
-          cache: npm
       - run: npm ci
       - name: Build Lambda bundles
         run: npm run build

@@ -47,10 +47,16 @@ jobs:
             echo "sha input is not a 40-character commit sha" >&2
             exit 1
           fi
+      # Untrusted code is checked out here. No token is persisted, and no
+      # Actions cache is used anywhere in Factorial's workflows, so this job
+      # cannot seed a cache that a privileged main-branch workflow restores.
+      # The task token in the inputs is useless without AWS credentials that
+      # can call SendTaskSuccess, which this job cannot obtain.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ inputs.sha }}
           path: work
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: work/.nvmrc
