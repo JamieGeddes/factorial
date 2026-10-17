@@ -31,6 +31,7 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    | Contents | Read and write | Clone and push branches. |
    | Pull requests | Read and write | Open the PR. |
    | Actions | Read and write | Dispatch the test workflow and read its result. |
+   | Workflows | Read and write | Push branches that change files under `.github/workflows/`. GitHub rejects such pushes otherwise. The orchestrator requests this permission on a token only when the change edits a workflow file. |
 
 6. Under **Subscribe to events**, tick **Issues**.
 7. Under **Where can this GitHub App be installed?**, choose **Only on this account**.
@@ -79,3 +80,11 @@ where `ruleset.json` targets `~DEFAULT_BRANCH` with the rules `deletion`, `non_f
 3. Open a test issue and add the `factorial` label. Only users listed in the triggers stack's `AllowedGitHubUserIds` parameter (default: the repository owner) can trigger work: both the issue author and whoever applies the label must be listed, otherwise the delivery returns `202` with an "untrusted user" reason and no WorkItem is created. The delivery for the `issues` event should show `202` with a `workItemId` in the response body, and the adapter's log group `/aws/lambda/factorial-github-issues-adapter` should contain a `WorkItem created` line.
 
 Until the orchestration stack exists, nothing consumes the event. That is expected.
+
+## Adding a permission later
+
+Changing the App's permissions does not change existing installations until the installation owner accepts the new permissions.
+
+1. Click your profile photo, then **Settings**, then **Developer settings** at the bottom of the left nav, then **GitHub Apps**, then **Edit** next to the Factorial App.
+2. In the left nav click **Permissions & events**. Under **Repository permissions**, set the permission (for example **Workflows** to **Read and write**), scroll down and click **Save changes**.
+3. Accept it on the installation: profile photo, **Settings**, **Applications** in the left nav, the **Installed GitHub Apps** tab, **Configure** next to the Factorial App. A banner reads "This app has requested new permissions"; click **Review request**, then **Accept new permissions**.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { bundleScript, cleanRoomPushScript, inspectScript, parseInspection } from './collect.ts';
+import { bundleScript, cleanRoomPushScript, inspectScript, parseInspection, touchesWorkflows } from './collect.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 
@@ -9,18 +9,36 @@ const SECTION = '\n===FACTORIAL-SECTION===\n';
 const sha = 'a'.repeat(40);
 
 describe('parseInspection', () => {
-  it('extracts the commit count, head sha and summary', () => {
-    const out = `3\n${SECTION}${sha}\n${SECTION}# Summary\n\nDid the thing.\n`;
-    assert.deepEqual(parseInspection(out), { commitCount: 3, headSha: sha, summary: '# Summary\n\nDid the thing.' });
+  it('extracts the commit count, head sha, changed paths and summary', () => {
+    const out = `3\n${SECTION}${sha}\n${SECTION}README.md\n.github/workflows/ci.yml\n${SECTION}# Summary\n\nDid the thing.\n`;
+    assert.deepEqual(parseInspection(out), {
+      commitCount: 3,
+      headSha: sha,
+      changedPaths: ['README.md', '.github/workflows/ci.yml'],
+      summary: '# Summary\n\nDid the thing.',
+    });
   });
 
-  it('tolerates a missing summary', () => {
-    assert.deepEqual(parseInspection(`0\n${SECTION}${sha}\n${SECTION}`), { commitCount: 0, headSha: sha, summary: '' });
+  it('tolerates no changed paths and a missing summary', () => {
+    assert.deepEqual(parseInspection(`0\n${SECTION}${sha}\n${SECTION}\n${SECTION}`), {
+      commitCount: 0,
+      headSha: sha,
+      changedPaths: [],
+      summary: '',
+    });
   });
 
   it('rejects malformed output', () => {
     assert.throws(() => parseInspection('garbage'), /Could not parse/);
     assert.throws(() => parseInspection(`x${SECTION}${sha}${SECTION}`), /Could not parse/);
+  });
+});
+
+describe('touchesWorkflows', () => {
+  it('is true only for files under .github/workflows/', () => {
+    assert.equal(touchesWorkflows(['.github/workflows/ci.yml', 'README.md']), true);
+    assert.equal(touchesWorkflows(['.github/CODEOWNERS', 'docs/workflows.md', 'packages/x/.github/workflows/y.yml']), false);
+    assert.equal(touchesWorkflows([]), false);
   });
 });
 

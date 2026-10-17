@@ -44,17 +44,36 @@ export function inspectScript(baseBranch: string): string {
     `printf '%s' ${shellQuote(SECTION)}`,
     'git rev-parse HEAD',
     `printf '%s' ${shellQuote(SECTION)}`,
+    `git diff --name-only "$(git merge-base ${shellQuote(`origin/${baseBranch}`)} HEAD)" HEAD`,
+    `printf '%s' ${shellQuote(SECTION)}`,
     'if [ -f /workspace/summary.md ]; then head -c 60000 /workspace/summary.md; fi',
   ].join('\n');
 }
 
-export function parseInspection(stdout: string): { commitCount: number; headSha: string; summary: string } {
-  const [count = '', sha = '', summary = ''] = stdout.split(SECTION);
+export interface Inspection {
+  commitCount: number;
+  headSha: string;
+  /** Paths changed between the base branch and the agent's head. */
+  changedPaths: string[];
+  summary: string;
+}
+
+export function parseInspection(stdout: string): Inspection {
+  const [count = '', sha = '', paths = '', summary = ''] = stdout.split(SECTION);
   const commitCount = Number.parseInt(count.trim(), 10);
   if (!Number.isInteger(commitCount) || !/^[0-9a-f]{40}$/.test(sha.trim())) {
     throw new Error(`Could not parse session inspection output: ${redactSecrets(stdout.slice(0, 500))}`);
   }
-  return { commitCount, headSha: sha.trim(), summary: summary.trim() };
+  const changedPaths = paths
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  return { commitCount, headSha: sha.trim(), changedPaths, summary: summary.trim() };
+}
+
+/** GitHub refuses pushes that touch Actions workflows unless the token carries the workflows permission. */
+export function touchesWorkflows(changedPaths: string[]): boolean {
+  return changedPaths.some((path) => path.startsWith('.github/workflows/'));
 }
 
 /** Export the new commits from the agent's session as a base64 bundle on stdout. */
@@ -132,7 +151,7 @@ export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
   if (inspection.exitCode !== 0) {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
-  const { commitCount, headSha, summary } = parseInspection(inspection.stdout);
+  const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
 
   if (commitCount === 0) {
     await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
@@ -148,7 +167,20 @@ export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
   const identity = await commitIdentity(repo);
-  const token = await repositoryToken(repo, { contents: 'write' });
+  // Least privilege per push: the workflows permission is requested only
+  // when the change edits a workflow file, so an ordinary change never
+  // carries it.
+  const editsWorkflows = touchesWorkflows(changedPaths);
+  const token = await repositoryToken(repo, editsWorkflows ? { contents: 'write', workflows: 'write' } : { contents: 'write' }).catch(
+    (error: unknown) => {
+      if (editsWorkflows) {
+        throw new Error(
+          `The change edits GitHub Actions workflows, which needs the Factorial App's "Workflows: read and write" permission (docs/github-app.md): ${redactSecrets(String(error))}`,
+        );
+      }
+      throw error;
+    },
+  );
   const push = await mustRun(
     cleanRoomTarget(ctx.workItem.id),
     cleanRoomPushScript({
@@ -171,6 +203,8 @@ export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
     headSha: pushedSha,
     agentHeadSha: headSha,
     commitCount,
+    changedPaths: changedPaths.slice(0, 200),
+    editsWorkflows,
     summary,
     bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
   });
