@@ -9,9 +9,18 @@
  * from a pristine clone, with hooks disabled and the token sent as a header.
  */
 import type { WorkContext } from '../lib/context.ts';
-import { repositoryToken } from '../lib/github.ts';
+import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { cleanRoomTarget, mustRun, runCommand, sessionTarget } from '../lib/session.ts';
-import { HARDENED_GIT_ENV, assertCommitSha, assertGitHubName, gitAuthHeader, redactSecrets, shellQuote } from '../lib/shell.ts';
+import {
+  HARDENED_GIT_ENV,
+  assertCommitSha,
+  assertGitBranch,
+  assertGitHubName,
+  assertGitIdentity,
+  gitAuthHeader,
+  redactSecrets,
+  shellQuote,
+} from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
 export interface CollectResult {
@@ -30,7 +39,7 @@ export function inspectScript(baseBranch: string): string {
     'set -uo pipefail',
     HARDENED_GIT_ENV,
     'cd /workspace/repo',
-    'if [ -n "$(git -c core.hooksPath=/dev/null status --porcelain=v1)" ]; then git -c core.hooksPath=/dev/null add -A && git -c core.hooksPath=/dev/null -c user.name=Factorial -c user.email=factorial[bot]@users.noreply.github.com commit --quiet -m "Apply remaining changes left by the agent"; fi',
+    'if [ -n "$(git -c core.hooksPath=/dev/null status --porcelain=v1)" ]; then git -c core.hooksPath=/dev/null add -A && git -c core.hooksPath=/dev/null -c user.name=Factorial -c user.email=agent@factorial.invalid commit --quiet -m "Apply remaining changes left by the agent"; fi',
     `git rev-list --count ${shellQuote(`origin/${baseBranch}`)}..HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
     'git rev-parse HEAD',
@@ -69,15 +78,27 @@ export function cleanRoomPushScript(params: {
   owner: string;
   name: string;
   branch: string;
+  baseBranch: string;
   headSha: string;
   token: string;
   bundleBase64: string;
+  /** Author and committer for every pushed commit; the agent's own identity is discarded. */
+  identity: { name: string; email: string };
 }): string {
   const owner = assertGitHubName(params.owner, 'repository owner');
   const name = assertGitHubName(params.name, 'repository name');
   const headSha = assertCommitSha(params.headSha, 'head sha');
+  const branch = assertGitBranch(params.branch, 'work branch');
+  const baseBranch = assertGitBranch(params.baseBranch, 'base branch');
+  const identity = assertGitIdentity(params.identity);
   const url = `https://github.com/${owner}/${name}.git`;
   const auth = shellQuote(gitAuthHeader(params.token));
+  const ident = [
+    `GIT_AUTHOR_NAME=${shellQuote(identity.name)}`,
+    `GIT_AUTHOR_EMAIL=${shellQuote(identity.email)}`,
+    `GIT_COMMITTER_NAME=${shellQuote(identity.name)}`,
+    `GIT_COMMITTER_EMAIL=${shellQuote(identity.email)}`,
+  ].join(' ');
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
@@ -90,8 +111,18 @@ export function cleanRoomPushScript(params: {
     // the same header or it fails asking for a username.
     `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} fetch --quiet ../incoming.bundle HEAD`,
     `test "$(git rev-parse FETCH_HEAD)" = ${shellQuote(headSha)}`,
-    `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} push --quiet origin ${shellQuote(`${headSha}:refs/heads/${params.branch}`)}`,
+    // Re-create the agent's commits with the App's identity: same trees,
+    // messages and author dates, linear history only. The agent chose its
+    // own author inside the sandbox; what GitHub attributes is decided here.
+    `base=$(git merge-base ${shellQuote(`refs/heads/${baseBranch}`)} FETCH_HEAD)`,
+    'test -z "$(git rev-list --merges "$base..FETCH_HEAD")"',
+    'new=$base',
+    'for c in $(git rev-list --reverse "$base..FETCH_HEAD"); do',
+    `  new=$(git log -1 --format=%B "$c" | ${ident} GIT_AUTHOR_DATE="$(git log -1 --format=%aI "$c")" git commit-tree "$c^{tree}" -p "$new")`,
+    'done',
+    `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} push --quiet origin "$new:${`refs/heads/${branch}`}"`,
     'cd / && rm -rf /workspace/push',
+    'echo "$new"',
   ].join('\n');
 }
 
@@ -116,14 +147,35 @@ export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
   }
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
+  const identity = await commitIdentity(repo);
   const token = await repositoryToken(repo, { contents: 'write' });
-  await mustRun(
+  const push = await mustRun(
     cleanRoomTarget(ctx.workItem.id),
-    cleanRoomPushScript({ owner: repo.owner, name: repo.name, branch: ctx.branch, headSha, token, bundleBase64 }),
+    cleanRoomPushScript({
+      owner: repo.owner,
+      name: repo.name,
+      branch: ctx.branch,
+      baseBranch: ctx.baseBranch,
+      headSha,
+      token,
+      bundleBase64,
+      identity,
+    }),
     600,
   );
+  // The pushed head differs from the agent's: the commits were re-created
+  // with the App's identity. Everything downstream tests and reviews this one.
+  const pushedSha = assertCommitSha(push.stdout.trim().split('\n').pop() ?? '', 'pushed head');
 
-  await recordProgress(ctx.workItem.id, 'pushed', { headSha, commitCount, summary, bundleBytes: Math.floor((bundleBase64.length * 3) / 4) });
-  console.log(JSON.stringify({ message: 'branch pushed from clean room', workItemId: ctx.workItem.id, branch: ctx.branch, headSha, commitCount }));
-  return { pushed: true, commitCount, headSha, summary };
+  await recordProgress(ctx.workItem.id, 'pushed', {
+    headSha: pushedSha,
+    agentHeadSha: headSha,
+    commitCount,
+    summary,
+    bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
+  });
+  console.log(
+    JSON.stringify({ message: 'branch pushed from clean room', workItemId: ctx.workItem.id, branch: ctx.branch, headSha: pushedSha, agentHeadSha: headSha, commitCount }),
+  );
+  return { pushed: true, commitCount, headSha: pushedSha, summary };
 };

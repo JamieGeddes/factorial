@@ -9,7 +9,26 @@ const GITHUB_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 // characters and containing dots and hyphens. This is GitHub's recommended
 // validation pattern.
 const GITHUB_TOKEN = /^ghs_[A-Za-z0-9._-]{36,}$/;
+const GIT_BRANCH = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const IDENTITY_NAME = /^[A-Za-z0-9][A-Za-z0-9._ [\]-]*$/;
+const IDENTITY_EMAIL = /^[A-Za-z0-9+._[\]-]+@[A-Za-z0-9.-]+$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** Reject anything that is not a plain branch name before it reaches a shell. */
+export function assertGitBranch(value: string, what: string): string {
+  if (!GIT_BRANCH.test(value) || value.includes('..') || value.endsWith('.lock')) {
+    throw new Error(`${what} "${value}" is not a valid branch name`);
+  }
+  return value;
+}
+
+/** A git author identity made only of characters safe to place in a shell command. */
+export function assertGitIdentity(identity: { name: string; email: string }): { name: string; email: string } {
+  if (!IDENTITY_NAME.test(identity.name) || !IDENTITY_EMAIL.test(identity.email)) {
+    throw new Error('Commit identity has an unexpected format');
+  }
+  return identity;
+}
 
 /** Reject anything that is not a plausible GitHub owner or repository name before it reaches a shell. */
 export function assertGitHubName(value: string, what: string): string {

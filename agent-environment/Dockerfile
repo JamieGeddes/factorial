@@ -38,7 +38,9 @@ RUN curl -fsSL -o /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${G
 
 RUN git config --system init.defaultBranch main \
  && git config --system user.name "Factorial" \
- && git config --system user.email "factorial[bot]@users.noreply.github.com"
+ && git config --system user.email "agent@factorial.invalid"
+# The identity above only lets the agent commit. Commits are re-created with
+# the GitHub App's bot identity in the clean-room push, outside this image.
 
 # Sessions run as root inside an isolated microVM; the IAM execution role is the
 # real boundary. The orchestrator's pre-invocation commands also run as root, so

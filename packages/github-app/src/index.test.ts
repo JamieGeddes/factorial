@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createVerify, generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 
-import { createAppJwt, mintInstallationToken } from './index.ts';
+import { botGitIdentity, createAppJwt, getApp, mintInstallationToken } from './index.ts';
 
 const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
 const privateKeyPem = privateKey.export({ type: 'pkcs1', format: 'pem' }).toString();
@@ -77,5 +77,33 @@ describe('mintInstallationToken', () => {
   it('throws on a malformed success response', async () => {
     const fetchImpl = (async () => new Response(JSON.stringify({ nope: true }), { status: 201 })) as typeof fetch;
     await assert.rejects(mintInstallationToken(credentials, { fetchImpl }), /malformed/);
+  });
+});
+
+describe('getApp', () => {
+  it('reads the App record with the JWT and returns its slug', async () => {
+    let seen: { url: string; init: RequestInit } | undefined;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      seen = { url: String(url), init: init ?? {} };
+      return new Response(JSON.stringify({ id: 42, slug: 'factorial-x', name: 'Factorial (x)' }), { status: 200 });
+    }) as typeof fetch;
+    const app = await getApp({ appId: '42', privateKeyPem }, { fetchImpl });
+    assert.deepEqual(app, { id: 42, slug: 'factorial-x', name: 'Factorial (x)' });
+    assert.equal(seen?.url, 'https://api.github.com/app');
+    assert.match((seen?.init.headers as Record<string, string>).authorization ?? '', /^Bearer /);
+  });
+
+  it('rejects a malformed response', async () => {
+    const fetchImpl = (async () => new Response(JSON.stringify({ id: 'nope' }), { status: 200 })) as typeof fetch;
+    await assert.rejects(getApp({ appId: '42', privateKeyPem }, { fetchImpl }), /malformed/);
+  });
+});
+
+describe('botGitIdentity', () => {
+  it("builds the bot user's login and noreply address", () => {
+    assert.deepEqual(botGitIdentity('factorial-x', 12345), {
+      name: 'factorial-x[bot]',
+      email: '12345+factorial-x[bot]@users.noreply.github.com',
+    });
   });
 });

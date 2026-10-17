@@ -90,6 +90,12 @@ export class GitHubClient {
     return info.default_branch;
   }
 
+  /** A user or bot account by login, e.g. `my-app[bot]`. */
+  async getUser(login: string): Promise<{ id: number; login: string; type: string }> {
+    const user = await this.#request<{ id: number; login: string; type: string }>('GET', `/users/${encodeURIComponent(login)}`);
+    return { id: user.id, login: user.login, type: user.type };
+  }
+
   /** The commit a branch currently points at. */
   async getBranchSha(repo: Repo, branch: string): Promise<string> {
     const ref = await this.#request<{ object: { sha: string } }>(

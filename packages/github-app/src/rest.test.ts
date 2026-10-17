@@ -70,3 +70,13 @@ describe('GitHubClient', () => {
     );
   });
 });
+
+describe('getUser', () => {
+  it('looks a login up and returns its id and type', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 'ghs_x', fetchImpl: fakeFetch(200, { id: 7, login: 'factorial-x[bot]', type: 'Bot' }, seen) });
+    const user = await client.getUser('factorial-x[bot]');
+    assert.deepEqual(user, { id: 7, login: 'factorial-x[bot]', type: 'Bot' });
+    assert.equal(seen[0]?.url, 'https://api.github.com/users/factorial-x%5Bbot%5D');
+  });
+});

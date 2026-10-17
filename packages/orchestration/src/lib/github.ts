@@ -6,7 +6,16 @@
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 import { GetParametersCommand, SSMClient } from '@aws-sdk/client-ssm';
 
-import { GitHubClient, mintInstallationToken, type AppCredentials, type Repo, type TokenPermissions } from '@factorial/github-app';
+import {
+  GitHubClient,
+  botGitIdentity,
+  getApp,
+  mintInstallationToken,
+  type AppCredentials,
+  type GitIdentity,
+  type Repo,
+  type TokenPermissions,
+} from '@factorial/github-app';
 
 import { requireEnv } from './env.ts';
 import { assertGitHubToken } from './shell.ts';
@@ -44,4 +53,21 @@ export async function repositoryToken(repo: Repo, permissions: TokenPermissions)
 
 export async function repositoryClient(repo: Repo, permissions: TokenPermissions): Promise<GitHubClient> {
   return new GitHubClient({ token: await repositoryToken(repo, permissions) });
+}
+
+let cachedIdentity: GitIdentity | undefined;
+
+/**
+ * The identity every commit Factorial pushes is attributed to: the App's bot
+ * user. Whatever name the agent used inside the sandbox is discarded.
+ */
+export async function commitIdentity(repo: Repo): Promise<GitIdentity> {
+  if (cachedIdentity) return cachedIdentity;
+  const { slug } = await getApp(await appCredentials());
+  const bot = await (await repositoryClient(repo, { metadata: 'read' })).getUser(`${slug}[bot]`);
+  if (bot.type !== 'Bot') {
+    throw new Error(`${slug}[bot] is not a bot account`);
+  }
+  cachedIdentity = botGitIdentity(slug, bot.id);
+  return cachedIdentity;
 }

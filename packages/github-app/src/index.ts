@@ -82,3 +82,49 @@ export async function mintInstallationToken(
   }
   return { token: json.token, expiresAt: json.expires_at };
 }
+
+export interface AppInfo {
+  id: number;
+  slug: string;
+  name: string;
+}
+
+/** The App's own record, which carries the slug its bot user is named after. */
+export async function getApp(
+  credentials: Pick<AppCredentials, 'appId' | 'privateKeyPem'>,
+  options: { fetchImpl?: typeof fetch; nowSeconds?: number } = {},
+): Promise<AppInfo> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const jwt = createAppJwt(credentials.appId, credentials.privateKeyPem, options.nowSeconds);
+  const response = await fetchImpl('https://api.github.com/app', {
+    headers: {
+      accept: 'application/vnd.github+json',
+      authorization: `Bearer ${jwt}`,
+      'user-agent': 'factorial',
+      'x-github-api-version': '2022-11-28',
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`GitHub app lookup failed: ${response.status} ${await response.text()}`);
+  }
+  const json = (await response.json()) as { id?: unknown; slug?: unknown; name?: unknown };
+  if (typeof json.id !== 'number' || typeof json.slug !== 'string' || typeof json.name !== 'string') {
+    throw new Error('GitHub app response was malformed');
+  }
+  return { id: json.id, slug: json.slug, name: json.name };
+}
+
+export interface GitIdentity {
+  name: string;
+  email: string;
+}
+
+/**
+ * The git author/committer identity GitHub attributes to the App's bot user:
+ * `<slug>[bot]` with its noreply address. The numeric part is the bot user's
+ * id (GET /users/<slug>[bot]), not the App id.
+ */
+export function botGitIdentity(slug: string, botUserId: number): GitIdentity {
+  const login = `${slug}[bot]`;
+  return { name: login, email: `${botUserId}+${login}@users.noreply.github.com` };
+}
