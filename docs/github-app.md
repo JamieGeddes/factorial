@@ -70,6 +70,6 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
 
 1. Back on the App's page, open **Advanced** in the left nav. The **Recent Deliveries** list shows the `ping` GitHub sent when the webhook was saved. It should show a `200` response.
 2. Create a label named `factorial` in the repository (**Issues**, **Labels**, **New label**).
-3. Open a test issue and add the `factorial` label. The delivery for the `issues` event should show `202` with a `workItemId` in the response body, and the adapter's log group `/aws/lambda/factorial-github-issues-adapter` should contain a `WorkItem created` line.
+3. Open a test issue and add the `factorial` label. Only users listed in the triggers stack's `AllowedGitHubUserIds` parameter (default: the repository owner) can trigger work: both the issue author and whoever applies the label must be listed, otherwise the delivery returns `202` with an "untrusted user" reason and no WorkItem is created. The delivery for the `issues` event should show `202` with a `workItemId` in the response body, and the adapter's log group `/aws/lambda/factorial-github-issues-adapter` should contain a `WorkItem created` line.
 
 Until the orchestration stack exists, nothing consumes the event. That is expected.

@@ -9,6 +9,14 @@ Parameters:
     Type: String
     Default: factorial
     Description: Adding this label to a GitHub issue turns it into a WorkItem.
+  AllowedGitHubUserIds:
+    Type: String
+    Default: '6577672'
+    Description: >-
+      Comma-separated numeric GitHub user IDs trusted to request work. Both the
+      issue author and whoever applies the trigger label must be listed; issues
+      from anyone else are ignored. Find an ID with: gh api users/<login> --jq .id
+    AllowedPattern: '^[0-9]+(,[0-9]+)*$'
   LogRetentionDays:
     Type: Number
     Default: 30
@@ -72,6 +80,7 @@ Resources:
           EVENT_BUS_NAME: !Ref WorkBus
           WEBHOOK_SECRET_ARN: !Ref WebhookSecret
           TRIGGER_LABEL: !Ref TriggerLabel
+          ALLOWED_USER_IDS: !Ref AllowedGitHubUserIds
           NODE_OPTIONS: --enable-source-maps
       # Public endpoint by necessity (GitHub must reach it); every request is
       # authenticated by HMAC signature in the handler before anything else.

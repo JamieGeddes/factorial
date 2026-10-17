@@ -10,13 +10,14 @@ export interface IssuesWebhookPayload {
     title: string;
     body: string | null;
     html_url: string;
+    user: { id: number; login: string };
   };
   label?: { name: string };
   repository: {
     name: string;
     owner: { login: string };
   };
-  sender: { login: string };
+  sender: { id: number; login: string };
 }
 
 export type IssueDecision =
@@ -26,6 +27,13 @@ export type IssueDecision =
 export interface DecideOptions {
   /** Label whose addition turns an issue into work. */
   triggerLabel: string;
+  /**
+   * Numeric GitHub user IDs trusted to request work. Both the issue author and
+   * whoever applies the label must be in this set, because the issue body
+   * becomes the agent's instructions. IDs, not logins, since a login can be
+   * renamed and re-registered by someone else.
+   */
+  allowedUserIds: ReadonlySet<number>;
   /** GitHub's delivery GUID, reused as the WorkItem id so redeliveries are idempotent. */
   deliveryId: string | undefined;
   now?: Date;
@@ -46,6 +54,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function user(value: unknown, path: string): { id: number; login: string } {
+  if (!isRecord(value)) throw new BadPayloadError(`${path} must be an object`);
+  if (typeof value.id !== 'number') throw new BadPayloadError(`${path}.id must be a number`);
+  return { id: value.id, login: str(value.login, `${path}.login`) };
+}
+
 function str(value: unknown, path: string): string {
   if (typeof value !== 'string') {
     throw new BadPayloadError(`${path} must be a string`);
@@ -61,7 +75,6 @@ export function parseIssuesPayload(value: unknown): IssuesWebhookPayload {
   if (!isRecord(repository) || !isRecord(repository.owner)) {
     throw new BadPayloadError('repository.owner must be an object');
   }
-  if (!isRecord(sender)) throw new BadPayloadError('sender must be an object');
   if (typeof issue.number !== 'number') throw new BadPayloadError('issue.number must be a number');
   if (issue.body !== null && issue.body !== undefined && typeof issue.body !== 'string') {
     throw new BadPayloadError('issue.body must be a string or null');
@@ -74,12 +87,13 @@ export function parseIssuesPayload(value: unknown): IssuesWebhookPayload {
       title: str(issue.title, 'issue.title'),
       body: (issue.body as string | null | undefined) ?? null,
       html_url: str(issue.html_url, 'issue.html_url'),
+      user: user(issue.user, 'issue.user'),
     },
     repository: {
       name: str(repository.name, 'repository.name'),
       owner: { login: str(repository.owner.login, 'repository.owner.login') },
     },
-    sender: { login: str(sender.login, 'sender.login') },
+    sender: user(sender, 'sender'),
   };
   if (isRecord(label)) {
     parsed.label = { name: str(label.name, 'label.name') };
@@ -102,6 +116,12 @@ export function decideIssueEvent(payload: unknown, options: DecideOptions): Issu
   }
   if (event.label?.name !== options.triggerLabel) {
     return { kind: 'ignore', reason: `ignored label "${event.label?.name ?? ''}"` };
+  }
+  if (!options.allowedUserIds.has(event.sender.id)) {
+    return { kind: 'ignore', reason: `label applied by untrusted user "${event.sender.login}"` };
+  }
+  if (!options.allowedUserIds.has(event.issue.user.id)) {
+    return { kind: 'ignore', reason: `issue opened by untrusted user "${event.issue.user.login}"` };
   }
 
   const id =

@@ -25,6 +25,20 @@ function requireEnv(name: string): string {
   return value;
 }
 
+/**
+ * Parse the comma-separated ALLOWED_USER_IDS. Fails closed: a missing or
+ * malformed list throws rather than letting anyone trigger work.
+ */
+function allowedUserIds(): ReadonlySet<number> {
+  const ids = requireEnv('ALLOWED_USER_IDS')
+    .split(',')
+    .map((id) => id.trim());
+  if (ids.some((id) => !/^[0-9]+$/.test(id))) {
+    throw new Error('ALLOWED_USER_IDS must be a comma-separated list of numeric GitHub user IDs');
+  }
+  return new Set(ids.map(Number));
+}
+
 let cachedSecret: string | undefined;
 
 async function webhookSecret(): Promise<string> {
@@ -81,6 +95,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   try {
     decision = decideIssueEvent(payload, {
       triggerLabel: process.env.TRIGGER_LABEL ?? 'factorial',
+      allowedUserIds: allowedUserIds(),
       deliveryId,
     });
   } catch (error) {
