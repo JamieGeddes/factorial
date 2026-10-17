@@ -30,7 +30,7 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    | Issues | Read and write | Receive issue events; comment progress back on the issue. |
    | Contents | Read and write | Clone and push branches. |
    | Pull requests | Read and write | Open the PR. |
-   | Actions | Read and write | Dispatch the test workflow and read its result. |
+   | Actions | Read and write | Dispatch the test workflow and read its result. Rework of failed checks also reads the failing jobs' logs (the orchestrator's token is narrowed to `actions: read` for that). |
    | Workflows | Read and write | Push branches that change files under `.github/workflows/`. GitHub rejects such pushes otherwise. The orchestrator requests this permission on a token only when the change edits a workflow file. |
 
 6. Under **Subscribe to events**, tick **Issues**.
