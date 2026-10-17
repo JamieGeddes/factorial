@@ -170,10 +170,13 @@ jobs:
           # to the version actually serving traffic.
           current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
             --query 'endpoint.[targetVersion, liveVersion] | [?@ != null] | [0]' --output text)
-          if [ "$latest" = "$current" ]; then
+          status=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
+            --query 'endpoint.status' --output text)
+          if [ "$latest" = "$current" ] && [ "$status" = "READY" ]; then
             echo "live endpoint already at harness version $latest."
             exit 0
           fi
+          # Re-issuing the update also repairs an endpoint left in a failed state.
           aws bedrock-agentcore-control update-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
             --target-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
           echo "live endpoint moved from harness version $current to $latest."
