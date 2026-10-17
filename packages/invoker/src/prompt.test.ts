@@ -31,4 +31,41 @@ describe('buildPrompt', () => {
   it('marks an empty body explicitly', () => {
     assert.match(buildPrompt({ ...workItem, body: '  ' }, 'b', 'main'), /_No further description was given\._/);
   });
+
+  it('adds no rework instructions to an ordinary item', () => {
+    const prompt = buildPrompt(workItem, 'b', 'main');
+    assert.doesNotMatch(prompt, /rework\.md/);
+    assert.doesNotMatch(prompt, /rework of an existing pull request/i);
+  });
+});
+
+const reworkWorkItem = {
+  ...workItem,
+  id: '9c8b7a6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d',
+  title: 'Rework PR #26',
+  body: 'Address the review.',
+  context: {
+    kind: 'rework' as const,
+    pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
+    branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+    baseBranch: 'main',
+    previousWorkItemId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+    cause: 'review' as const,
+    details: [{ author: 'JamieGeddes', body: 'Add a test.' }],
+  },
+};
+
+describe('buildPrompt for rework', () => {
+  it('tells the agent to read rework.md, build on the branch and report per point', () => {
+    const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
+    assert.match(prompt, /Read \/workspace\/rework\.md/);
+    assert.match(prompt, /building on the existing work on the branch rather than starting over/);
+    assert.match(prompt, /how each of the points in \/workspace\/rework\.md was handled/);
+  });
+
+  it('does not quote review comments in the prompt itself; they live in rework.md', () => {
+    const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
+    assert.doesNotMatch(prompt, /Add a test\./);
+    assert.doesNotMatch(prompt, /@JamieGeddes/);
+  });
 });
