@@ -8,9 +8,31 @@ on:
 permissions:
   contents: read
 
+# The main-branch ruleset requires the two job names below, so they must report
+# on every pull request, including docs-only ones. A first job classifies the
+# changed paths with scripts/classify-changes.ts (the single definition of what
+# is non-functional) and the checks take a fast path for a non-functional
+# change instead of a paths-ignore trigger, which would leave docs-only PRs
+# without the required checks.
 jobs:
+  classify:
+    name: Classify the changed paths
+    runs-on: ubuntu-latest
+    outputs:
+      functional: ${{ steps.classify.outputs.functional }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - id: classify
+        uses: ./.github/actions/classify-changes
+        with:
+          # On a push, `github.event.before` is all zeros for the first push of
+          # a branch; the action then treats the change as functional.
+          base: ${{ github.event.pull_request.base.sha || github.event.before }}
+          head: ${{ github.event.pull_request.head.sha || github.sha }}
+
   checks:
     name: Typecheck, test and lint
+    needs: classify
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to full commit SHAs (v4 at the time of pinning).
@@ -20,14 +42,24 @@ jobs:
         with:
           node-version-file: .nvmrc
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm run build
-      - run: npm test
-      - run: npm run check:yml
+      - if: needs.classify.outputs.functional == 'true'
+        run: |
+          npm run typecheck
+          npm run build
+          npm test
+          npm run check:yml
+      # Fast path: report the required check as passed without running the
+      # repository's checks, because nothing that affects them changed.
+      - if: needs.classify.outputs.functional == 'false'
+        run: echo "Only non-functional paths changed; skipping typecheck, build, tests and the .yml check."
 
   templates:
     name: Lint CloudFormation
+    needs: classify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-      - run: pipx run --spec 'cfn-lint==1.57.2' cfn-lint
+      - if: needs.classify.outputs.functional == 'true'
+        run: pipx run --spec 'cfn-lint==1.57.2' cfn-lint
+      - if: needs.classify.outputs.functional == 'false'
+        run: echo "Only non-functional paths changed; skipping cfn-lint."

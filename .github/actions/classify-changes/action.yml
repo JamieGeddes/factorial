@@ -1,0 +1,37 @@
+name: 'Classify the changed paths'
+description: >-
+  Runs scripts/classify-changes.ts, the single definition of which paths can
+  affect what Factorial deploys, and outputs `functional` for the classification.
+inputs:
+  base:
+    description: >-
+      Commit to compare against (the merge base is used). Empty or all-zeros
+      means no known base, which is classified as functional.
+    required: false
+    default: ''
+  head:
+    description: 'Commit whose changes are classified'
+    required: true
+outputs:
+  functional:
+    description: 'true when at least one changed path can affect what is deployed'
+    value: ${{ steps.classify.outputs.functional }}
+runs:
+  using: composite
+  steps:
+    - id: classify
+      shell: bash
+      env:
+        BASE: ${{ inputs.base }}
+        HEAD: ${{ inputs.head }}
+      run: |
+        set -euo pipefail
+        if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+          # No known base commit (for example the first push of a branch).
+          # The safe default is to build and deploy.
+          echo "No base commit to compare against; treating the change as functional."
+          echo "functional=true" >> "$GITHUB_OUTPUT"
+        else
+          node --disable-warning=ExperimentalWarning \
+            "${{ github.action_path }}/../../../scripts/classify-changes.ts" "$BASE" "$HEAD"
+        fi
