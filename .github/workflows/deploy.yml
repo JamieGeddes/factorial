@@ -49,15 +49,15 @@ jobs:
     outputs:
       functional: ${{ steps.classify.outputs.functional }}
     steps:
-      # Actions are pinned to full commit SHAs (v4 at the time of pinning).
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # Actions are pinned to full commit SHAs (v5 at the time of pinning).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           # The classifier diffs against the last deployed commit, which a
           # shallow checkout does not contain.
           fetch-depth: 0
 
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+      - uses: aws-actions/configure-aws-credentials@4a1596c86fd706dc0521e32f0121ad1a6d1adb74
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -111,20 +111,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to full commit SHAs.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       # No Actions cache: the dispatched test workflow runs untrusted code on a
       # main-branch ref, and a poisoned cache must never reach this job.
-      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version-file: .nvmrc
       - run: npm ci
       - name: Build Lambda bundles
         run: npm run build
 
-      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+      - uses: aws-actions/configure-aws-credentials@4a1596c86fd706dc0521e32f0121ad1a6d1adb74
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
