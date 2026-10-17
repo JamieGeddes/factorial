@@ -175,8 +175,8 @@ Resources:
           LifecycleConfiguration:
             IdleRuntimeSessionTimeout: 900
             MaxLifetime: 14400
+      # AWS_REGION is reserved and set by the runtime itself.
       EnvironmentVariables:
-        AWS_REGION: !Ref AWS::Region
         FACTORIAL_WORKSPACE: /workspace
       Model:
         OpenAiModelConfig:
