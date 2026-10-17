@@ -91,6 +91,16 @@ Resources:
               - lambda:GetFunction
               - lambda:GetAlias
               - events:PutEvents
+              # Step Functions creates managed EventBridge rules to track
+              # ECS tasks run with the .sync pattern.
+              - events:PutRule
+              - events:PutTargets
+              - events:DescribeRule
+              - events:DeleteRule
+              - events:RemoveTargets
+              - ecs:RunTask
+              - ecs:StopTask
+              - ecs:DescribeTasks
               - sqs:*
               - sns:Publish
             Resource: '*'
@@ -101,12 +111,19 @@ Resources:
               - logs:CreateLogStream
               - logs:PutLogEvents
               - logs:PutResourcePolicy
+              - logs:DescribeResourcePolicies
               - logs:DescribeLogGroups
               - logs:DescribeLogStreams
               - logs:FilterLogEvents
               - logs:GetLogEvents
               - logs:StartQuery
               - logs:GetQueryResults
+              # Vended log delivery (Step Functions execution logging).
+              - logs:CreateLogDelivery
+              - logs:GetLogDelivery
+              - logs:UpdateLogDelivery
+              - logs:DeleteLogDelivery
+              - logs:ListLogDeliveries
               - cloudwatch:PutMetricData
               - cloudwatch:GetMetricData
               - cloudwatch:GetMetricStatistics
@@ -409,6 +426,63 @@ Resources:
                 Effect: Allow
                 Action: ssm:*
                 Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/*
+              # Network for the Fargate invoker. EC2 networking actions do not
+              # support useful name scoping; the boundary denies all of EC2 to
+              # every Factorial role, so only deployments can touch it.
+              - Sid: Network
+                Effect: Allow
+                Action:
+                  - ec2:CreateVpc
+                  - ec2:DeleteVpc
+                  - ec2:ModifyVpcAttribute
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeVpcAttribute
+                  - ec2:CreateSubnet
+                  - ec2:DeleteSubnet
+                  - ec2:ModifySubnetAttribute
+                  - ec2:DescribeSubnets
+                  - ec2:CreateInternetGateway
+                  - ec2:DeleteInternetGateway
+                  - ec2:AttachInternetGateway
+                  - ec2:DetachInternetGateway
+                  - ec2:DescribeInternetGateways
+                  - ec2:CreateRouteTable
+                  - ec2:DeleteRouteTable
+                  - ec2:AssociateRouteTable
+                  - ec2:DisassociateRouteTable
+                  - ec2:CreateRoute
+                  - ec2:DeleteRoute
+                  - ec2:DescribeRouteTables
+                  - ec2:CreateSecurityGroup
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeSecurityGroupRules
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                  - ec2:DescribeTags
+                  - ec2:DescribeAvailabilityZones
+                  - ec2:DescribeAccountAttributes
+                  - ec2:DescribeNetworkInterfaces
+                Resource: '*'
+              - Sid: Containers
+                Effect: Allow
+                Action: ecs:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:cluster/factorial-*
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/factorial-*:*
+              - Sid: ContainersAccountLevel
+                Effect: Allow
+                Action:
+                  - ecs:RegisterTaskDefinition
+                  - ecs:DeregisterTaskDefinition
+                  - ecs:DescribeTaskDefinition
+                  - ecs:ListTaskDefinitions
+                  - ecs:DescribeClusters
+                Resource: '*'
       Tags:
         - Key: Project
           Value: Factorial
@@ -494,7 +568,7 @@ Resources:
                   - ecr-public:GetAuthorizationToken
                   - sts:GetServiceBearerToken
                 Resource: '*'
-              - Sid: PushAgentEnvironmentImage
+              - Sid: PushFactorialImages
                 Effect: Allow
                 Action:
                   - ecr:BatchCheckLayerAvailability
@@ -507,7 +581,9 @@ Resources:
                   - ecr:DescribeImages
                   - ecr:DescribeRepositories
                   - ecr:ListImages
-                Resource: !GetAtt AgentEnvironmentRepository.Arn
+                Resource:
+                  - !GetAtt AgentEnvironmentRepository.Arn
+                  - !GetAtt InvokerRepository.Arn
               - Sid: PromoteLiveAliases
                 Effect: Allow
                 Action:
@@ -624,11 +700,52 @@ Resources:
         - Key: Project
           Value: Factorial
 
+  # ---------------------------------------------------------------------------
+  # Container registry for the orchestration's harness invoker.
+  # ---------------------------------------------------------------------------
+  InvokerRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: factorial/invoker
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the most recent 20 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Factorial
+
 Outputs:
   GitHubOidcProviderArn:
     Value: !Ref GitHubOidcProvider
     Export:
       Name: Factorial-GitHubOidcProviderArn
+  GitHubOidcSubjectPrefix:
+    Description: Immutable OIDC subject prefix for this repository, for trust policies in other stacks.
+    Value: !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}
+    Export:
+      Name: Factorial-GitHubOidcSubjectPrefix
+  InvokerRepositoryUri:
+    Value: !GetAtt InvokerRepository.RepositoryUri
+    Export:
+      Name: Factorial-InvokerRepositoryUri
   DeployRoleArn:
     Description: Role GitHub Actions assumes. Store as the AWS_DEPLOY_ROLE_ARN repository secret.
     Value: !GetAtt DeployRole.Arn
