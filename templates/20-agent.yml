@@ -166,8 +166,9 @@ Resources:
   BuilderHarness:
     Type: AWS::BedrockAgentCore::Harness
     Metadata:
-      # cfn-lint's bundled schema predates OpenAiModelConfig.ApiBase, which the
-      # live CloudFormation registry schema does define (checked 2026-10-16).
+      # cfn-lint's bundled schema may lag the live CloudFormation registry
+      # schema for the model configurations (OpenAiModelConfig.ApiBase was
+      # missing on 2026-10-16; LiteLlmModelConfig checked 2026-10-17).
       cfn-lint:
         config:
           ignore_checks:
@@ -192,21 +193,45 @@ Resources:
       EnvironmentVariables:
         FACTORIAL_WORKSPACE: /workspace
       Model:
-        OpenAiModelConfig:
+        # LiteLLM model configuration since 2026-10-17 (issue #17), an
+        # experiment. With OpenAiModelConfig (chat_completions), two builds
+        # died mid-run with Z.ai error 1214 "The messages parameter is
+        # illegal" straight after a large single-file write (#5 on Flash, #11
+        # on GLM 5.3), and every turn logged that GLM's reasoning content is
+        # dropped from the replayed conversation. LiteLLM's Z.ai provider
+        # builds the request itself. If 1214 persists or LiteLLM misbehaves,
+        # revert to the OpenAiModelConfig block kept below.
+        LiteLlmModelConfig:
+          # LiteLLM's Z.ai provider prefix is `zai/`
+          # (https://docs.litellm.ai/docs/providers/zai, checked 2026-10-17).
+          # Its model table lists GLM 4.x only; the provider is OpenAI-
+          # compatible and passes the model name through, so glm-5.3 should
+          # work, which the verification invocation confirms.
           # Fixed here, not a parameter: `cloudformation deploy` keeps a
           # parameter's previous value, so a changed default never reaches an
-          # existing stack. The stack ran Flash while this said glm-5.3.
-          # GLM 5.3 (flagship) since 2026-10-17, for a direct comparison with
-          # Flash on issue #11 (Flash timed out after an hour without an edit).
-          # Flash remains the cheaper option with reasoning_effort high.
-          ModelId: glm-5.3
+          # existing stack.
+          ModelId: zai/glm-5.3
           ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
+          # Set explicitly: the LiteLLM docs do not state the provider's
+          # default base, and Factorial's key is for the general endpoint.
           ApiBase: !Ref ModelApiBase
-          ApiFormat: chat_completions
           MaxTokens: 16384
-          # Provider-specific request fields, passed through unchanged.
+          # Passed to LiteLLM unchanged. reasoning_effort goes in extra_body,
+          # which LiteLLM forwards into the request body as-is; LiteLLM does
+          # not list reasoning_effort as a supported Z.ai parameter and could
+          # otherwise reject or drop it.
           AdditionalParams:
-            reasoning_effort: !Ref ReasoningEffort
+            extra_body:
+              reasoning_effort: !Ref ReasoningEffort
+        # Previous configuration, to revert to if the experiment fails:
+        # OpenAiModelConfig:
+        #   ModelId: glm-5.3
+        #   ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
+        #   ApiBase: !Ref ModelApiBase
+        #   ApiFormat: chat_completions
+        #   MaxTokens: 16384
+        #   AdditionalParams:
+        #     reasoning_effort: !Ref ReasoningEffort
       SystemPrompt:
         - Text: |
             You are Factorial's builder agent. Factorial is a software factory: you receive one unit of work (a WorkItem) per session and turn it into a reviewable change in a git repository.
