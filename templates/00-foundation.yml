@@ -26,10 +26,15 @@ Parameters:
     Type: String
     Description: 'Numeric ID of the repository. Find it with: gh api repos/<owner>/<repo> --jq .id'
     AllowedPattern: '^[0-9]+$'
-  DeployBranch:
+  DeployEnvironment:
     Type: String
-    Default: main
-    Description: Only GitHub Actions runs on this branch may assume the deployment role.
+    Default: production
+    Description: >-
+      GitHub environment whose jobs may assume the deployment role. The
+      environment's deployment branch policy limits it to main, so only a job
+      on main that names this environment can deploy, not any workflow that
+      happens to run on main.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
 
 Resources:
   # ---------------------------------------------------------------------------
@@ -101,9 +106,12 @@ Resources:
               - ecs:RunTask
               - ecs:StopTask
               - ecs:DescribeTasks
-              - sqs:*
               - sns:Publish
             Resource: '*'
+          - Sid: FactorialQueues
+            Effect: Allow
+            Action: sqs:*
+            Resource: !Sub arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:factorial-*
           - Sid: Telemetry
             Effect: Allow
             Action:
@@ -162,6 +170,8 @@ Resources:
               - ecr-public:GetAuthorizationToken
               - sts:GetServiceBearerToken
             Resource: '*'
+          # Only through another AWS service (Secrets Manager, SSM, S3, ...),
+          # never as direct calls against arbitrary keys in the account.
           - Sid: Encryption
             Effect: Allow
             Action:
@@ -171,6 +181,9 @@ Resources:
               - kms:GenerateDataKeyWithoutPlaintext
               - kms:DescribeKey
             Resource: '*'
+            Condition:
+              StringLike:
+                kms:ViaService: !Sub '*.${AWS::Region}.amazonaws.com'
           - Sid: ReadStackState
             Effect: Allow
             Action:
@@ -217,6 +230,20 @@ Resources:
               - states:UpdateStateMachineAlias
               - states:DeleteStateMachineAlias
             Resource: '*'
+          # Model keys and OAuth tokens are resolved only by agent execution
+          # roles, which carry the agent boundary below. No other runtime role
+          # may read or change a credential.
+          - Sid: DenyCredentials
+            Effect: Deny
+            Action:
+              - bedrock-agentcore:GetResource*
+              - bedrock-agentcore:GetWorkloadAccessToken*
+              - bedrock-agentcore:Create*CredentialProvider
+              - bedrock-agentcore:Update*CredentialProvider
+              - bedrock-agentcore:Delete*CredentialProvider
+              - bedrock-agentcore:*WorkloadIdentity
+              - bedrock-agentcore:SetTokenVaultCMK
+            Resource: '*'
           # Deployment artefacts are written only by the deploy role. A bounded
           # role must never be able to substitute them.
           - Sid: DenyWritingDeploymentArtefacts
@@ -236,7 +263,95 @@ Resources:
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-deploy
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+
+  # ---------------------------------------------------------------------------
+  # Agent permissions boundary. Agent execution roles are shared with the
+  # agent's own shell, so once an agent has run its session is treated as
+  # hostile. Their ceiling is therefore only what a harness needs to run:
+  # pull its image, resolve its model key through the service, and emit
+  # telemetry. No data, orchestration, Factorial roles or other services.
+  #
+  # The execution role enforces which boundary a role gets: roles named
+  # factorial-agent or factorial-agent-* must carry this one, and only those
+  # roles may be passed to AgentCore. A new agent therefore gets this ceiling
+  # just by following the naming convention.
+  # ---------------------------------------------------------------------------
+  AgentPermissionsBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-agent-permissions-boundary
+      Description: >-
+        Upper bound for every agent execution role. Allows running a harness
+        and nothing else.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Models
+            Effect: Allow
+            Action:
+              - bedrock:InvokeModel
+              - bedrock:InvokeModelWithResponseStream
+              - bedrock:ApplyGuardrail
+            Resource: '*'
+          - Sid: ModelCredentials
+            Effect: Allow
+            Action:
+              - bedrock-agentcore:GetWorkloadAccessToken
+              - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+              - bedrock-agentcore:GetResourceApiKey
+              - bedrock-agentcore:GetResourceOauth2Token
+            Resource:
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/*credentialprovider/factorial-*
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_*
+          # Only the service-mediated read the harness makes to resolve a
+          # credential provider; never a direct read from the agent's shell.
+          - Sid: SecretsViaServiceOnly
+            Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource:
+              - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/*
+              - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/*
+            Condition:
+              Bool:
+                aws:ViaAWSService: 'true'
+          - Sid: AgentImages
+            Effect: Allow
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+              - ecr:BatchCheckLayerAvailability
+            Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/*
+          - Sid: RegistryAuth
+            Effect: Allow
+            Action:
+              - ecr:GetAuthorizationToken
+              - ecr-public:GetAuthorizationToken
+              - sts:GetServiceBearerToken
+            Resource: '*'
+          - Sid: Logs
+            Effect: Allow
+            Action:
+              - logs:CreateLogGroup
+              - logs:CreateLogStream
+              - logs:PutLogEvents
+              - logs:DescribeLogStreams
+            Resource:
+              - !Sub arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/bedrock-agentcore/*
+          - Sid: Telemetry
+            Effect: Allow
+            Action:
+              - logs:DescribeLogGroups
+              - cloudwatch:PutMetricData
+              - xray:PutTraceSegments
+              - xray:PutTelemetryRecords
+              - xray:GetSamplingRules
+              - xray:GetSamplingTargets
+            Resource: '*'
+
   # ---------------------------------------------------------------------------
   # CloudFormation execution role. CloudFormation assumes this to create the
   # resources in Factorial's stacks, so the deploy role itself never needs
@@ -262,7 +377,7 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # --- IAM: Factorial roles must carry the permissions boundary ---
+              # --- IAM: Factorial roles must carry a permissions boundary ---
               - Sid: CreateFactorialRolesOnlyWithBoundary
                 Effect: Allow
                 Action:
@@ -273,7 +388,34 @@ Resources:
                 Resource: !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-*
                 Condition:
                   StringEquals:
-                    iam:PermissionsBoundary: !Ref PermissionsBoundary
+                    iam:PermissionsBoundary:
+                      - !Ref PermissionsBoundary
+                      - !Ref AgentPermissionsBoundary
+              # Agent roles take the agent boundary, whatever a template asks.
+              - Sid: AgentRolesOnlyWithAgentBoundary
+                Effect: Deny
+                Action:
+                  - iam:CreateRole
+                  - iam:PutRolePermissionsBoundary
+                  - iam:PutRolePolicy
+                  - iam:AttachRolePolicy
+                Resource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-agent
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-agent-*
+                Condition:
+                  StringNotEquals:
+                    iam:PermissionsBoundary: !Ref AgentPermissionsBoundary
+              # And only agent roles may run inside AgentCore, so no harness or
+              # runtime can execute with the wider runtime boundary.
+              - Sid: OnlyAgentRolesForAgentCore
+                Effect: Deny
+                Action: iam:PassRole
+                NotResource:
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-agent
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-agent-*
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: bedrock-agentcore.amazonaws.com
               - Sid: ManageFactorialRoles
                 Effect: Allow
                 Action:
@@ -327,7 +469,16 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-deploy
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
+              # Deployments create credential providers but never read what
+              # they hold.
+              - Sid: NeverReadCredentials
+                Effect: Deny
+                Action:
+                  - bedrock-agentcore:GetResource*
+                  - bedrock-agentcore:GetWorkloadAccessToken*
+                Resource: '*'
               # --- Services Factorial is built from, scoped by name ---
               - Sid: EventBridge
                 Effect: Allow
@@ -382,9 +533,31 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:factorial-*
                   - !Sub arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/factorial-*
+              # AgentCore resources are scoped by name. Harness and runtime
+              # names allow only [A-Za-z0-9_], hence factorial_; a harness's
+              # underlying runtime and workload identity are prefixed harness_.
               - Sid: AgentCore
                 Effect: Allow
                 Action: bedrock-agentcore:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/factorial_*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/*credentialprovider/factorial-*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/factorial*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_*
+              # These actions authorise against no resource, so cannot be
+              # scoped by name; everything done to the result afterwards is.
+              # Other AgentCore resource types (memory, gateways, ...) are
+              # added here when Factorial first needs them.
+              - Sid: AgentCoreUnscoped
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:CreateHarness
+                  - bedrock-agentcore:CreateAgentRuntime
+                  - bedrock-agentcore:List*
                 Resource: '*'
               - Sid: ContainerRegistry
                 Effect: Allow
@@ -530,8 +703,8 @@ Resources:
           Value: Factorial
 
   # ---------------------------------------------------------------------------
-  # Deployment role. Assumable only by GitHub Actions runs on the deploy branch
-  # of the Factorial repository. It drives CloudFormation (which does the real
+  # Deployment role. Assumable only by GitHub Actions jobs in the deploy
+  # environment of the Factorial repository. It drives CloudFormation (which does the real
   # work through the execution role), publishes artefacts, and is the ONLY
   # principal allowed to move the live aliases.
   # ---------------------------------------------------------------------------
@@ -551,8 +724,11 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                # Immutable subject format: repo:<owner>@<ownerId>/<repo>@<repoId>:ref:<ref>
-                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:ref:refs/heads/${DeployBranch}
+                # Immutable subject format for a job that names an environment:
+                # repo:<owner>@<ownerId>/<repo>@<repoId>:environment:<name>.
+                # Other jobs on main (the test workflow's callback, any future
+                # workflow) present a ref subject and cannot assume this role.
+                token.actions.githubusercontent.com:sub: !Sub repo:${GitHubOwner}@${GitHubOwnerId}/${GitHubRepository}@${GitHubRepositoryId}:environment:${DeployEnvironment}
       Policies:
         - PolicyName: factorial-deploy
           PolicyDocument:
@@ -579,6 +755,22 @@ Resources:
                 Effect: Deny
                 Action: cloudformation:*
                 Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/factorial-foundation/*
+              # Every stack operation runs as the execution role, so its scoping
+              # always applies. Without a role, CloudFormation would act with
+              # this role's own credentials.
+              - Sid: AlwaysUseTheExecutionRole
+                Effect: Deny
+                Action:
+                  - cloudformation:CreateStack
+                  - cloudformation:UpdateStack
+                  - cloudformation:CreateChangeSet
+                  - cloudformation:DeleteStack
+                  - cloudformation:ContinueUpdateRollback
+                  - cloudformation:RollbackStack
+                Resource: !Sub arn:${AWS::Partition}:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/*
+                Condition:
+                  StringNotEquals:
+                    cloudformation:RoleArn: !GetAtt CloudFormationRole.Arn
               - Sid: HandWorkToCloudFormation
                 Effect: Allow
                 Action: iam:PassRole
@@ -623,9 +815,7 @@ Resources:
                   - ecr:DescribeImages
                   - ecr:DescribeRepositories
                   - ecr:ListImages
-                Resource:
-                  - !GetAtt AgentEnvironmentRepository.Arn
-                  - !GetAtt InvokerRepository.Arn
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/*
               - Sid: PromoteLiveAliases
                 Effect: Allow
                 Action:
@@ -650,8 +840,9 @@ Resources:
                   - lambda:GetAlias
                   - lambda:UpdateAlias
                 Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/factorial_*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_*
                   - !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:factorial-*
                   - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:factorial-*
       Tags:
@@ -803,6 +994,11 @@ Outputs:
     Value: !Ref PermissionsBoundary
     Export:
       Name: Factorial-PermissionsBoundaryArn
+  AgentPermissionsBoundaryArn:
+    Description: Every agent execution role (named factorial-agent or factorial-agent-*) must set this as its PermissionsBoundary.
+    Value: !Ref AgentPermissionsBoundary
+    Export:
+      Name: Factorial-AgentPermissionsBoundaryArn
   ArtefactBucketName:
     Value: !Ref ArtefactBucket
     Export:

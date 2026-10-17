@@ -48,15 +48,16 @@ Resources:
           Value: Factorial
 
   # ---------------------------------------------------------------------------
-  # Execution role. Carries the permissions boundary, so it can never deploy
-  # or promote Factorial whatever the agent attempts.
+  # Execution role. Carries the agent permissions boundary, so it can never
+  # deploy or promote Factorial, or reach beyond running the harness, whatever
+  # the agent attempts. The factorial-agent name requires that boundary.
   # ---------------------------------------------------------------------------
   AgentRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: factorial-agent
       Description: Execution role of the Factorial builder harness.
-      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      PermissionsBoundary: !ImportValue Factorial-AgentPermissionsBoundaryArn
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:

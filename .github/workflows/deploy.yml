@@ -25,6 +25,9 @@ env:
 jobs:
   deploy:
     name: Deploy Factorial stacks
+    # The deploy role trusts only jobs in this environment, whose deployment
+    # branch policy allows only main (see docs/bootstrap.md).
+    environment: production
     # Deploy only from a successful CI run of a push to main in this repository
     # (CI also runs for pull requests), or an on-demand run from main.
     if: >-

@@ -88,7 +88,7 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 - **`live` aliases and promotion.** All three parts use `live` aliases from the first version, and every reference uses alias ARNs.
 - **The `WorkItem` contract.** Keep it minimal, but treat it as Factorial's API. Changing it is a deliberate, human-approved decision, never a side effect of other work.
 - **Human approval.** Every PR against Factorial's own codebase is approved by a human.
-- **Agents never deploy or promote Factorial.** Only the GitHub Actions deployment role may deploy Factorial or move a `live` alias. This is enforced by the `factorial-permissions-boundary`, which every role Factorial creates must carry.
+- **Agents never deploy or promote Factorial.** Only the GitHub Actions deployment role may deploy Factorial or move a `live` alias. This is enforced by the `factorial-permissions-boundary` (runtime roles) and `factorial-agent-permissions-boundary` (agent roles), one of which every role Factorial creates must carry.
 
 ## Current stage
 
@@ -137,7 +137,7 @@ When a change completes or alters a stage, update **Current stage** in the same 
 ## Conventions
 
 - **Deployments:** all deployments run through GitHub Actions. The one exception is the foundation stack (`templates/00-foundation.yml`), which creates the deployment role itself and is deployed by a human as described in `docs/bootstrap.md`.
-- **IAM:** every role in Factorial's stacks sets `PermissionsBoundary` to the `Factorial-PermissionsBoundaryArn` export and has a name starting `factorial-`. All Factorial resources use the `factorial-` name prefix (or `factorial/` for ECR, Secrets Manager and SSM); the CloudFormation execution role is scoped to those names.
+- **IAM:** every role in Factorial's stacks has a name starting `factorial-` and sets `PermissionsBoundary`: agent execution roles are named `factorial-agent` or `factorial-agent-*` and use the `Factorial-AgentPermissionsBoundaryArn` export; every other role uses `Factorial-PermissionsBoundaryArn`. The execution role enforces this pairing and passes only agent roles to AgentCore. AgentCore resources are named `factorial_*`. All Factorial resources use the `factorial-` name prefix (or `factorial/` for ECR, Secrets Manager and SSM); the CloudFormation execution role is scoped to those names.
 - **Sandbox access:** agents in the inner loop may deploy to the sandbox environment and read its state directly to verify their work.
 - **Infrastructure as code:** Factorial's infrastructure is defined in CloudFormation templates written in YAML, using the `.yml` extension. Templates are numbered and deployed in order; `00-foundation.yml` is deployed by a human, everything from `10-` upwards by the deploy workflow. Templates containing Lambda functions use the `AWS::Serverless-2016-10-31` transform, with `AutoPublishAlias: live` providing versions and the `live` alias; Lambda code is bundled with esbuild from a `packages/` workspace and packaged by `aws cloudformation package`.
 - **Triggers:** a GitHub issue becomes a `WorkItem` when the `factorial` label is added to it. The person who adds the label is recorded as the requester.
