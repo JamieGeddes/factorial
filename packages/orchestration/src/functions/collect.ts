@@ -34,12 +34,15 @@ const SECTION = '\n===FACTORIAL-SECTION===\n';
 /** Bundles beyond this are almost certainly a mistake (vendored dependencies, binaries). */
 const MAX_BUNDLE_BYTES = 8_000_000;
 
-export function inspectScript(baseBranch: string): string {
+export const LEFTOVER_COMMIT_MESSAGE = 'Apply remaining changes left by the agent';
+export const SALVAGE_COMMIT_MESSAGE = 'Save work in progress after the build failed';
+
+export function inspectScript(baseBranch: string, leftoverMessage: string = LEFTOVER_COMMIT_MESSAGE): string {
   return [
     'set -uo pipefail',
     HARDENED_GIT_ENV,
     'cd /workspace/repo',
-    'if [ -n "$(git -c core.hooksPath=/dev/null status --porcelain=v1)" ]; then git -c core.hooksPath=/dev/null add -A && git -c core.hooksPath=/dev/null -c user.name=Factorial -c user.email=agent@factorial.invalid commit --quiet -m "Apply remaining changes left by the agent"; fi',
+    `if [ -n "$(git -c core.hooksPath=/dev/null status --porcelain=v1)" ]; then git -c core.hooksPath=/dev/null add -A && git -c core.hooksPath=/dev/null -c user.name=Factorial -c user.email=agent@factorial.invalid commit --quiet -m ${shellQuote(leftoverMessage)}; fi`,
     `git rev-list --count ${shellQuote(`origin/${baseBranch}`)}..HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
     'git rev-parse HEAD',
@@ -145,16 +148,29 @@ export function cleanRoomPushScript(params: {
   ].join('\n');
 }
 
-export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
+export interface CollectInput extends WorkContext {
+  /**
+   * Set when the build failed: push whatever the agent left so the work is
+   * not lost. Uncommitted changes are committed with a message that says so.
+   */
+  salvage?: boolean;
+}
+
+export const handler = async (input: CollectInput): Promise<CollectResult> => {
+  const { salvage = false, ...ctx } = input;
   const agentSession = sessionTarget(ctx.sessionId);
-  const inspection = await runCommand(agentSession, inspectScript(ctx.baseBranch), 300);
+  const inspection = await runCommand(
+    agentSession,
+    inspectScript(ctx.baseBranch, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE),
+    300,
+  );
   if (inspection.exitCode !== 0) {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
   const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
 
   if (commitCount === 0) {
-    await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
+    if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
     console.log(JSON.stringify({ message: 'agent made no commits', workItemId: ctx.workItem.id }));
     return { pushed: false, commitCount, headSha, summary };
   }
@@ -199,7 +215,7 @@ export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
   // with the App's identity. Everything downstream tests and reviews this one.
   const pushedSha = assertCommitSha(push.stdout.trim().split('\n').pop() ?? '', 'pushed head');
 
-  await recordProgress(ctx.workItem.id, 'pushed', {
+  await recordProgress(ctx.workItem.id, salvage ? 'salvaged' : 'pushed', {
     headSha: pushedSha,
     agentHeadSha: headSha,
     commitCount,
@@ -209,7 +225,14 @@ export const handler = async (ctx: WorkContext): Promise<CollectResult> => {
     bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
   });
   console.log(
-    JSON.stringify({ message: 'branch pushed from clean room', workItemId: ctx.workItem.id, branch: ctx.branch, headSha: pushedSha, agentHeadSha: headSha, commitCount }),
+    JSON.stringify({
+      message: salvage ? 'work in progress saved from clean room' : 'branch pushed from clean room',
+      workItemId: ctx.workItem.id,
+      branch: ctx.branch,
+      headSha: pushedSha,
+      agentHeadSha: headSha,
+      commitCount,
+    }),
   );
   return { pushed: true, commitCount, headSha: pushedSha, summary };
 };

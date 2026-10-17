@@ -16,6 +16,7 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
     '',
     '---',
     'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json.',
-    'When you have finished, commit your changes on this branch and write /workspace/summary.md as described in your instructions.',
+    'Commit on this branch as you go, after each coherent step: if the session ends early, only committed work is kept.',
+    'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions.',
   ].join('\n');
 }

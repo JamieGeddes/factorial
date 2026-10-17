@@ -717,9 +717,20 @@ Resources:
               },
               "TimeoutSeconds": ${BuildTimeoutSeconds},
               "Catch": [
-                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "SaveWork" }
               ],
               "Next": "Collect"
+            },
+            "SaveWork": {
+              "Type": "Task",
+              "Comment": "The build failed. Push whatever the agent committed, and anything it left uncommitted, so the work is not lost; then report the failure. No tests run and no pull request is opened.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true }]) %}" },
+              "Assign": { "collect": "{% $states.result.Payload %}" },
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Next": "ReportFailure" }
+              ],
+              "Next": "ReportFailure"
             },
             "Collect": {
               "Type": "Task",
@@ -790,7 +801,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ReportFunctionAlias}",
-                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}" }
+                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}", "saved": "{% $collect %}" }
               },
               "Catch": [ { "ErrorEquals": ["States.ALL"], "Next": "Failed" } ],
               "Next": "Failed"

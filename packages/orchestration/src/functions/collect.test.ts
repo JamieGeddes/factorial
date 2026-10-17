@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { bundleScript, cleanRoomPushScript, inspectScript, parseInspection, touchesWorkflows } from './collect.ts';
+import {
+  LEFTOVER_COMMIT_MESSAGE,
+  SALVAGE_COMMIT_MESSAGE,
+  bundleScript,
+  cleanRoomPushScript,
+  inspectScript,
+  parseInspection,
+  touchesWorkflows,
+} from './collect.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 
@@ -49,6 +57,12 @@ describe('agent-session scripts carry no credentials', () => {
     assert.match(script, /git rev-list --count 'origin\/main'\.\.HEAD/);
     assert.ok(script.indexOf('add -A') < script.indexOf('git rev-list'));
     assert.doesNotMatch(script, /AUTHORIZATION|x-access-token|ghs_/);
+    assert.ok(script.includes(`commit --quiet -m '${LEFTOVER_COMMIT_MESSAGE}'`));
+  });
+
+  it('labels leftovers as saved work in progress after a failed build', () => {
+    const script = inspectScript('main', SALVAGE_COMMIT_MESSAGE);
+    assert.ok(script.includes(`commit --quiet -m 'Save work in progress after the build failed'`));
   });
 
   it('bundles only the new commits, pins the head and caps the size', () => {

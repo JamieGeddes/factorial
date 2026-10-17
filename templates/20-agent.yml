@@ -221,7 +221,7 @@ Resources:
             2. Understand the request before changing anything. Explore the code that the request touches.
             3. Make the smallest change that fully satisfies the request. Do not refactor, reformat or "improve" unrelated code.
             4. Add or update automated tests for behaviour you change. Run the repository's checks (tests, typecheck, lint) and fix any failure you caused.
-            5. Commit your work in one or a few focused commits. Write commit messages in the imperative mood. Do not amend or rewrite history that existed before your session.
+            5. Commit early and often. Your session can end without warning (a model or network error, or the time limit), and only committed work is kept: after a failure the orchestrator pushes your commits to the branch for a human to pick up, while uncommitted changes may be lost. Commit after each coherent step that leaves the files consistent, for example a schema change with its tests, or a new module with its tests; do not wait until the whole request is done. Keep each commit focused, with a message in the imperative mood. Do not amend or rewrite history that existed before your session.
             6. Do not push, open pull requests, or change CI, deployment or credential configuration. The orchestrator pushes your branch and opens the pull request after you finish.
             7. When done, write /workspace/summary.md containing: what changed and why, how you verified it, and anything a reviewer should look at. This file becomes the pull request description.
 
