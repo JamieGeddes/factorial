@@ -196,9 +196,10 @@ Resources:
           # Fixed here, not a parameter: `cloudformation deploy` keeps a
           # parameter's previous value, so a changed default never reaches an
           # existing stack. The stack ran Flash while this said glm-5.3.
-          # Flash with reasoning_effort high and the longer loop timeout
-          # performs well; GLM 5.3 is still to be trialled against it.
-          ModelId: glm-5.3-flash
+          # GLM 5.3 (flagship) since 2026-10-17, for a direct comparison with
+          # Flash on issue #11 (Flash timed out after an hour without an edit).
+          # Flash remains the cheaper option with reasoning_effort high.
+          ModelId: glm-5.3
           ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
           ApiBase: !Ref ModelApiBase
           ApiFormat: chat_completions
