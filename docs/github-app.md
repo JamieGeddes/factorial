@@ -64,7 +64,7 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
 
    Only the orchestrator's Lambda functions read these and the private key. They mint one-hour installation tokens scoped to the single target repository. The agent sandbox has no access to the key, the identifiers or any token.
 
-   Note that an installation token with `contents: write` can push to any branch of the repository, including `main`. On a private repository on the GitHub Free plan branch protection is unavailable, so the only safeguard is that the orchestrator pushes exclusively to `factorial/*` branches and the agent holds no token at all. Enable branch protection on `main` as soon as the plan allows it.
+   Note that an installation token with `contents: write` can push to any branch of the repository, including `main`. Today the only safeguard is that the orchestrator pushes exclusively to `factorial/*` branches and the agent holds no token at all. The repository is on GitHub Pro (since October 2026), so branch protection on `main` is available and should be enabled: require a pull request before merging, require the CI checks to pass, block force pushes and deletions, and do not exempt the Factorial App.
 
 ## 5. Verify the webhook
 

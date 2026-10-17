@@ -92,7 +92,7 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 
 ## Current stage
 
-**Stage 0: in progress.** Done so far:
+**Stage 0: complete.** The loop has run end to end: on 2026-10-17 a labelled issue (#2) became a tested pull request (#3) with no human step in between. Done:
 
 - The `WorkItem` contract is defined in `contracts/workitem/v1/` (JSON Schema, with the event envelope and change process in `contracts/workitem/README.md`) and validated by the `@factorial/workitem` package.
 - The repository scaffold and CI are in place.
@@ -101,7 +101,9 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 - The triggers stack (`factorial-triggers`) is deployed: the `factorial-work` event bus, the webhook secret, and the GitHub issue adapter (`packages/triggers-github-issues`) behind a function URL on its `live` alias. The GitHub App is created and installed, and labelling an issue produces a `WorkItem` on the bus.
 - The agent stack (`factorial-agent`) is deployed: the `factorial_builder` harness on the custom image from `agent-environment/`, using GLM 5.3 Flash through the Z.ai API via an AgentCore Identity credential provider, with a `live` endpoint promoted by the deploy workflow. Validated by direct invocation.
 
-Not yet built: the orchestration stack (`30-orchestration.yml`): the Step Functions state machine (build → test → PR) with its `live` alias, the bus rule that starts it, the Fargate invoker that runs the harness and observes completion, and the Lambdas that clone, push, dispatch the test workflow and open the PR using the GitHub App.
+- The orchestration stack (`factorial-orchestration`) is deployed: the `factorial-work` state machine (Prepare → Build → Collect → Test → OpenPullRequest) behind its `live` alias, the bus rule that starts it, the `factorial-work-items` ledger, the Fargate invoker (`packages/invoker`) that runs the harness to completion, and the orchestrator Lambdas (`packages/orchestration`) that clone, bundle and push, dispatch `test.yml` and open the PR with GitHub App tokens. The test callback role ARN is the `AWS_TEST_CALLBACK_ROLE_ARN` repository secret.
+
+Next work items are the Stage 0 gaps below and then the ordered list under "Next, in order".
 
 ### Stage 0 scope
 
@@ -119,7 +121,7 @@ Not yet built: the orchestration stack (`30-orchestration.yml`): the Step Functi
 - No smoke test, so the output requirement is not yet fully met.
 - No staging canary, so Factorial's changes to itself are checked only by tests and human review.
 - Only the harness `live` endpoint is promoted as a separate final step. Lambda aliases (SAM `AutoPublishAlias`) and the state machine alias move during the deploy itself. Separating all three comes with the staging canary.
-- An installation token with `contents: write` can push to any branch, and branch protection is unavailable on this plan. The orchestrator pushes only to `factorial/*` branches and the agent holds no token, which is the whole safeguard today.
+- An installation token with `contents: write` can push to any branch. The orchestrator pushes only to `factorial/*` branches and the agent holds no token, which is the whole safeguard today. Branch protection on `main` became available with the GitHub Pro plan (October 2026) and is not yet configured; see `docs/github-app.md`.
 
 ### Next, in order
 
@@ -149,4 +151,4 @@ When a change completes or alters a stage, update **Current stage** in the same 
 - **Security:** security is vital. The system must enforce suitable access controls at every level: IAM least privilege per role, no shared credentials, and agent roles that can never deploy or promote Factorial.
 - **Region:** Factorial and all its associated resources are deployed to `eu-west-1`.
 - **Repository layout:** `contracts/` holds versioned, language-neutral contracts (JSON Schema); `packages/` holds TypeScript workspaces; `templates/` holds CloudFormation; `scripts/` holds repository tooling; `.github/workflows/` holds CI and deployment. See `README.md`.
-- **Checks:** `npm run ci` runs typecheck, tests and the `.yml` extension check. CI runs the same on every push and PR.
+- **Checks:** `npm run ci` runs typecheck, build, tests, the `.yml` extension check and cfn-lint. CI runs the same on every push and PR.
