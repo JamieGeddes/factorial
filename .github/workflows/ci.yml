@@ -22,6 +22,10 @@ jobs:
       functional: ${{ steps.classify.outputs.functional }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          # The classifier diffs against the base commit, which a shallow
+          # checkout does not contain.
+          fetch-depth: 0
       - id: classify
         uses: ./.github/actions/classify-changes
         with:
