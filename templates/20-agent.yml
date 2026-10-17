@@ -30,14 +30,6 @@ Parameters:
     Type: Number
     Default: 150
     Description: Reasoning and tool cycles per invocation before the harness stops.
-  TimeoutSeconds:
-    Type: Number
-    Default: 6600
-    Description: >-
-      Wall-clock limit for the agent loop in one invocation. Keep it below the
-      orchestration stack's BuildTimeoutSeconds (7200) so the harness ends the
-      loop itself and the Collect step still runs; a Step Functions timeout
-      would stop the invoker task and lose any uncollected commits.
 
 Resources:
   # ---------------------------------------------------------------------------
@@ -240,7 +232,13 @@ Resources:
       Memory:
         Disabled: {}
       MaxIterations: !Ref MaxIterations
-      TimeoutSeconds: !Ref TimeoutSeconds
+      # Wall-clock limit for the agent loop in one invocation. Fixed here, not
+      # a parameter, so a change reaches the existing stack (see ModelId).
+      # Keep it below the orchestration stack's BuildTimeoutSeconds (7200) so
+      # the harness ends the loop itself and the Collect step still runs; a
+      # Step Functions timeout would stop the invoker task and lose any
+      # uncollected commits.
+      TimeoutSeconds: 6600
       # No lifecycle hooks: a hook runs under the execution role, which the
       # agent's shell also holds, so hook events cannot be trusted as control
       # signals. The orchestrator observes completion directly.
