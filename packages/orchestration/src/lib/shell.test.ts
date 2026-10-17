@@ -1,7 +1,37 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { assertGitHubName, assertGitHubToken, assertUuid, shellQuote } from './shell.ts';
+import { assertCommitSha, assertGitHubName, assertGitHubToken, assertUuid, gitAuthHeader, redactSecrets, shellQuote } from './shell.ts';
+
+describe('gitAuthHeader', () => {
+  it('encodes the token as basic auth for x-access-token', () => {
+    const header = gitAuthHeader('ghs_abc');
+    assert.equal(header, `AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_abc').toString('base64')}`);
+  });
+});
+
+describe('redactSecrets', () => {
+  it('masks tokens in URLs, bare tokens and auth headers', () => {
+    const text = 'fatal: https://x-access-token:ghs_SECRET@github.com/o/r.git and ghs_SECRET2 and AUTHORIZATION: basic eC1hY2Nlc3M=';
+    const out = redactSecrets(text);
+    assert.doesNotMatch(out, /SECRET/);
+    assert.doesNotMatch(out, /eC1hY2Nlc3M/);
+    assert.match(out, /x-access-token:\*\*\*@github\.com/);
+    assert.match(out, /ghs_\*\*\*/);
+  });
+
+  it('leaves ordinary text alone', () => {
+    assert.equal(redactSecrets('git exited 128: not a repository'), 'git exited 128: not a repository');
+  });
+});
+
+describe('assertCommitSha', () => {
+  it('accepts 40 hex characters only', () => {
+    assert.equal(assertCommitSha('a'.repeat(40), 'sha'), 'a'.repeat(40));
+    assert.throws(() => assertCommitSha('abc', 'sha'), /not a commit sha/);
+    assert.throws(() => assertCommitSha('A'.repeat(40), 'sha'), /not a commit sha/);
+  });
+});
 
 describe('shellQuote', () => {
   it('wraps in single quotes and escapes embedded single quotes', () => {

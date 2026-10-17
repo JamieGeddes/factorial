@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { inspectScript, parseInspection, pushScript } from './collect.ts';
+import { bundleScript, cleanRoomPushScript, inspectScript, parseInspection } from './collect.ts';
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
 const sha = 'a'.repeat(40);
@@ -22,16 +22,45 @@ describe('parseInspection', () => {
   });
 });
 
-describe('scripts', () => {
-  it('inspects relative to the quoted base branch and commits leftovers first', () => {
+describe('agent-session scripts carry no credentials', () => {
+  it('inspects with hooks disabled and commits leftovers first', () => {
     const script = inspectScript('main');
+    assert.match(script, /GIT_CONFIG_NOSYSTEM=1/);
     assert.match(script, /git rev-list --count 'origin\/main'\.\.HEAD/);
-    assert.ok(script.indexOf('git add -A') < script.indexOf('git rev-list'));
+    assert.ok(script.indexOf('add -A') < script.indexOf('git rev-list'));
+    assert.doesNotMatch(script, /AUTHORIZATION|x-access-token|ghs_/);
   });
 
-  it('pushes the branch with the token in the URL and nothing else', () => {
-    const script = pushScript({ owner: 'JamieGeddes', name: 'factorial', branch: 'factorial/abc', token: 'ghs_t' });
-    assert.match(script, /git push --quiet 'https:\/\/x-access-token:ghs_t@github\.com\/JamieGeddes\/factorial\.git' 'HEAD:refs\/heads\/factorial\/abc'/);
-    assert.throws(() => pushScript({ owner: 'bad owner', name: 'factorial', branch: 'b', token: 't' }), /not a valid GitHub name/);
+  it('bundles only the new commits, pins the head and caps the size', () => {
+    const script = bundleScript('main', sha);
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${sha}'`));
+    assert.match(script, /bundle create \/tmp\/factorial\.bundle 'origin\/main'\.\.HEAD/);
+    assert.match(script, /bundle too large/);
+    assert.match(script, /base64 -w0 \/tmp\/factorial\.bundle$/m);
+    assert.doesNotMatch(script, /AUTHORIZATION|x-access-token|ghs_/);
+    assert.throws(() => bundleScript('main', 'nope'), /not a commit sha/);
+  });
+});
+
+describe('cleanRoomPushScript', () => {
+  const params = { owner: 'JamieGeddes', name: 'factorial', branch: 'factorial/abc', headSha: sha, token: 'ghs_t', bundleBase64: 'QUJD' };
+
+  it('imports the bundle into a pristine clone, verifies the head and pushes exactly that commit', () => {
+    const script = cleanRoomPushScript(params);
+    const basic = Buffer.from('x-access-token:ghs_t').toString('base64');
+    assert.match(script, /printf '%s' 'QUJD' \| base64 -d > incoming\.bundle/);
+    assert.match(script, new RegExp(`clone --quiet --bare --filter=blob:none 'https://github\\.com/JamieGeddes/factorial\\.git' repo\\.git`));
+    assert.match(script, /fetch --quiet \.\.\/incoming\.bundle HEAD/);
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse FETCH_HEAD\\)" = '${sha}'`));
+    assert.match(script, new RegExp(`push --quiet origin '${sha}:refs/heads/factorial/abc'`));
+    assert.match(script, new RegExp(`http\\.extraHeader='AUTHORIZATION: basic ${basic}'`));
+    assert.doesNotMatch(script, /ghs_t[^']/);
+    assert.doesNotMatch(script, /x-access-token:ghs/);
+    assert.ok(script.split('core.hooksPath=/dev/null').length >= 4, 'every git call that could run hooks disables them');
+  });
+
+  it('rejects bad names and shas before building anything', () => {
+    assert.throws(() => cleanRoomPushScript({ ...params, owner: 'bad owner' }), /not a valid GitHub name/);
+    assert.throws(() => cleanRoomPushScript({ ...params, headSha: 'short' }), /not a commit sha/);
   });
 });

@@ -63,7 +63,8 @@ The system must be extensible for future requirements, including:
 - Each agent is an AgentCore Harness. The agent loop is managed by AWS and declared as configuration: model, system prompt, tools, limits and container image are defined in CloudFormation and captured in an immutable harness version.
 - Model configuration is fixed on the harness version. Nothing passes model overrides at invoke time.
 - Deterministic steps around the agent (clone the repository, run tests, push the branch) run through the session command API, not through the model. The command API and the agent invocation must use the same endpoint qualifier, or they address different sessions.
-- The agent sandbox holds no credentials beyond the model key. Orchestrator Lambdas, outside the sandbox, mint repository-scoped GitHub App tokens for each step; the agent never pushes or calls GitHub.
+- The agent sandbox holds no credentials beyond the model key. Orchestrator Lambdas, outside the sandbox, mint repository-scoped GitHub App tokens for each step; the agent never pushes or calls GitHub. Once the agent has run, its session is treated as hostile: new commits leave it as a git bundle, and the push happens from a pristine clone in a separate clean-room session with hooks disabled and the token sent as a header.
+- The test workflow is dispatched on the default branch, so its definition is always the trusted one. The work commit is checked out as data in a job without credentials; a separate job reports the result. The PR step verifies the branch head is the tested commit.
 - A Fargate invoker task runs each harness invocation to completion and Step Functions waits on it (`ecs:runTask.sync`). This keeps long builds off Lambda's time limit and makes completion something the agent cannot forge; lifecycle hooks are not used as control signals because they run under the agent's own role.
 
 ### Versioning and promotion: `live` aliases

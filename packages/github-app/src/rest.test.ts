@@ -55,6 +55,13 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
+  it('reads a branch head through the git refs API', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { object: { sha: 'b'.repeat(40) } }, seen) });
+    assert.equal(await client.getBranchSha(repo, 'factorial/abc'), 'b'.repeat(40));
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/git/ref/heads/factorial/abc');
+  });
+
   it('throws a GitHubApiError carrying the status on failure', async () => {
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(422, { message: 'Validation Failed' }, []) });
     await assert.rejects(

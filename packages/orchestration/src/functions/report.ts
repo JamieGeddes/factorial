@@ -6,6 +6,7 @@ import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
+import { redactSecrets } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
 interface ReportInput {
@@ -16,6 +17,7 @@ interface ReportInput {
   workItem?: unknown;
   summary?: string;
   error?: { Error?: string; Cause?: string };
+  sessionIdHint?: string | undefined;
 }
 
 export function reportMessage(input: ReportInput): string {
@@ -31,7 +33,9 @@ export function reportMessage(input: ReportInput): string {
       return `Factorial's change did not pass the repository's checks${runUrl ? ` ([run](${runUrl}))` : ''}, so no pull request was opened. The branch \`${input.ctx?.branch ?? ''}\` is left for inspection.`;
     }
     case 'failed':
-      return `Factorial could not complete this work item: \`${input.error?.Error ?? 'unknown error'}\`. ${truncate(input.error?.Cause ?? '', 1500)}`;
+      // Deliberately generic: causes can contain command output. Details stay
+      // in the execution history and the ledger, both inside the account.
+      return `Factorial could not complete this work item (\`${input.error?.Error ?? 'unknown error'}\`). Session \`${input.ctx?.sessionId ?? input.sessionIdHint ?? 'unknown'}\`; see the Factorial execution log.`;
   }
 }
 
@@ -43,10 +47,6 @@ function safeJson(text: string | undefined): Record<string, unknown> | undefined
   } catch {
     return undefined;
   }
-}
-
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
 function resolveWorkItem(input: ReportInput): WorkItem | undefined {
@@ -61,11 +61,14 @@ function resolveWorkItem(input: ReportInput): WorkItem | undefined {
 
 export const handler = async (input: ReportInput): Promise<void> => {
   const workItem = resolveWorkItem(input);
-  const message = reportMessage(input);
-  console.log(JSON.stringify({ message: 'reporting', status: input.status, workItemId: workItem?.id, error: input.error }));
+  const message = reportMessage({ ...input, sessionIdHint: workItem?.id });
+  const error = input.error
+    ? { Error: input.error.Error, Cause: redactSecrets(input.error.Cause ?? '').slice(0, 4000) }
+    : undefined;
+  console.log(JSON.stringify({ message: 'reporting', status: input.status, workItemId: workItem?.id, error }));
   if (!workItem) return;
 
-  await recordProgress(workItem.id, input.status, { error: input.error });
+  await recordProgress(workItem.id, input.status, { error });
   const issue = issueNumber(workItem);
   if (issue === undefined) return;
 

@@ -7,6 +7,7 @@
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand } from '@aws-sdk/client-bedrock-agentcore';
 
 import { requireEnv } from './env.ts';
+import { redactSecrets } from './shell.ts';
 
 export interface CommandResult {
   stdout: string;
@@ -54,18 +55,27 @@ export async function runCommand(target: SessionTarget, command: string, timeout
     for (const key of ['accessDeniedException', 'internalServerException', 'resourceNotFoundException', 'runtimeClientError', 'throttlingException', 'validationException'] as const) {
       const error = event[key];
       if (error) {
-        throw new Error(`Session command failed (${key}): ${error.message ?? ''}`);
+        throw new Error(`Session command failed (${key}): ${redactSecrets(error.message ?? '')}`);
       }
     }
   }
   return { stdout, stderr, exitCode };
 }
 
-/** Run a command and throw with its output if it exits non-zero. */
+/** Run a command and throw with its (redacted) output if it exits non-zero. */
 export async function mustRun(target: SessionTarget, command: string, timeoutSeconds = 300): Promise<CommandResult> {
   const result = await runCommand(target, command, timeoutSeconds);
   if (result.exitCode !== 0) {
-    throw new Error(`Session command exited ${result.exitCode}: ${(result.stderr || result.stdout).slice(-2000)}`);
+    throw new Error(`Session command exited ${result.exitCode}: ${redactSecrets((result.stderr || result.stdout).slice(-2000))}`);
   }
   return result;
+}
+
+/**
+ * A second, pristine session for operations that need credentials. It shares
+ * nothing with the agent's session: no files, no git configuration, no hooks,
+ * no background processes. Same qualifier, different session id.
+ */
+export function cleanRoomTarget(workItemId: string): SessionTarget {
+  return sessionTarget(`${workItemId}-push`);
 }

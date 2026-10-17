@@ -1,11 +1,11 @@
 name: Test (dispatched by Factorial)
 
-# Factorial's test stage. The orchestrator dispatches this workflow on the
-# branch it built, passing a Step Functions task token. The run executes the
-# repository's checks and reports the result back with that token.
-#
-# The callback role is trusted only for factorial/* branches of this
-# repository, and may only send task results.
+# Factorial's test stage. The orchestrator dispatches this workflow ON THE
+# DEFAULT BRANCH, so this definition is always the trusted one; the commit to
+# test arrives as an input and is checked out as data. The job that runs the
+# repository's checks (untrusted code) has no credentials at all. A separate
+# job, which never executes branch code, reports the result to Step Functions
+# with the task token through a role that can only send task results.
 
 on:
   workflow_dispatch:
@@ -16,32 +16,48 @@ on:
       work_item_id:
         description: WorkItem being verified
         required: true
+      sha:
+        description: Exact commit to test (40 hex characters)
+        required: true
 
-permissions:
-  id-token: write
-  contents: read
+permissions: {}
 
 concurrency:
-  group: factorial-test-${{ github.ref }}
+  group: factorial-test-${{ inputs.work_item_id }}
   cancel-in-progress: true
 
 env:
   AWS_REGION: eu-west-1
 
 jobs:
-  test:
-    name: Run the repository's checks
+  checks:
+    name: Run the repository's checks on the work commit
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      result: ${{ steps.run.outcome }}
     steps:
+      - name: Validate the commit input
+        env:
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "sha input is not a 40-character commit sha" >&2
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.sha }}
+          path: work
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version-file: .nvmrc
-          cache: npm
-
+          node-version-file: work/.nvmrc
       - name: Checks
-        id: checks
+        id: run
         continue-on-error: true
+        working-directory: work
         run: |
           set -euo pipefail
           npm ci
@@ -51,23 +67,34 @@ jobs:
           npm run check:yml
           pipx run --spec 'cfn-lint==1.57.2' cfn-lint
 
+  report:
+    name: Report the result to Factorial
+    needs: checks
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
       - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
         with:
           role-to-assume: ${{ secrets.AWS_TEST_CALLBACK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: factorial-test-${{ github.run_id }}
-
-      - name: Report the result to Factorial
+      - name: Send the task result
         env:
           TASK_TOKEN: ${{ inputs.task_token }}
           WORK_ITEM_ID: ${{ inputs.work_item_id }}
-          OUTCOME: ${{ steps.checks.outcome }}
+          SHA: ${{ inputs.sha }}
+          CHECKS_JOB: ${{ needs.checks.result }}
+          CHECKS_STEP: ${{ needs.checks.outputs.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           set -euo pipefail
-          output=$(jq -n --arg runUrl "$RUN_URL" --arg workItemId "$WORK_ITEM_ID" --arg sha "$GITHUB_SHA" --arg outcome "$OUTCOME" \
+          outcome=failure
+          if [ "$CHECKS_JOB" = "success" ] && [ "$CHECKS_STEP" = "success" ]; then outcome=success; fi
+          output=$(jq -n --arg runUrl "$RUN_URL" --arg workItemId "$WORK_ITEM_ID" --arg sha "$SHA" --arg outcome "$outcome" \
             '{runUrl: $runUrl, workItemId: $workItemId, sha: $sha, outcome: $outcome}')
-          if [ "$OUTCOME" = "success" ]; then
+          if [ "$outcome" = "success" ]; then
             aws stepfunctions send-task-success --task-token "$TASK_TOKEN" --task-output "$output"
           else
             aws stepfunctions send-task-failure --task-token "$TASK_TOKEN" --error TestsFailed --cause "$output"

@@ -23,9 +23,14 @@ describe('reportMessage', () => {
     assert.match(text, /did not pass/);
   });
 
-  it('truncates long failure causes', () => {
-    const text = reportMessage({ status: 'failed', error: { Error: 'States.Timeout', Cause: 'x'.repeat(5000) } });
-    assert.ok(text.length < 1700);
-    assert.match(text, /States\.Timeout/);
+  it('never puts the failure cause in the public message', () => {
+    const text = reportMessage({
+      status: 'failed',
+      error: { Error: 'States.TaskFailed', Cause: 'fatal: https://x-access-token:ghs_SECRET@github.com/o/r.git' },
+      sessionIdHint: 'abc',
+    });
+    assert.match(text, /States\.TaskFailed/);
+    assert.match(text, /Session `abc`/);
+    assert.doesNotMatch(text, /SECRET|x-access-token|fatal/);
   });
 });

@@ -89,4 +89,13 @@ export class GitHubClient {
     const info = await this.#request<{ default_branch: string }>('GET', `/repos/${repo.owner}/${repo.name}`);
     return info.default_branch;
   }
+
+  /** The commit a branch currently points at. */
+  async getBranchSha(repo: Repo, branch: string): Promise<string> {
+    const ref = await this.#request<{ object: { sha: string } }>(
+      'GET',
+      `/repos/${repo.owner}/${repo.name}/git/ref/heads/${branch.split('/').map(encodeURIComponent).join('/')}`,
+    );
+    return ref.object.sha;
+  }
 }

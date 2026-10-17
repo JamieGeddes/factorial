@@ -28,3 +28,33 @@ export function assertUuid(value: string, what: string): string {
   }
   return value;
 }
+
+const COMMIT_SHA = /^[0-9a-f]{40}$/;
+
+export function assertCommitSha(value: string, what: string): string {
+  if (!COMMIT_SHA.test(value)) {
+    throw new Error(`${what} "${value}" is not a commit sha`);
+  }
+  return value;
+}
+
+/**
+ * Authenticate git over HTTPS with a header instead of a URL, so the token
+ * never appears in remote URLs, hook arguments or reflog messages.
+ */
+export function gitAuthHeader(token: string): string {
+  const basic = Buffer.from(`x-access-token:${assertGitHubToken(token)}`, 'utf8').toString('base64');
+  return `AUTHORIZATION: basic ${basic}`;
+}
+
+/** Environment that keeps git from reading any configuration the agent could have planted. */
+export const HARDENED_GIT_ENV =
+  'export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false';
+
+/** Strip anything that looks like a GitHub credential before text is logged or shown. */
+export function redactSecrets(text: string): string {
+  return text
+    .replace(/x-access-token:[^@\s'"]+@/g, 'x-access-token:***@')
+    .replace(/\b(gh[pousr]|ghs|github_pat)_[A-Za-z0-9_]+/g, '$1_***')
+    .replace(/AUTHORIZATION:\s*basic\s+[A-Za-z0-9+/=]+/gi, 'AUTHORIZATION: basic ***');
+}

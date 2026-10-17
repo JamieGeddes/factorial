@@ -26,6 +26,10 @@ Parameters:
   LogRetentionDays:
     Type: Number
     Default: 30
+  DefaultBranch:
+    Type: String
+    Default: main
+    Description: Branch whose test workflow definition is trusted and dispatched.
 
 Globals:
   Function:
@@ -477,8 +481,10 @@ Resources:
 
   # ---------------------------------------------------------------------------
   # Test callback: the dispatched workflow reports its result with the task
-  # token through this role. Trusted only for factorial/* branches of this
-  # repository, and able only to send task results.
+  # token through this role. The workflow is dispatched on the default branch
+  # (its definition is trusted; the work commit is checked out as data in a
+  # credential-less job), so the trust is for that branch only, and the role
+  # can only send task results.
   # ---------------------------------------------------------------------------
   TestCallbackRole:
     Type: AWS::IAM::Role
@@ -497,9 +503,8 @@ Resources:
             Condition:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
-              StringLike:
                 token.actions.githubusercontent.com:sub: !Sub
-                  - ${Prefix}:ref:refs/heads/factorial/*
+                  - ${Prefix}:ref:refs/heads/${DefaultBranch}
                   - Prefix: !ImportValue Factorial-GitHubOidcSubjectPrefix
       Policies:
         - PolicyName: factorial-test-callback
@@ -736,7 +741,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
               "Arguments": {
                 "FunctionName": "${DispatchTestsFunctionAlias}",
-                "Payload": { "taskToken": "{% $states.context.Task.Token %}", "ctx": "{% $ctx %}" }
+                "Payload": { "taskToken": "{% $states.context.Task.Token %}", "ctx": "{% $ctx %}", "collect": "{% $collect %}" }
               },
               "TimeoutSeconds": ${TestTimeoutSeconds},
               "Assign": { "test": "{% $states.result %}" },

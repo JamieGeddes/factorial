@@ -12,13 +12,14 @@ describe('cloneScript', () => {
     workItemJson: '{"id":"x"}',
   };
 
-  it('clones with the token, then strips it from the remote and creates the branch', () => {
+  it('clones with the token as a header, never in the URL, then creates the branch', () => {
     const script = cloneScript(params);
+    const basic = Buffer.from('x-access-token:ghs_tok').toString('base64');
     assert.match(script, /^set -euo pipefail$/m);
-    assert.match(script, /git clone --quiet 'https:\/\/x-access-token:ghs_tok@github\.com\/JamieGeddes\/factorial\.git' \/workspace\/repo/);
-    assert.match(script, /git remote set-url origin 'https:\/\/github\.com\/JamieGeddes\/factorial\.git'/);
+    assert.match(script, /GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
+    assert.match(script, new RegExp(`git -c http\\.extraHeader='AUTHORIZATION: basic ${basic}' clone --quiet 'https://github\\.com/JamieGeddes/factorial\\.git' /workspace/repo`));
+    assert.doesNotMatch(script, /ghs_tok/);
     assert.match(script, /git checkout --quiet -b 'factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'/);
-    assert.ok(script.indexOf('remote set-url') > script.indexOf('git clone'));
   });
 
   it('writes the WorkItem via base64 so no JSON reaches the shell unquoted', () => {

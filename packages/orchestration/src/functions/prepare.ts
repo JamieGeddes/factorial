@@ -2,13 +2,17 @@
  * Prepare: accept the WorkItem exactly once, then set up the agent's session
  * deterministically: clone the repository, create the work branch, and leave
  * the WorkItem on disk for the agent to read. No model is involved.
+ *
+ * The session is brand new at this point, so no agent code can be running.
+ * The read-only token is sent as an HTTP header for the clone only and is not
+ * written anywhere in the session.
  */
 import { assertWorkItem } from '@factorial/workitem';
 
 import { branchFor, type WorkContext } from '../lib/context.ts';
 import { repositoryToken } from '../lib/github.ts';
 import { mustRun, sessionTarget } from '../lib/session.ts';
-import { assertGitHubName, assertUuid, shellQuote } from '../lib/shell.ts';
+import { HARDENED_GIT_ENV, assertGitHubName, assertUuid, gitAuthHeader, shellQuote } from '../lib/shell.ts';
 import { acceptWorkItem, recordProgress } from '../lib/table.ts';
 
 interface PrepareInput {
@@ -19,17 +23,14 @@ interface PrepareInput {
 export function cloneScript(params: { owner: string; name: string; branch: string; token: string; workItemJson: string }): string {
   const owner = assertGitHubName(params.owner, 'repository owner');
   const name = assertGitHubName(params.name, 'repository name');
-  const authenticated = `https://x-access-token:${params.token}@github.com/${owner}/${name}.git`;
-  const plain = `https://github.com/${owner}/${name}.git`;
+  const url = `https://github.com/${owner}/${name}.git`;
   const workItemBase64 = Buffer.from(params.workItemJson, 'utf8').toString('base64');
   return [
     'set -euo pipefail',
+    HARDENED_GIT_ENV,
     'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json',
-    // The token is used for the clone only; the remote is rewritten so it is
-    // not persisted anywhere in the session.
-    `git clone --quiet ${shellQuote(authenticated)} /workspace/repo`,
+    `git -c http.extraHeader=${shellQuote(gitAuthHeader(params.token))} clone --quiet ${shellQuote(url)} /workspace/repo`,
     'cd /workspace/repo',
-    `git remote set-url origin ${shellQuote(plain)}`,
     `git checkout --quiet -b ${shellQuote(params.branch)}`,
     `printf '%s' ${shellQuote(workItemBase64)} | base64 -d > /workspace/workitem.json`,
     `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'`,
