@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { pullRequestBody } from './pr-body.ts';
+import { closingReference, pullRequestBody } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -31,11 +31,29 @@ describe('pullRequestBody', () => {
     assert.match(body, /\| Tests \| \[success\]\(https:\/\/x\/run\/1\) \|/);
     assert.match(body, /\| Head \| `ffffffffffff` \|/);
     assert.match(body, /\| Built by \| Factorial `0123456789ab` \|/);
+    // the closing reference sits between the summary and the evidence
+    assert.match(body, /Fixed it\.\n\nCloses #7\n\n---\n/);
   });
 
   it('says so when the agent wrote no summary and tests did not run', () => {
     const body = pullRequestBody(ctx, '   ', {}, 'a'.repeat(40));
     assert.match(body, /_The agent did not write a summary\._/);
     assert.match(body, /\| Tests \| not run \|/);
+  });
+});
+
+describe('closingReference', () => {
+  it('uses the short form for an issue in the repository being changed', () => {
+    assert.equal(closingReference(ctx.workItem), 'Closes #7');
+  });
+
+  it('uses the owner/repo form for an issue elsewhere', () => {
+    const other = { ...ctx.workItem, repository: { provider: 'github' as const, owner: 'JamieGeddes', name: 'other-repo' } };
+    assert.equal(closingReference(other), 'Closes JamieGeddes/factorial#7');
+  });
+
+  it('is absent for other triggers or an unrecognised url', () => {
+    assert.equal(closingReference({ ...ctx.workItem, source: { type: 'jira-ticket', id: 'FAC-1', url: 'https://x.atlassian.net/browse/FAC-1' } }), undefined);
+    assert.equal(closingReference({ ...ctx.workItem, source: { ...ctx.workItem.source, url: 'https://evil.example/JamieGeddes/factorial/issues/7' } }), undefined);
   });
 });
