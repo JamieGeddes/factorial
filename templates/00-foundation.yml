@@ -426,48 +426,77 @@ Resources:
                 Effect: Allow
                 Action: ssm:*
                 Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/*
-              # Network for the Fargate invoker. EC2 networking actions do not
-              # support useful name scoping; the boundary denies all of EC2 to
-              # every Factorial role, so only deployments can touch it.
-              - Sid: Network
+              # Network for the Fargate invoker. EC2 has no name scoping, so
+              # creation requires the Project=Factorial tag (the deploy
+              # workflow tags every stack) and every later mutation requires
+              # the resource to carry it. Pre-existing networks in the account
+              # are untouchable. The boundary denies all of EC2 to every role
+              # Factorial creates, so only deployments reach this at all.
+              - Sid: NetworkRead
                 Effect: Allow
                 Action:
-                  - ec2:CreateVpc
-                  - ec2:DeleteVpc
-                  - ec2:ModifyVpcAttribute
                   - ec2:DescribeVpcs
                   - ec2:DescribeVpcAttribute
-                  - ec2:CreateSubnet
-                  - ec2:DeleteSubnet
-                  - ec2:ModifySubnetAttribute
                   - ec2:DescribeSubnets
-                  - ec2:CreateInternetGateway
-                  - ec2:DeleteInternetGateway
-                  - ec2:AttachInternetGateway
-                  - ec2:DetachInternetGateway
                   - ec2:DescribeInternetGateways
-                  - ec2:CreateRouteTable
-                  - ec2:DeleteRouteTable
-                  - ec2:AssociateRouteTable
-                  - ec2:DisassociateRouteTable
-                  - ec2:CreateRoute
-                  - ec2:DeleteRoute
                   - ec2:DescribeRouteTables
-                  - ec2:CreateSecurityGroup
-                  - ec2:DeleteSecurityGroup
-                  - ec2:AuthorizeSecurityGroupEgress
-                  - ec2:RevokeSecurityGroupEgress
-                  - ec2:AuthorizeSecurityGroupIngress
-                  - ec2:RevokeSecurityGroupIngress
                   - ec2:DescribeSecurityGroups
                   - ec2:DescribeSecurityGroupRules
-                  - ec2:CreateTags
-                  - ec2:DeleteTags
                   - ec2:DescribeTags
                   - ec2:DescribeAvailabilityZones
                   - ec2:DescribeAccountAttributes
                   - ec2:DescribeNetworkInterfaces
                 Resource: '*'
+              - Sid: NetworkCreateTagged
+                Effect: Allow
+                Action:
+                  - ec2:CreateVpc
+                  - ec2:CreateSubnet
+                  - ec2:CreateInternetGateway
+                  - ec2:CreateRouteTable
+                  - ec2:CreateSecurityGroup
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/Project: Factorial
+              - Sid: NetworkTagOnCreate
+                Effect: Allow
+                Action: ec2:CreateTags
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    ec2:CreateAction:
+                      - CreateVpc
+                      - CreateSubnet
+                      - CreateInternetGateway
+                      - CreateRouteTable
+                      - CreateSecurityGroup
+              - Sid: NetworkMutateFactorialOnly
+                Effect: Allow
+                Action:
+                  - ec2:DeleteVpc
+                  - ec2:ModifyVpcAttribute
+                  - ec2:DeleteSubnet
+                  - ec2:ModifySubnetAttribute
+                  - ec2:DeleteInternetGateway
+                  - ec2:AttachInternetGateway
+                  - ec2:DetachInternetGateway
+                  - ec2:DeleteRouteTable
+                  - ec2:AssociateRouteTable
+                  - ec2:DisassociateRouteTable
+                  - ec2:CreateRoute
+                  - ec2:DeleteRoute
+                  - ec2:DeleteSecurityGroup
+                  - ec2:AuthorizeSecurityGroupEgress
+                  - ec2:RevokeSecurityGroupEgress
+                  - ec2:AuthorizeSecurityGroupIngress
+                  - ec2:RevokeSecurityGroupIngress
+                  - ec2:CreateTags
+                  - ec2:DeleteTags
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: Factorial
               - Sid: Containers
                 Effect: Allow
                 Action: ecs:*
