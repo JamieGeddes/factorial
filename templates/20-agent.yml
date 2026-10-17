@@ -267,15 +267,20 @@ Resources:
           Summarization:
             SummaryRatio: 0.5
             PreserveRecentMessages: 16
-            SummarizationSystemPrompt: |
-              You are condensing the earlier part of a coding agent's working session so it can continue with less context. Write a factual summary that preserves everything the agent still needs:
-              - the request it is working on, in full, including acceptance criteria and constraints;
-              - the repository conventions it has learned (language, layout, test framework, commit style, checks to run);
-              - every file it has created or changed, and what each change was;
-              - commits made so far, with their messages;
-              - decisions taken and why, and approaches tried that failed;
-              - what remains to be done, as a list.
-              Keep file paths, function names, commands and error messages exact. Omit file contents the agent can read again from disk.
+            # One line: the harness passes this to the runtime as an
+            # environment variable, which may not contain newlines or other
+            # control characters (the update failed with a multi-line prompt).
+            SummarizationSystemPrompt: >-
+              You are condensing the earlier part of a coding agent's working session so it can continue with less context.
+              Write a factual summary that preserves everything the agent still needs:
+              (1) the request it is working on, in full, including acceptance criteria and constraints;
+              (2) the repository conventions it has learned (language, layout, test framework, commit style, checks to run);
+              (3) every file it has created or changed, and what each change was;
+              (4) commits made so far, with their messages;
+              (5) decisions taken and why, and approaches tried that failed;
+              (6) what remains to be done.
+              Keep file paths, function names, commands and error messages exact.
+              Omit file contents the agent can read again from disk.
       # Wall-clock limit for the agent loop in one invocation. Fixed here, not
       # a parameter, so a change reaches the existing stack (see ModelId).
       # Keep it below the orchestration stack's BuildTimeoutSeconds (7200) so
