@@ -8,14 +8,6 @@ Parameters:
     Type: String
     Description: Tag of the agent environment image in the factorial/agent-environment repository.
     AllowedPattern: '^[A-Za-z0-9._-]+$'
-  ReasoningEffort:
-    Type: String
-    Default: high
-    AllowedValues: [low, high, max]
-    Description: >-
-      GLM 5.3's reasoning_effort, passed through unchanged. The provider
-      default is max, which produced ten-minute turns on a large context;
-      thinking cannot be disabled on 5.3. Lower it if turns stay slow.
   ModelApiBase:
     Type: String
     Default: https://api.z.ai/api/paas/v4
@@ -222,7 +214,11 @@ Resources:
           # otherwise reject or drop it.
           AdditionalParams:
             extra_body:
-              reasoning_effort: !Ref ReasoningEffort
+              # GLM 5.3 always reasons; effort is low, high or max (provider
+              # default max). Low since 2026-10-17: high was not needed and
+              # reasoning output is resent as context. Fixed here, not a
+              # parameter, for the same reason as ModelId.
+              reasoning_effort: low
         # Previous configuration, to revert to if the experiment fails:
         # OpenAiModelConfig:
         #   ModelId: glm-5.3
@@ -231,7 +227,7 @@ Resources:
         #   ApiFormat: chat_completions
         #   MaxTokens: 16384
         #   AdditionalParams:
-        #     reasoning_effort: !Ref ReasoningEffort
+        #     reasoning_effort: low
       SystemPrompt:
         - Text: |
             You are Factorial's builder agent. Factorial is a software factory: you receive one unit of work (a WorkItem) per session and turn it into a reviewable change in a git repository.
@@ -243,7 +239,7 @@ Resources:
 
             How to work
             1. Read CLAUDE.md, README.md and any contributing or conventions files first. Follow the repository's conventions exactly: language, style, layout, test framework, commit message style.
-            2. Understand the request before changing anything. Explore the code that the request touches.
+            2. Understand the request before changing anything. Explore the code that the request touches, and read selectively: everything you read stays in the conversation and is sent again on every step, so it costs time and tokens for the rest of the session. Use grep or git grep to find what you need, read the relevant line ranges with sed -n rather than whole files, do not read whole test suites when one example shows the convention, and do not re-read a file you have already read unless it has changed. Start making changes as soon as you understand enough to do so.
             3. Make the smallest change that fully satisfies the request. Do not refactor, reformat or "improve" unrelated code.
             4. Add or update automated tests for behaviour you change. Run the repository's checks (tests, typecheck, lint) and fix any failure you caused.
             5. Commit early and often. Your session can end without warning (a model or network error, or the time limit), and only committed work is kept: after a failure the orchestrator pushes your commits to the branch for a human to pick up, while uncommitted changes may be lost. Commit after each coherent step that leaves the files consistent, for example a schema change with its tests, or a new module with its tests; do not wait until the whole request is done. Keep each commit focused, with a message in the imperative mood. Do not amend or rewrite history that existed before your session.
@@ -258,6 +254,28 @@ Resources:
       Memory:
         Disabled: {}
       MaxIterations: !Ref MaxIterations
+      # Context management. Every model call resends the whole conversation,
+      # so without this a long build costs roughly the square of its length
+      # (one 17-minute run used about 5 million tokens). Summarisation
+      # condenses older turns and keeps the most recent ones verbatim. Not a
+      # sliding window: that drops old messages outright, including the
+      # original request. Check maxCallInputTokens in the invoker's
+      # "harness finished" log to see whether the context stays bounded.
+      Truncation:
+        Strategy: summarization
+        Config:
+          Summarization:
+            SummaryRatio: 0.5
+            PreserveRecentMessages: 16
+            SummarizationSystemPrompt: |
+              You are condensing the earlier part of a coding agent's working session so it can continue with less context. Write a factual summary that preserves everything the agent still needs:
+              - the request it is working on, in full, including acceptance criteria and constraints;
+              - the repository conventions it has learned (language, layout, test framework, commit style, checks to run);
+              - every file it has created or changed, and what each change was;
+              - commits made so far, with their messages;
+              - decisions taken and why, and approaches tried that failed;
+              - what remains to be done, as a list.
+              Keep file paths, function names, commands and error messages exact. Omit file contents the agent can read again from disk.
       # Wall-clock limit for the agent loop in one invocation. Fixed here, not
       # a parameter, so a change reaches the existing stack (see ModelId).
       # Keep it below the orchestration stack's BuildTimeoutSeconds (7200) so

@@ -13,6 +13,7 @@ import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-
 import { assertWorkItem } from '@factorial/workitem';
 
 import { buildPrompt } from './prompt.ts';
+import { addCallUsage, emptyRunUsage, type CallUsage } from './usage.ts';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -82,7 +83,8 @@ async function main(): Promise<number> {
   );
 
   let stopReason: string | undefined;
-  let usage: Record<string, number | undefined> | undefined;
+  // One usage record arrives per model call; the run's consumption is their sum.
+  let usage = emptyRunUsage();
   let toolCalls = 0;
   let text = '';
   let streamError: string | undefined;
@@ -107,7 +109,7 @@ async function main(): Promise<number> {
       stopReason = event.messageStop.stopReason;
       log({ message: 'message stop', stopReason });
     } else if (event.metadata) {
-      usage = event.metadata.usage as Record<string, number | undefined> | undefined;
+      usage = addCallUsage(usage, event.metadata.usage as CallUsage | undefined);
     } else if (event.internalServerException || event.validationException || event.runtimeClientError) {
       const error = event.internalServerException ?? event.validationException ?? event.runtimeClientError;
       streamError = `${error?.name ?? 'StreamError'}: ${error?.message ?? ''}`;
