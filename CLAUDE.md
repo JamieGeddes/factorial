@@ -121,7 +121,7 @@ Next work items are the Stage 0 gaps below and then the ordered list under "Next
 - No smoke test, so the output requirement is not yet fully met.
 - No staging canary, so Factorial's changes to itself are checked only by tests and human review.
 - Only the harness `live` endpoint is promoted as a separate final step. Lambda aliases (SAM `AutoPublishAlias`) and the state machine alias move during the deploy itself. Separating all three comes with the staging canary.
-- An installation token with `contents: write` can push to any branch. The orchestrator pushes only to `factorial/*` branches and the agent holds no token, which is the whole safeguard today. Branch protection on `main` became available with the GitHub Pro plan (October 2026) and is not yet configured; see `docs/github-app.md`.
+- An installation token with `contents: write` can push to any unprotected branch. `main` is protected by a ruleset (pull request, code-owner review, CI checks, no force push; the App has no bypass; see `docs/github-app.md`), and the orchestrator pushes only to `factorial/*` branches. Other branches are unprotected.
 
 ### Next, in order
 

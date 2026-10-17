@@ -64,7 +64,13 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
 
    Only the orchestrator's Lambda functions read these and the private key. They mint one-hour installation tokens scoped to the single target repository. The agent sandbox has no access to the key, the identifiers or any token.
 
-   Note that an installation token with `contents: write` can push to any branch of the repository, including `main`. Today the only safeguard is that the orchestrator pushes exclusively to `factorial/*` branches and the agent holds no token at all. The repository is on GitHub Pro (since October 2026), so branch protection on `main` is available and should be enabled: require a pull request before merging, require the CI checks to pass, block force pushes and deletions, and do not exempt the Factorial App.
+   Note that an installation token with `contents: write` can push to any branch of the repository, including `main`. `main` is therefore protected by a repository ruleset ("Protect main", applied 2026-10-17): changes reach it only through a pull request with one approving review from a code owner, both CI jobs ("Typecheck, test and lint" and "Lint CloudFormation") must pass, and force pushes and deletions are blocked. The repository admin role bypasses the ruleset so the owner can still commit directly at this stage; the Factorial App is not a bypass actor, so its `contents: write` token cannot reach `main`. The ruleset is managed in **Settings → Rules → Rulesets** and was created with:
+
+```sh
+gh api -X POST repos/<owner>/<repo>/rulesets --input ruleset.json
+```
+
+where `ruleset.json` targets `~DEFAULT_BRANCH` with the rules `deletion`, `non_fast_forward`, `pull_request` (1 review, code owners, dismiss stale reviews) and `required_status_checks` for the two CI job names, and lists `RepositoryRole` 5 (admin) with `bypass_mode: always`.
 
 ## 5. Verify the webhook
 
