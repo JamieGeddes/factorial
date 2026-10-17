@@ -8,13 +8,6 @@ Parameters:
     Type: String
     Description: Tag of the agent environment image in the factorial/agent-environment repository.
     AllowedPattern: '^[A-Za-z0-9._-]+$'
-  ModelId:
-    Type: String
-    Default: glm-5.3
-    Description: >-
-      Model id at the provider. GLM 5.3 (not Flash) since 2026-10-17: the
-      first runs on Flash spent their budget exploring and verifying rather
-      than changing code. Both 5.3 models always reason; see ReasoningEffort.
   ReasoningEffort:
     Type: String
     Default: high
@@ -208,7 +201,12 @@ Resources:
         FACTORIAL_WORKSPACE: /workspace
       Model:
         OpenAiModelConfig:
-          ModelId: !Ref ModelId
+          # Fixed here, not a parameter: `cloudformation deploy` keeps a
+          # parameter's previous value, so a changed default never reaches an
+          # existing stack. The stack ran Flash while this said glm-5.3.
+          # Flash with reasoning_effort high and the longer loop timeout
+          # performs well; GLM 5.3 is still to be trialled against it.
+          ModelId: glm-5.3-flash
           ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
           ApiBase: !Ref ModelApiBase
           ApiFormat: chat_completions
