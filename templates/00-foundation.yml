@@ -459,6 +459,19 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestTag/Project: Factorial
+              # Creating a subnet, security group or route table is also
+              # authorised against the parent VPC, where request tags do not
+              # apply; the VPC itself must carry the tag instead.
+              - Sid: NetworkCreateInsideFactorialVpc
+                Effect: Allow
+                Action:
+                  - ec2:CreateSubnet
+                  - ec2:CreateSecurityGroup
+                  - ec2:CreateRouteTable
+                Resource: !Sub arn:${AWS::Partition}:ec2:${AWS::Region}:${AWS::AccountId}:vpc/*
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/Project: Factorial
               - Sid: NetworkTagOnCreate
                 Effect: Allow
                 Action: ec2:CreateTags
