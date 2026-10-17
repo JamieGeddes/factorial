@@ -95,9 +95,10 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 - The repository scaffold and CI are in place.
 - The foundation stack (`factorial-foundation`) is deployed: GitHub OIDC provider, deploy role, CloudFormation execution role, permissions boundary, artefact bucket and the agent environment ECR repository. The deploy role ARN is the `AWS_DEPLOY_ROLE_ARN` repository secret.
 - The deploy workflow runs after CI on `main` and deploys every numbered template above `00`.
-- The triggers stack (`factorial-triggers`) is deployed: the `factorial-work` event bus, the webhook secret, and the GitHub issue adapter (`packages/triggers-github-issues`) behind a function URL on its `live` alias.
+- The triggers stack (`factorial-triggers`) is deployed: the `factorial-work` event bus, the webhook secret, and the GitHub issue adapter (`packages/triggers-github-issues`) behind a function URL on its `live` alias. The GitHub App is created and installed, and labelling an issue produces a `WorkItem` on the bus.
+- The agent stack (`factorial-agent`) is deployed: the `factorial_builder` harness on the custom image from `agent-environment/`, using GLM 5.3 Flash through the Z.ai API via an AgentCore Identity credential provider, with a `live` endpoint promoted by the deploy workflow. Validated by direct invocation.
 
-Not yet built: the GitHub App (`docs/github-app.md`), the orchestration stack, and the harness with its container image.
+Not yet built: the orchestration stack (`30-orchestration.yml`): the Step Functions state machine (build → test → PR) with its `live` alias, the bus rule that starts it, the Fargate invoker that runs the harness and observes completion, and the Lambdas that clone, push, dispatch the test workflow and open the PR using the GitHub App.
 
 ### Stage 0 scope
 
