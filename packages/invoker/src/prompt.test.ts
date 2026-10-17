@@ -24,6 +24,10 @@ describe('buildPrompt', () => {
     assert.match(prompt, /\/workspace\/summary\.md/);
   });
 
+  it('asks for commits as the work progresses, not only at the end', () => {
+    assert.match(buildPrompt(workItem, 'b', 'main'), /Commit on this branch as you go/);
+  });
+
   it('marks an empty body explicitly', () => {
     assert.match(buildPrompt({ ...workItem, body: '  ' }, 'b', 'main'), /_No further description was given\._/);
   });

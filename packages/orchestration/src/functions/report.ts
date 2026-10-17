@@ -18,6 +18,18 @@ interface ReportInput {
   summary?: string;
   error?: { Error?: string; Cause?: string };
   sessionIdHint?: string | undefined;
+  /** What Collect pushed, if it ran: after a failed build, the saved work in progress. */
+  saved?: { pushed?: boolean; commitCount?: number } | null;
+}
+
+/** A sentence pointing at the pushed branch, when there is one. */
+export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved'>): string {
+  if (!input.saved?.pushed || !input.ctx) return '';
+  const { owner, name } = input.ctx.workItem.repository;
+  const branch = input.ctx.branch;
+  const url = `https://github.com/${owner}/${name}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
+  const commits = input.saved.commitCount === 1 ? '1 commit' : `${input.saved.commitCount ?? 'the'} commits`;
+  return ` Work in progress (${commits}) was saved to [\`${branch}\`](${url}); it is untested and no pull request was opened.`;
 }
 
 export function reportMessage(input: ReportInput): string {
@@ -35,7 +47,7 @@ export function reportMessage(input: ReportInput): string {
     case 'failed':
       // Deliberately generic: causes can contain command output. Details stay
       // in the execution history and the ledger, both inside the account.
-      return `Factorial could not complete this work item (\`${input.error?.Error ?? 'unknown error'}\`). Session \`${input.ctx?.sessionId ?? input.sessionIdHint ?? 'unknown'}\`; see the Factorial execution log.`;
+      return `Factorial could not complete this work item (\`${input.error?.Error ?? 'unknown error'}\`). Session \`${input.ctx?.sessionId ?? input.sessionIdHint ?? 'unknown'}\`; see the Factorial execution log.${savedWorkNote(input)}`;
   }
 }
 
@@ -68,7 +80,7 @@ export const handler = async (input: ReportInput): Promise<void> => {
   console.log(JSON.stringify({ message: 'reporting', status: input.status, workItemId: workItem?.id, error }));
   if (!workItem) return;
 
-  await recordProgress(workItem.id, input.status, { error });
+  await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
   const issue = issueNumber(workItem);
   if (issue === undefined) return;
 
