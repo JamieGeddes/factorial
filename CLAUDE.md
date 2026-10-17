@@ -99,7 +99,7 @@ These are expensive to retrofit or are the safety limits on a self-modifying sys
 - The foundation stack (`factorial-foundation`) is deployed: GitHub OIDC provider, deploy role, CloudFormation execution role, permissions boundary, artefact bucket and the agent environment ECR repository. The deploy role ARN is the `AWS_DEPLOY_ROLE_ARN` repository secret.
 - The deploy workflow runs after CI on `main` and deploys every numbered template above `00`.
 - The triggers stack (`factorial-triggers`) is deployed: the `factorial-work` event bus, the webhook secret, and the GitHub issue adapter (`packages/triggers-github-issues`) behind a function URL on its `live` alias. The GitHub App is created and installed, and labelling an issue produces a `WorkItem` on the bus.
-- The agent stack (`factorial-agent`) is deployed: the `factorial_builder` harness on the custom image from `agent-environment/`, using GLM 5.3 Flash through the Z.ai API via an AgentCore Identity credential provider, with a `live` endpoint promoted by the deploy workflow. Validated by direct invocation.
+- The agent stack (`factorial-agent`) is deployed: the `factorial_builder` harness on the custom image from `agent-environment/`, using GLM 5.3 through the Z.ai API via an AgentCore Identity credential provider (reasoning effort and loop timeout are stack parameters), with a `live` endpoint promoted by the deploy workflow. Validated by direct invocation.
 
 - The orchestration stack (`factorial-orchestration`) is deployed: the `factorial-work` state machine (Prepare → Build → Collect → Test → OpenPullRequest) behind its `live` alias, the bus rule that starts it, the `factorial-work-items` ledger, the Fargate invoker (`packages/invoker`) that runs the harness to completion, and the orchestrator Lambdas (`packages/orchestration`) that clone, bundle and push, dispatch `test.yml` and open the PR with GitHub App tokens. The test callback role ARN is the `AWS_TEST_CALLBACK_ROLE_ARN` repository secret.
 
@@ -112,7 +112,7 @@ Next work items are the Stage 0 gaps below and then the ordered list under "Next
 | Triggers | GitHub issues only |
 | EventBridge | One bus, one rule |
 | Step Functions | Three states: build → test → PR |
-| Agents | One Harness that both plans and builds, using GLM 5.3 Flash via the Z.ai API (general endpoint) |
+| Agents | One Harness that both plans and builds, using GLM 5.3 via the Z.ai API (general endpoint) |
 | Verification | Automated tests run via GitHub Actions; no sandbox smoke test yet |
 | Promotion | Move the `live` aliases after a successful deploy |
 

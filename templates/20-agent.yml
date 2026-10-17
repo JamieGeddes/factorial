@@ -10,7 +10,19 @@ Parameters:
     AllowedPattern: '^[A-Za-z0-9._-]+$'
   ModelId:
     Type: String
-    Default: glm-5.3-flash
+    Default: glm-5.3
+    Description: >-
+      Model id at the provider. GLM 5.3 (not Flash) since 2026-10-17: the
+      first runs on Flash spent their budget exploring and verifying rather
+      than changing code. Both 5.3 models always reason; see ReasoningEffort.
+  ReasoningEffort:
+    Type: String
+    Default: high
+    AllowedValues: [low, high, max]
+    Description: >-
+      GLM 5.3's reasoning_effort, passed through unchanged. The provider
+      default is max, which produced ten-minute turns on a large context;
+      thinking cannot be disabled on 5.3. Lower it if turns stay slow.
   ModelApiBase:
     Type: String
     Default: https://api.z.ai/api/paas/v4
@@ -27,8 +39,12 @@ Parameters:
     Description: Reasoning and tool cycles per invocation before the harness stops.
   TimeoutSeconds:
     Type: Number
-    Default: 3600
-    Description: Wall-clock limit for one invocation.
+    Default: 6600
+    Description: >-
+      Wall-clock limit for the agent loop in one invocation. Keep it below the
+      orchestration stack's BuildTimeoutSeconds (7200) so the harness ends the
+      loop itself and the Collect step still runs; a Step Functions timeout
+      would stop the invoker task and lose any uncollected commits.
 
 Resources:
   # ---------------------------------------------------------------------------
@@ -197,6 +213,9 @@ Resources:
           ApiBase: !Ref ModelApiBase
           ApiFormat: chat_completions
           MaxTokens: 16384
+          # Provider-specific request fields, passed through unchanged.
+          AdditionalParams:
+            reasoning_effort: !Ref ReasoningEffort
       SystemPrompt:
         - Text: |
             You are Factorial's builder agent. Factorial is a software factory: you receive one unit of work (a WorkItem) per session and turn it into a reviewable change in a git repository.
