@@ -53,6 +53,8 @@ describe('cleanRoomPushScript', () => {
     assert.match(script, /printf '%s' 'QUJD' \| base64 -d > incoming\.bundle/);
     assert.match(script, new RegExp(`clone --quiet --bare --filter=blob:none 'https://github\\.com/JamieGeddes/factorial\\.git' repo\\.git`));
     assert.match(script, /fetch --quiet \.\.\/incoming\.bundle HEAD/);
+    // clone, bundle import (lazy blob fetch from origin) and push all authenticate
+    assert.equal(script.split('http.extraHeader=').length - 1, 3);
     assert.match(script, new RegExp(`test "\\$\\(git rev-parse FETCH_HEAD\\)" = '${sha}'`));
     assert.match(script, new RegExp(`push --quiet origin '${sha}:refs/heads/factorial/abc'`));
     assert.match(script, new RegExp(`http\\.extraHeader='AUTHORIZATION: basic ${basic}'`));

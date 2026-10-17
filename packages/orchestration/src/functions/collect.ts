@@ -85,7 +85,10 @@ export function cleanRoomPushScript(params: {
     `printf '%s' ${shellQuote(params.bundleBase64)} | base64 -d > incoming.bundle`,
     `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} clone --quiet --bare --filter=blob:none ${shellQuote(url)} repo.git`,
     'cd repo.git',
-    'git -c core.hooksPath=/dev/null fetch --quiet ../incoming.bundle HEAD',
+    // The clone is blob-less, so importing the bundle makes git fetch the
+    // unchanged files' blobs from origin on demand; that lazy fetch needs
+    // the same header or it fails asking for a username.
+    `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} fetch --quiet ../incoming.bundle HEAD`,
     `test "$(git rev-parse FETCH_HEAD)" = ${shellQuote(headSha)}`,
     `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} push --quiet origin ${shellQuote(`${headSha}:refs/heads/${params.branch}`)}`,
     'cd / && rm -rf /workspace/push',
