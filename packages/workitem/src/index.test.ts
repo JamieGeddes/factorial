@@ -124,3 +124,95 @@ describe('WorkItem schema', () => {
     assert.equal(validateWorkItem([]).ok, false);
   });
 });
+
+describe('WorkItem rework context', () => {
+  it('accepts a valid rework item', async () => {
+    const item = parseWorkItem(await loadExample('github-pr-rework.json'));
+    assert.equal(item.context?.kind, 'rework');
+    assert.equal(item.context?.pullRequest.number, 7);
+    assert.equal(item.context?.cause, 'review');
+    assert.equal(item.context?.details.length, 2);
+  });
+
+  it('rejects an unknown context kind', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: Record<string, unknown>;
+    };
+    item.context.kind = 'escalation';
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/context/kind')));
+  });
+
+  it('rejects an unknown cause', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: Record<string, unknown>;
+    };
+    item.context.cause = 'whim';
+    assert.equal(validateWorkItem(item).ok, false);
+  });
+
+  it('rejects a branch that is not a Factorial branch', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: Record<string, unknown>;
+    };
+    item.context.branch = 'feature/rework';
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/context/branch')));
+  });
+
+  it('rejects a malformed previousWorkItemId', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: Record<string, unknown>;
+    };
+    item.context.previousWorkItemId = 'not-a-uuid';
+    assert.equal(validateWorkItem(item).ok, false);
+  });
+
+  it('rejects unknown properties inside context and its nested objects', async () => {
+    const base = await loadExample('github-pr-rework.json');
+
+    const extraTop = clone(base) as { context: Record<string, unknown> };
+    extraTop.context.priority = 'high';
+    assert.equal(validateWorkItem(extraTop).ok, false);
+
+    const extraDetail = clone(base) as {
+      context: { details: Array<Record<string, unknown>> };
+    };
+    extraDetail.context.details[0]!.severity = 'blocker';
+    assert.equal(validateWorkItem(extraDetail).ok, false);
+  });
+
+  it('rejects a detail body longer than 8,000 characters', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: { details: Array<{ body: string }> };
+    };
+    item.context.details[0]!.body = 'x'.repeat(8001);
+    assert.equal(validateWorkItem(item).ok, false);
+  });
+
+  it('rejects more than 50 details', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: { details: Array<{ author: string; body: string }> };
+    };
+    item.context.details = Array.from({ length: 51 }, (_, i) => ({
+      author: 'JamieGeddes',
+      body: `comment ${i}`,
+    }));
+    assert.equal(validateWorkItem(item).ok, false);
+  });
+
+  it('rejects a detail missing author or body', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as {
+      context: { details: Array<Record<string, unknown>> };
+    };
+    delete item.context.details[0]!.author;
+    assert.equal(validateWorkItem(item).ok, false);
+  });
+
+  it('still accepts the issue example without a context field', async () => {
+    const item = parseWorkItem(await loadExample('github-issue.json'));
+    assert.equal(item.context, undefined);
+  });
+});

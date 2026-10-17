@@ -29,6 +29,16 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 | `title`, `body` | The work, as the requester wrote it. |
 | `requestedBy` | Requester identity in the source system. |
 | `createdAt` | When the adapter created the `WorkItem`. |
+| `context` | Optional structured context about the work. Optional and additive, so existing items are unaffected. A consumer that ignores it still has `body`. |
+
+### `context`
+
+`context` is a discriminated union on `kind`. Only one kind exists today:
+
+- **`rework`** — the item reworks a previous `WorkItem`'s pull request. It carries the pull request (number and URL), the Factorial working branch (`factorial/…`), the base branch, the previous `WorkItem`'s `id`, the `cause` (`review` or `checks-failed`) and up to 50 `details` (review comments), each with an author, an optional `path` and `line`, and a `body` of at most 8,000 characters.
+
+New kinds add a new `kind` const without changing anything else in the contract. `body` on the `WorkItem` itself stays the human-readable instruction, so a consumer that ignores `context` still gets something sensible.
+
 
 ## What is deliberately left out
 
@@ -44,3 +54,7 @@ Changing this schema is a deliberate, human-approved decision, never a side effe
 2. **Additive, optional fields** stay in `v1`. Because the schema is strict, in-flight executions on the previous version would reject the new field, so the PR also carries the `requires-drain` label and deployment waits for in-flight executions to finish before promoting.
 3. **Breaking changes** (removing or renaming a field, changing a type, tightening a constraint) create `v2/` alongside `v1/` and increment `schemaVersion`. Adapters and consumers move together.
 4. Update the examples and the tests in `packages/workitem` in the same PR.
+
+## Change log
+
+- **2026-10: added the optional `context` object (`kind: "rework"`).** Additive and backwards-compatible: existing items validate unchanged. Added so rework requests, which previously had to be flattened into `body`, can carry the pull request, branch and review comments as structured data. Nothing consumes the field yet. This is a deliberate contract change: additive, optional, stays in `v1` per the rules above.

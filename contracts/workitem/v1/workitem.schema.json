@@ -89,6 +89,93 @@
       "description": "When the adapter created this WorkItem, as an RFC 3339 timestamp.",
       "type": "string",
       "format": "date-time"
+    },
+    "context": {
+      "description": "Optional structured context about the work. Only present for items that need it, e.g. rework of a previous WorkItem. A consumer that ignores this field still has `body`, which carries the human-readable instruction.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "pullRequest",
+        "branch",
+        "baseBranch",
+        "previousWorkItemId",
+        "cause",
+        "details"
+      ],
+      "properties": {
+        "kind": {
+          "description": "Discriminator for the context shape. Only rework exists today; new kinds add a new const here without changing anything else.",
+          "const": "rework"
+        },
+        "pullRequest": {
+          "description": "The pull request the rework applies to.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["number", "url"],
+          "properties": {
+            "number": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "url": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        },
+        "branch": {
+          "description": "The Factorial working branch the pull request was raised from.",
+          "type": "string",
+          "pattern": "^factorial/"
+        },
+        "baseBranch": {
+          "description": "The branch the pull request targets.",
+          "type": "string",
+          "minLength": 1
+        },
+        "previousWorkItemId": {
+          "description": "The id of the WorkItem that produced the pull request being reworked.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "cause": {
+          "description": "Why the rework is needed.",
+          "enum": ["review", "checks-failed"]
+        },
+        "details": {
+          "description": "The specific items to address, e.g. review comments. At most 50.",
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["author", "body"],
+            "properties": {
+              "author": {
+                "description": "Author of the comment, as a source-system login.",
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "description": "Optional file the comment applies to.",
+                "type": "string",
+                "minLength": 1
+              },
+              "line": {
+                "description": "Optional line the comment applies to.",
+                "type": "integer",
+                "minimum": 1
+              },
+              "body": {
+                "description": "The comment text, at most 8,000 characters.",
+                "type": "string",
+                "maxLength": 8000
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

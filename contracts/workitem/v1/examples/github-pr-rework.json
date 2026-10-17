@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "8a4d2e3f-6c8b-4d9f-8b2c-3e4f5a6b7c8d",
+  "source": {
+    "type": "github-issue",
+    "id": "21",
+    "url": "https://github.com/JamieGeddes/factorial/issues/21"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "JamieGeddes",
+    "name": "factorial"
+  },
+  "title": "Rework PR #7: address review comments",
+  "body": "Rework the change on PR #7 to address the review comments.",
+  "requestedBy": "JamieGeddes",
+  "createdAt": "2026-10-16T21:30:00Z",
+  "context": {
+    "kind": "rework",
+    "pullRequest": {
+      "number": 7,
+      "url": "https://github.com/JamieGeddes/factorial/pull/7"
+    },
+    "branch": "factorial/146b11c0-ca7d-11f1-9d6b-acd4bff0d455",
+    "baseBranch": "main",
+    "previousWorkItemId": "7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c",
+    "cause": "review",
+    "details": [
+      {
+        "author": "JamieGeddes",
+        "path": "src/x.ts",
+        "line": 12,
+        "body": "Please name this variable more descriptively."
+      },
+      {
+        "author": "JamieGeddes",
+        "body": "Add a test for the empty-input case."
+      }
+    ]
+  }
+}

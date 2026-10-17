@@ -42,6 +42,41 @@ export interface WorkItemRepository {
   name: string;
 }
 
+/** Why rework of a previous WorkItem is needed. */
+export type WorkItemReworkCause = 'review' | 'checks-failed';
+
+export interface WorkItemReviewDetail {
+  /** Author of the comment, as a source-system login. */
+  author: string;
+  /** Optional file the comment applies to. */
+  path?: string;
+  /** Optional line the comment applies to. */
+  line?: number;
+  /** The comment text, at most 8,000 characters. */
+  body: string;
+}
+
+/** Context about a rework of a previous WorkItem's pull request. */
+export interface ReworkContext {
+  kind: 'rework';
+  pullRequest: {
+    number: number;
+    url: string;
+  };
+  /** The Factorial working branch the pull request was raised from. */
+  branch: string;
+  /** The branch the pull request targets. */
+  baseBranch: string;
+  /** The id of the WorkItem that produced the pull request being reworked. */
+  previousWorkItemId: string;
+  cause: WorkItemReworkCause;
+  /** The specific items to address, e.g. review comments. At most 50. */
+  details: WorkItemReviewDetail[];
+}
+
+/** Discriminated union over `context.kind`. Only rework exists today. */
+export type WorkItemContext = ReworkContext;
+
 export interface WorkItem {
   schemaVersion: typeof WORKITEM_SCHEMA_VERSION;
   id: string;
@@ -52,6 +87,8 @@ export interface WorkItem {
   requestedBy: string;
   /** RFC 3339 timestamp. */
   createdAt: string;
+  /** Optional structured context. A consumer that ignores it still has `body`. */
+  context?: WorkItemContext;
 }
 
 export type WorkItemValidationResult =
