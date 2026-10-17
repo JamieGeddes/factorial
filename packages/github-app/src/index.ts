@@ -4,6 +4,8 @@
  */
 import { createSign } from 'node:crypto';
 
+export { GitHubApiError, GitHubClient, type PullRequest, type Repo } from './rest.ts';
+
 export interface AppCredentials {
   appId: string;
   installationId: string;
@@ -16,9 +18,14 @@ export interface InstallationToken {
   expiresAt: string;
 }
 
+/** GitHub App permission levels a token may be narrowed to. */
+export type TokenPermissions = Record<string, 'read' | 'write'>;
+
 export interface MintOptions {
   /** Restrict the token to these repository names within the installation. */
   repositories?: string[];
+  /** Restrict the token to a subset of the App's permissions, e.g. { contents: 'read' }. */
+  permissions?: TokenPermissions;
   /** Override for tests. */
   fetchImpl?: typeof fetch;
   /** Override for tests, seconds since the epoch. */
@@ -46,7 +53,10 @@ export async function mintInstallationToken(
 ): Promise<InstallationToken> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const jwt = createAppJwt(credentials.appId, credentials.privateKeyPem, options.nowSeconds);
-  const body = options.repositories ? JSON.stringify({ repositories: options.repositories }) : undefined;
+  const scope: { repositories?: string[]; permissions?: TokenPermissions } = {};
+  if (options.repositories) scope.repositories = options.repositories;
+  if (options.permissions) scope.permissions = options.permissions;
+  const body = Object.keys(scope).length > 0 ? JSON.stringify(scope) : undefined;
 
   const response = await fetchImpl(
     `https://api.github.com/app/installations/${encodeURIComponent(credentials.installationId)}/access_tokens`,

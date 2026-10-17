@@ -43,7 +43,11 @@ describe('mintInstallationToken', () => {
       return new Response(JSON.stringify({ token: 'ghs_abc', expires_at: '2026-10-16T23:00:00Z' }), { status: 201 });
     }) as typeof fetch;
 
-    const result = await mintInstallationToken(credentials, { fetchImpl, repositories: ['factorial'] });
+    const result = await mintInstallationToken(credentials, {
+      fetchImpl,
+      repositories: ['factorial'],
+      permissions: { contents: 'read' },
+    });
 
     assert.deepEqual(result, { token: 'ghs_abc', expiresAt: '2026-10-16T23:00:00Z' });
     assert.ok(seen);
@@ -52,7 +56,7 @@ describe('mintInstallationToken', () => {
     const headers = seen.init.headers as Record<string, string>;
     assert.match(headers.authorization ?? '', /^Bearer [A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     assert.equal(headers['x-github-api-version'], '2022-11-28');
-    assert.deepEqual(JSON.parse(String(seen.init.body)), { repositories: ['factorial'] });
+    assert.deepEqual(JSON.parse(String(seen.init.body)), { repositories: ['factorial'], permissions: { contents: 'read' } });
   });
 
   it('sends no body when the token is not scoped to repositories', async () => {

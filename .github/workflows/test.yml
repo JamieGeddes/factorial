@@ -1,0 +1,75 @@
+name: Test (dispatched by Factorial)
+
+# Factorial's test stage. The orchestrator dispatches this workflow on the
+# branch it built, passing a Step Functions task token. The run executes the
+# repository's checks and reports the result back with that token.
+#
+# The callback role is trusted only for factorial/* branches of this
+# repository, and may only send task results.
+
+on:
+  workflow_dispatch:
+    inputs:
+      task_token:
+        description: Step Functions task token to report the result to
+        required: true
+      work_item_id:
+        description: WorkItem being verified
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: factorial-test-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  test:
+    name: Run the repository's checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Checks
+        id: checks
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run typecheck
+          npm run build
+          npm test
+          npm run check:yml
+          pipx run --spec 'cfn-lint==1.57.2' cfn-lint
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ secrets.AWS_TEST_CALLBACK_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: factorial-test-${{ github.run_id }}
+
+      - name: Report the result to Factorial
+        env:
+          TASK_TOKEN: ${{ inputs.task_token }}
+          WORK_ITEM_ID: ${{ inputs.work_item_id }}
+          OUTCOME: ${{ steps.checks.outcome }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          output=$(jq -n --arg runUrl "$RUN_URL" --arg workItemId "$WORK_ITEM_ID" --arg sha "$GITHUB_SHA" --arg outcome "$OUTCOME" \
+            '{runUrl: $runUrl, workItemId: $workItemId, sha: $sha, outcome: $outcome}')
+          if [ "$OUTCOME" = "success" ]; then
+            aws stepfunctions send-task-success --task-token "$TASK_TOKEN" --task-output "$output"
+          else
+            aws stepfunctions send-task-failure --task-token "$TASK_TOKEN" --error TestsFailed --cause "$output"
+            exit 1
+          fi

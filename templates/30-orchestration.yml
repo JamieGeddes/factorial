@@ -1,0 +1,887 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Factorial orchestration: the work ledger, the Step Functions state machine
+  (build -> test -> PR) with its live alias, the rule that starts it from the
+  work bus, the Fargate invoker that runs the harness, and the Lambda steps
+  around the agent. Deployed by GitHub Actions.
+
+Parameters:
+  InvokerImageTag:
+    Type: String
+    Description: Tag of the invoker image in the factorial/invoker repository.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  FactorialVersion:
+    Type: String
+    Description: Git commit of Factorial being deployed. Stamped on every WorkItem it handles.
+    AllowedPattern: '^[0-9a-f]{7,40}$'
+  BuildTimeoutSeconds:
+    Type: Number
+    Default: 7200
+    Description: Upper bound for the agent build step, including the harness's own timeout.
+  TestTimeoutSeconds:
+    Type: Number
+    Default: 3600
+    Description: How long to wait for the dispatched test workflow to report back.
+  LogRetentionDays:
+    Type: Number
+    Default: 30
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures:
+      - arm64
+    MemorySize: 512
+    Timeout: 300
+    AutoPublishAlias: live
+    PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+    Environment:
+      Variables:
+        NODE_OPTIONS: --enable-source-maps
+        TABLE_NAME: !Ref WorkItemsTable
+        HARNESS_ARN: !ImportValue Factorial-BuilderHarnessArn
+        HARNESS_QUALIFIER: live
+        GITHUB_APP_ID_PARAM: /factorial/github/app-id
+        GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
+        GITHUB_PRIVATE_KEY_SECRET: factorial/github/app-private-key
+        TEST_WORKFLOW_FILE: test.yml
+    Tags:
+      Project: Factorial
+
+Resources:
+  # ---------------------------------------------------------------------------
+  # Ledger: one row per WorkItem. Also the idempotency guard against duplicate
+  # deliveries, since EventBridge cannot name executions.
+  # ---------------------------------------------------------------------------
+  WorkItemsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: factorial-work-items
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: workItemId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: workItemId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Network for the Fargate invoker: public subnets, no NAT, egress only.
+  # ---------------------------------------------------------------------------
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: factorial
+        - Key: Project
+          Value: Factorial
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: factorial
+        - Key: Project
+          Value: Factorial
+
+  InternetGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  SubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/20
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: factorial-a
+        - Key: Project
+          Value: Factorial
+
+  SubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.16.0/20
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: factorial-b
+        - Key: Project
+          Value: Factorial
+
+  RouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: factorial-public
+        - Key: Project
+          Value: Factorial
+
+  DefaultRoute:
+    Type: AWS::EC2::Route
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      RouteTableId: !Ref RouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  SubnetARouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetA
+      RouteTableId: !Ref RouteTable
+
+  SubnetBRouteTable:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SubnetB
+      RouteTableId: !Ref RouteTable
+
+  # No ingress. Egress uses the VPC default allow-all rule.
+  InvokerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: factorial-invoker
+      GroupDescription: Factorial harness invoker tasks (egress only)
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: factorial-invoker
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # The invoker: a Fargate task that runs one harness invocation to completion.
+  # Step Functions waits on it with runTask.sync, so a build may take hours
+  # without any Lambda or integration time limit, and completion is observed
+  # by a process the agent cannot influence.
+  # ---------------------------------------------------------------------------
+  BuildCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: factorial-build
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  InvokerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /factorial/invoker
+      RetentionInDays: !Ref LogRetentionDays
+
+  InvokerExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-invoker-execution
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-invoker-execution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/invoker
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${InvokerLogGroup.Arn}:*
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  InvokerTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-invoker
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-invoker
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeBuilder
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeHarness
+                  - bedrock-agentcore:InvokeAgentRuntime
+                Resource:
+                  - !ImportValue Factorial-BuilderHarnessArn
+                  - !Sub
+                    - ${HarnessArn}/harness-endpoint/*
+                    - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
+              - Sid: Ledger
+                Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt WorkItemsTable.Arn
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  InvokerTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: factorial-invoker
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      Cpu: '512'
+      Memory: '1024'
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt InvokerExecutionRole.Arn
+      TaskRoleArn: !GetAtt InvokerTaskRole.Arn
+      ContainerDefinitions:
+        - Name: invoker
+          Image: !Join
+            - ':'
+            - - !ImportValue Factorial-InvokerRepositoryUri
+              - !Ref InvokerImageTag
+          Essential: true
+          Environment:
+            - Name: TABLE_NAME
+              Value: !Ref WorkItemsTable
+            - Name: HARNESS_ARN
+              Value: !ImportValue Factorial-BuilderHarnessArn
+            - Name: HARNESS_QUALIFIER
+              Value: live
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref InvokerLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: invoker
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Lambda steps around the agent. Each has only the permissions its step needs.
+  # ---------------------------------------------------------------------------
+  PrepareLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-prepare
+      RetentionInDays: !Ref LogRetentionDays
+  CollectLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-collect
+      RetentionInDays: !Ref LogRetentionDays
+  DispatchTestsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-dispatch-tests
+      RetentionInDays: !Ref LogRetentionDays
+  OpenPullRequestLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-open-pr
+      RetentionInDays: !Ref LogRetentionDays
+  ReportLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-report
+      RetentionInDays: !Ref LogRetentionDays
+
+  PrepareFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-prepare
+      Description: Accept a WorkItem once, clone the repository into the agent session and create the work branch.
+      CodeUri: ../packages/orchestration/dist/prepare/
+      Handler: index.handler
+      Timeout: 900
+      LoggingConfig:
+        LogGroup: !Ref PrepareLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action:
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref SessionCommandPolicy
+        - !Ref GitHubAppPolicy
+
+  CollectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-collect
+      Description: Commit leftovers, push the work branch and collect the agent's summary.
+      CodeUri: ../packages/orchestration/dist/collect/
+      Handler: index.handler
+      Timeout: 600
+      LoggingConfig:
+        LogGroup: !Ref CollectLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref SessionCommandPolicy
+        - !Ref GitHubAppPolicy
+
+  DispatchTestsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-dispatch-tests
+      Description: Start the repository's test workflow on the work branch with a task token.
+      CodeUri: ../packages/orchestration/dist/dispatch-tests/
+      Handler: index.handler
+      Timeout: 60
+      LoggingConfig:
+        LogGroup: !Ref DispatchTestsLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref GitHubAppPolicy
+
+  OpenPullRequestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-open-pr
+      Description: Open the pull request for human approval and notify the requester.
+      CodeUri: ../packages/orchestration/dist/open-pr/
+      Handler: index.handler
+      Timeout: 60
+      LoggingConfig:
+        LogGroup: !Ref OpenPullRequestLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref GitHubAppPolicy
+
+  ReportFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-report
+      Description: Tell the requester when no pull request will follow.
+      CodeUri: ../packages/orchestration/dist/report/
+      Handler: index.handler
+      Timeout: 60
+      LoggingConfig:
+        LogGroup: !Ref ReportLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref GitHubAppPolicy
+
+  SessionCommandPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-session-command
+      Description: Run deterministic commands in the builder harness session.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - bedrock-agentcore:InvokeAgentRuntimeCommand
+              - bedrock-agentcore:InvokeAgentRuntime
+            Resource:
+              - !ImportValue Factorial-BuilderHarnessArn
+              - !Sub
+                - ${HarnessArn}/harness-endpoint/*
+                - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
+
+  # Only orchestrator functions, outside the agent sandbox, may read the App
+  # key and mint tokens.
+  GitHubAppPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-github-app
+      Description: Read the GitHub App identifiers and private key to mint installation tokens.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - ssm:GetParameter
+              - ssm:GetParameters
+            Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/factorial/github/*
+          - Effect: Allow
+            Action: secretsmanager:GetSecretValue
+            Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/github/app-private-key-*
+
+  # ---------------------------------------------------------------------------
+  # Test callback: the dispatched workflow reports its result with the task
+  # token through this role. Trusted only for factorial/* branches of this
+  # repository, and able only to send task results.
+  # ---------------------------------------------------------------------------
+  TestCallbackRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-test-callback
+      Description: Assumed by the dispatched test workflow to report its result to Step Functions.
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !ImportValue Factorial-GitHubOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub
+                  - ${Prefix}:ref:refs/heads/factorial/*
+                  - Prefix: !ImportValue Factorial-GitHubOidcSubjectPrefix
+      Policies:
+        - PolicyName: factorial-test-callback
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - states:SendTaskSuccess
+                  - states:SendTaskFailure
+                  - states:SendTaskHeartbeat
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # The state machine. Deterministic; the agent runs inside the Build state.
+  # ---------------------------------------------------------------------------
+  StateMachineLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/vendedlogs/states/factorial-work
+      RetentionInDays: !Ref LogRetentionDays
+
+  OrchestratorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-orchestrator
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-orchestrator
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Sid: InvokeSteps
+                Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !Ref PrepareFunction.Alias
+                  - !Ref CollectFunction.Alias
+                  - !Ref DispatchTestsFunction.Alias
+                  - !Ref OpenPullRequestFunction.Alias
+                  - !Ref ReportFunction.Alias
+              - Sid: RunInvoker
+                Effect: Allow
+                Action: ecs:RunTask
+                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/factorial-invoker:*
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt BuildCluster.Arn
+              - Sid: TrackInvoker
+                Effect: Allow
+                Action:
+                  - ecs:StopTask
+                  - ecs:DescribeTasks
+                Resource: '*'
+                Condition:
+                  ArnEquals:
+                    ecs:cluster: !GetAtt BuildCluster.Arn
+              - Sid: PassInvokerRoles
+                Effect: Allow
+                Action: iam:PassRole
+                Resource:
+                  - !GetAtt InvokerExecutionRole.Arn
+                  - !GetAtt InvokerTaskRole.Arn
+                Condition:
+                  StringEquals:
+                    iam:PassedToService: ecs-tasks.amazonaws.com
+              - Sid: ManagedRuleForSyncTasks
+                Effect: Allow
+                Action:
+                  - events:PutTargets
+                  - events:PutRule
+                  - events:DescribeRule
+                Resource: !Sub arn:${AWS::Partition}:events:${AWS::Region}:${AWS::AccountId}:rule/StepFunctionsGetEventsForECSTaskRule
+              - Sid: ExecutionLogs
+                Effect: Allow
+                Action:
+                  - logs:CreateLogDelivery
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: '*'
+              - Sid: Tracing
+                Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  WorkStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: factorial-work
+      StateMachineType: STANDARD
+      RoleArn: !GetAtt OrchestratorRole.Arn
+      LoggingConfiguration:
+        Level: ALL
+        IncludeExecutionData: true
+        Destinations:
+          - CloudWatchLogsLogGroup:
+              LogGroupArn: !GetAtt StateMachineLogGroup.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionSubstitutions:
+        FactorialVersion: !Ref FactorialVersion
+        BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
+        TestTimeoutSeconds: !Ref TestTimeoutSeconds
+        PrepareFunctionAlias: !Ref PrepareFunction.Alias
+        CollectFunctionAlias: !Ref CollectFunction.Alias
+        DispatchTestsFunctionAlias: !Ref DispatchTestsFunction.Alias
+        OpenPullRequestFunctionAlias: !Ref OpenPullRequestFunction.Alias
+        ReportFunctionAlias: !Ref ReportFunction.Alias
+        ClusterArn: !GetAtt BuildCluster.Arn
+        TaskDefinitionArn: !Ref InvokerTaskDefinition
+        SubnetA: !Ref SubnetA
+        SubnetB: !Ref SubnetB
+        SecurityGroup: !Ref InvokerSecurityGroup
+      DefinitionString: |
+        {
+          "Comment": "Factorial Stage 0: build -> test -> PR. Deterministic; the agent runs inside Build.",
+          "QueryLanguage": "JSONata",
+          "StartAt": "Start",
+          "States": {
+            "Start": {
+              "Type": "Pass",
+              "Assign": {
+                "workItemInput": "{% $states.input %}",
+                "ctx": null,
+                "collect": null,
+                "test": null,
+                "failure": null
+              },
+              "Next": "Prepare"
+            },
+            "Prepare": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${PrepareFunctionAlias}",
+                "Payload": {
+                  "workItem": "{% $workItemInput %}",
+                  "factorialVersion": "${FactorialVersion}"
+                }
+              },
+              "Assign": { "ctx": "{% $states.result.Payload %}" },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["DuplicateWorkItem"], "Next": "Duplicate" },
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "Build"
+            },
+            "Duplicate": { "Type": "Succeed", "Comment": "This WorkItem was already accepted; nothing to do." },
+            "Build": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Arguments": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${TaskDefinitionArn}",
+                "LaunchType": "FARGATE",
+                "PropagateTags": "TASK_DEFINITION",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${SubnetA}", "${SubnetB}"],
+                    "SecurityGroups": ["${SecurityGroup}"],
+                    "AssignPublicIp": "ENABLED"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [
+                    {
+                      "Name": "invoker",
+                      "Environment": [
+                        { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
+                        { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },
+                        { "Name": "BRANCH", "Value": "{% $ctx.branch %}" },
+                        { "Name": "BASE_BRANCH", "Value": "{% $ctx.baseBranch %}" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "TimeoutSeconds": ${BuildTimeoutSeconds},
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "Collect"
+            },
+            "Collect": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $ctx %}" },
+              "Assign": { "collect": "{% $states.result.Payload %}" },
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "HasChanges"
+            },
+            "HasChanges": {
+              "Type": "Choice",
+              "Choices": [ { "Condition": "{% $collect.pushed = true %}", "Next": "Test" } ],
+              "Default": "ReportNoChanges"
+            },
+            "Test": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
+              "Arguments": {
+                "FunctionName": "${DispatchTestsFunctionAlias}",
+                "Payload": { "taskToken": "{% $states.context.Task.Token %}", "ctx": "{% $ctx %}" }
+              },
+              "TimeoutSeconds": ${TestTimeoutSeconds},
+              "Assign": { "test": "{% $states.result %}" },
+              "Catch": [
+                { "ErrorEquals": ["TestsFailed"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportTestsFailed" },
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "OpenPullRequest"
+            },
+            "OpenPullRequest": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${OpenPullRequestFunctionAlias}",
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}" }
+              },
+              "Output": "{% $states.result.Payload %}",
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "Done"
+            },
+            "Done": { "Type": "Succeed" },
+            "ReportNoChanges": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ReportFunctionAlias}",
+                "Payload": { "status": "no-changes", "ctx": "{% $ctx %}", "summary": "{% $collect.summary %}" }
+              },
+              "Next": "NoChanges"
+            },
+            "NoChanges": { "Type": "Succeed", "Comment": "The agent made no changes; the requester was told." },
+            "ReportTestsFailed": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ReportFunctionAlias}",
+                "Payload": { "status": "tests-failed", "ctx": "{% $ctx %}", "error": "{% $failure %}" }
+              },
+              "Next": "TestsFailed"
+            },
+            "TestsFailed": { "Type": "Fail", "Error": "TestsFailed", "Cause": "The change did not pass the repository's checks." },
+            "ReportFailure": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ReportFunctionAlias}",
+                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}" }
+              },
+              "Catch": [ { "ErrorEquals": ["States.ALL"], "Next": "Failed" } ],
+              "Next": "Failed"
+            },
+            "Failed": { "Type": "Fail", "Error": "WorkItemFailed", "Cause": "A step failed; see the execution history and the requester's issue." }
+          }
+        }
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # Each definition change publishes an immutable version; the live alias is
+  # moved to it at deploy time. Separate promotion for the state machine comes
+  # with the staging canary (see CLAUDE.md, known gaps).
+  WorkStateMachineVersion:
+    Type: AWS::StepFunctions::StateMachineVersion
+    Properties:
+      StateMachineArn: !Ref WorkStateMachine
+      StateMachineRevisionId: !GetAtt WorkStateMachine.StateMachineRevisionId
+      Description: !Sub Factorial ${FactorialVersion}
+
+  WorkStateMachineLiveAlias:
+    Type: AWS::StepFunctions::StateMachineAlias
+    Properties:
+      Name: live
+      Description: The state machine version handling new WorkItems.
+      RoutingConfiguration:
+        - StateMachineVersionArn: !Ref WorkStateMachineVersion
+          Weight: 100
+
+  # ---------------------------------------------------------------------------
+  # The one rule: every WorkItem on the bus starts an execution on the live
+  # alias. In-flight executions finish on the version they started with.
+  # ---------------------------------------------------------------------------
+  WorkStarterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-work-starter
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-work-starter
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource:
+                  - !Ref WorkStateMachine
+                  - !Ref WorkStateMachineLiveAlias
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  WorkItemRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-work-item
+      Description: Start the Factorial state machine for every WorkItem.
+      EventBusName: !ImportValue Factorial-WorkBusName
+      State: ENABLED
+      EventPattern:
+        source:
+          - factorial.triggers
+        detail-type:
+          - WorkItem
+      Targets:
+        - Id: start-work
+          Arn: !Ref WorkStateMachineLiveAlias
+          RoleArn: !GetAtt WorkStarterRole.Arn
+          InputPath: $.detail
+
+Outputs:
+  WorkStateMachineArn:
+    Value: !Ref WorkStateMachine
+    Export:
+      Name: Factorial-WorkStateMachineArn
+  WorkStateMachineLiveAliasArn:
+    Value: !Ref WorkStateMachineLiveAlias
+    Export:
+      Name: Factorial-WorkStateMachineLiveAliasArn
+  TestCallbackRoleArn:
+    Description: Store as the AWS_TEST_CALLBACK_ROLE_ARN repository secret.
+    Value: !GetAtt TestCallbackRole.Arn
+  WorkItemsTableName:
+    Value: !Ref WorkItemsTable
+    Export:
+      Name: Factorial-WorkItemsTableName
+  BuildClusterArn:
+    Value: !GetAtt BuildCluster.Arn

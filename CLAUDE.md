@@ -62,7 +62,9 @@ The system must be extensible for future requirements, including:
 
 - Each agent is an AgentCore Harness. The agent loop is managed by AWS and declared as configuration: model, system prompt, tools, limits and container image are defined in CloudFormation and captured in an immutable harness version.
 - Model configuration is fixed on the harness version. Nothing passes model overrides at invoke time.
-- Deterministic steps around the agent (clone the repository, run tests, push the branch) run through the session command API, not through the model.
+- Deterministic steps around the agent (clone the repository, run tests, push the branch) run through the session command API, not through the model. The command API and the agent invocation must use the same endpoint qualifier, or they address different sessions.
+- The agent sandbox holds no credentials beyond the model key. Orchestrator Lambdas, outside the sandbox, mint repository-scoped GitHub App tokens for each step; the agent never pushes or calls GitHub.
+- A Fargate invoker task runs each harness invocation to completion and Step Functions waits on it (`ecs:runTask.sync`). This keeps long builds off Lambda's time limit and makes completion something the agent cannot forge; lifecycle hooks are not used as control signals because they run under the agent's own role.
 
 ### Versioning and promotion: `live` aliases
 
@@ -115,6 +117,8 @@ Not yet built: the orchestration stack (`30-orchestration.yml`): the Step Functi
 
 - No smoke test, so the output requirement is not yet fully met.
 - No staging canary, so Factorial's changes to itself are checked only by tests and human review.
+- Only the harness `live` endpoint is promoted as a separate final step. Lambda aliases (SAM `AutoPublishAlias`) and the state machine alias move during the deploy itself. Separating all three comes with the staging canary.
+- An installation token with `contents: write` can push to any branch, and branch protection is unavailable on this plan. The orchestrator pushes only to `factorial/*` branches and the agent holds no token, which is the whole safeguard today.
 
 ### Next, in order
 

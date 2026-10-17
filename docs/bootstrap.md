@@ -55,6 +55,15 @@ The foundation stack (`templates/00-foundation.yml`) creates:
      --output text)"
    ```
 
+4. After the first successful deploy of the orchestration stack, give the test workflow its callback role (also an account-specific ARN, so a secret):
+
+   ```sh
+   gh secret set AWS_TEST_CALLBACK_ROLE_ARN --body "$(aws cloudformation describe-stacks \
+     --stack-name factorial-orchestration \
+     --query "Stacks[0].Outputs[?OutputKey=='TestCallbackRoleArn'].OutputValue" \
+     --output text)"
+   ```
+
 Everything else is deployed by the `deploy` workflow on merge to `main`, which passes the `factorial-cloudformation` role to CloudFormation and reads the other foundation outputs through their `Factorial-*` exports.
 
 ## Human-provided secrets
