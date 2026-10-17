@@ -15,13 +15,15 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 | `.github/workflows/` | CI and deployment. All deployments run through GitHub Actions. |
 | `docs/` | Background material, including the original design conversation. |
 
-## Development
+## Running the checks locally
 
-Requires Node 22.18 or later (see `.nvmrc`) and `cfn-lint` (`uv tool install cfn-lint` or `pipx install cfn-lint`). TypeScript runs directly under Node's type stripping, so there is no build step for tests or scripts.
+Requires Node 22 (the version in `.nvmrc`) and `cfn-lint` (`uv tool install cfn-lint` or `pipx install cfn-lint`). TypeScript runs directly under Node's type stripping, so there is no build step for tests or scripts.
+
+Run `npm ci` once, then `npm run ci` before committing:
 
 ```sh
 npm ci
-npm run ci        # typecheck, tests, the .yml extension check, cfn-lint
+npm run ci        # typecheck, build, tests, the .yml extension check, cfn-lint
 ```
 
 Setting up a new AWS account for Factorial is described in `docs/bootstrap.md`.
