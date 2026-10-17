@@ -98,7 +98,7 @@ describe('Actions checks and logs', () => {
     }) as typeof fetch;
     const client = new GitHubClient({ token: 'ghs_x', fetchImpl });
     const jobs = await client.listJobsForHeadSha(repo, 'a'.repeat(40));
-    assert.deepEqual(jobs, [job, { id: 4243, name: 'lint', htmlUrl: 'u', conclusion: 'success' }]);
+    assert.deepEqual(jobs, [{ id: 4242, name: 'npm test', htmlUrl: 'https://github.com/JamieGeddes/factorial/job/4242', conclusion: 'failure' }, { id: 4243, name: 'lint', htmlUrl: 'u', conclusion: 'success' }]);
     assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/actions/runs?head_sha=' + 'a'.repeat(40) + '&per_page=100');
   });
 
