@@ -32,6 +32,19 @@ jobs:
   # instead of redeploying anything.
   classify:
     name: Compare against the last deployed commit
+    # Same trust gate as the deploy job, applied before anything is checked
+    # out or any credential is obtained: only a successful CI run of a push
+    # to main in this repository, or an on-demand run from main.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    # The deploy role trusts only jobs in this environment (environment
+    # subject in the OIDC token), so reading the deployed version needs it too.
+    environment: production
     runs-on: ubuntu-latest
     outputs:
       functional: ${{ steps.classify.outputs.functional }}
