@@ -3,22 +3,24 @@ import { describe, it } from 'node:test';
 
 import { cloneScript } from './prepare.ts';
 
+const TOKEN = `ghs_${'t'.repeat(36)}`;
+
 describe('cloneScript', () => {
   const params = {
     owner: 'JamieGeddes',
     name: 'factorial',
     branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-    token: 'ghs_tok',
+    token: TOKEN,
     workItemJson: '{"id":"x"}',
   };
 
   it('clones with the token as a header, never in the URL, then creates the branch', () => {
     const script = cloneScript(params);
-    const basic = Buffer.from('x-access-token:ghs_tok').toString('base64');
+    const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
     assert.match(script, /^set -euo pipefail$/m);
     assert.match(script, /GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
     assert.match(script, new RegExp(`git -c http\\.extraHeader='AUTHORIZATION: basic ${basic}' clone --quiet 'https://github\\.com/JamieGeddes/factorial\\.git' /workspace/repo`));
-    assert.doesNotMatch(script, /ghs_tok/);
+    assert.doesNotMatch(script, /ghs_t/);
     assert.match(script, /git checkout --quiet -b 'factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'/);
   });
 

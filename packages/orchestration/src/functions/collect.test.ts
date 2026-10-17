@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 
 import { bundleScript, cleanRoomPushScript, inspectScript, parseInspection } from './collect.ts';
 
+const TOKEN = `ghs_${'t'.repeat(36)}`;
+
 const SECTION = '\n===FACTORIAL-SECTION===\n';
 const sha = 'a'.repeat(40);
 
@@ -43,18 +45,18 @@ describe('agent-session scripts carry no credentials', () => {
 });
 
 describe('cleanRoomPushScript', () => {
-  const params = { owner: 'JamieGeddes', name: 'factorial', branch: 'factorial/abc', headSha: sha, token: 'ghs_t', bundleBase64: 'QUJD' };
+  const params = { owner: 'JamieGeddes', name: 'factorial', branch: 'factorial/abc', headSha: sha, token: TOKEN, bundleBase64: 'QUJD' };
 
   it('imports the bundle into a pristine clone, verifies the head and pushes exactly that commit', () => {
     const script = cleanRoomPushScript(params);
-    const basic = Buffer.from('x-access-token:ghs_t').toString('base64');
+    const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
     assert.match(script, /printf '%s' 'QUJD' \| base64 -d > incoming\.bundle/);
     assert.match(script, new RegExp(`clone --quiet --bare --filter=blob:none 'https://github\\.com/JamieGeddes/factorial\\.git' repo\\.git`));
     assert.match(script, /fetch --quiet \.\.\/incoming\.bundle HEAD/);
     assert.match(script, new RegExp(`test "\\$\\(git rev-parse FETCH_HEAD\\)" = '${sha}'`));
     assert.match(script, new RegExp(`push --quiet origin '${sha}:refs/heads/factorial/abc'`));
     assert.match(script, new RegExp(`http\\.extraHeader='AUTHORIZATION: basic ${basic}'`));
-    assert.doesNotMatch(script, /ghs_t[^']/);
+    assert.doesNotMatch(script, /ghs_t/);
     assert.doesNotMatch(script, /x-access-token:ghs/);
     assert.ok(script.split('core.hooksPath=/dev/null').length >= 4, 'every git call that could run hooks disables them');
   });

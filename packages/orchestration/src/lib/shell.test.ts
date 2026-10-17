@@ -3,21 +3,27 @@ import { describe, it } from 'node:test';
 
 import { assertCommitSha, assertGitHubName, assertGitHubToken, assertUuid, gitAuthHeader, redactSecrets, shellQuote } from './shell.ts';
 
+/** Legacy 40-character installation token shape. */
+const TOKEN = `ghs_${'A'.repeat(36)}`;
+/** Stateless installation token shape (October 2026): ghs_<app id>_<jwt>, with dots and hyphens. */
+const STATELESS_TOKEN = `ghs_1234_${'e'.repeat(36)}.${'p'.repeat(200)}-${'s'.repeat(80)}_x`;
+
 describe('gitAuthHeader', () => {
   it('encodes the token as basic auth for x-access-token', () => {
-    const header = gitAuthHeader('ghs_abc');
-    assert.equal(header, `AUTHORIZATION: basic ${Buffer.from('x-access-token:ghs_abc').toString('base64')}`);
+    const header = gitAuthHeader(TOKEN);
+    assert.equal(header, `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${TOKEN}`).toString('base64')}`);
   });
 });
 
 describe('redactSecrets', () => {
   it('masks tokens in URLs, bare tokens and auth headers', () => {
-    const text = 'fatal: https://x-access-token:ghs_SECRET@github.com/o/r.git and ghs_SECRET2 and AUTHORIZATION: basic eC1hY2Nlc3M=';
+    const text = `fatal: https://x-access-token:ghs_SECRET@github.com/o/r.git and ghs_SECRET2 and ${STATELESS_TOKEN} and AUTHORIZATION: basic eC1hY2Nlc3M=`;
     const out = redactSecrets(text);
     assert.doesNotMatch(out, /SECRET/);
     assert.doesNotMatch(out, /eC1hY2Nlc3M/);
     assert.match(out, /x-access-token:\*\*\*@github\.com/);
     assert.match(out, /ghs_\*\*\*/);
+    assert.doesNotMatch(out, /pppp|ssss/);
   });
 
   it('leaves ordinary text alone', () => {
@@ -57,8 +63,11 @@ describe('GitHub name validation', () => {
 
 describe('token and uuid validation', () => {
   it('accepts installation tokens and rejects anything else', () => {
-    assert.equal(assertGitHubToken('ghs_AbC123_xyz'), 'ghs_AbC123_xyz');
-    assert.throws(() => assertGitHubToken('ghs_abc@evil'), /unexpected format/);
+    assert.equal(assertGitHubToken(TOKEN), TOKEN);
+    assert.equal(assertGitHubToken(STATELESS_TOKEN), STATELESS_TOKEN);
+    assert.throws(() => assertGitHubToken(`${TOKEN}@evil`), /unexpected format/);
+    assert.throws(() => assertGitHubToken('ghs_tooshort'), /unexpected format/);
+    assert.throws(() => assertGitHubToken(`ghp_${'a'.repeat(36)}`), /unexpected format/);
   });
 
   it('accepts lower-case UUIDs only', () => {

@@ -4,7 +4,11 @@ export function shellQuote(value: string): string {
 }
 
 const GITHUB_NAME = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
-const GITHUB_TOKEN = /^[A-Za-z0-9_]+$/;
+// Installation tokens are the only GitHub credential Factorial handles. Since
+// October 2026 they are stateless: still prefixed ghs_, but around 520
+// characters and containing dots and hyphens. This is GitHub's recommended
+// validation pattern.
+const GITHUB_TOKEN = /^ghs_[A-Za-z0-9._-]{36,}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Reject anything that is not a plausible GitHub owner or repository name before it reaches a shell. */
@@ -55,6 +59,6 @@ export const HARDENED_GIT_ENV =
 export function redactSecrets(text: string): string {
   return text
     .replace(/x-access-token:[^@\s'"]+@/g, 'x-access-token:***@')
-    .replace(/\b(gh[pousr]|ghs|github_pat)_[A-Za-z0-9_]+/g, '$1_***')
+    .replace(/\b(gh[pousr]|ghs|github_pat)_[A-Za-z0-9._-]+/g, '$1_***')
     .replace(/AUTHORIZATION:\s*basic\s+[A-Za-z0-9+/=]+/gi, 'AUTHORIZATION: basic ***');
 }
