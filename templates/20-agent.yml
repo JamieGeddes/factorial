@@ -131,13 +131,22 @@ Resources:
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/apikeycredentialprovider/factorial-model-api-key
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_builder-*
+              # The harness resolves the API key credential provider by reading
+              # the external secret under this role (verified: without this the
+              # invocation fails with AccessDenied on GetSecretValue). Because
+              # the agent's shell shares the role, the model key is readable
+              # from inside a session. Accepted: it is a billing-only key with
+              # a hard spend limit at the provider, and it is rotated by
+              # put-secret-value without a redeploy.
+              - Sid: ModelApiKeySecret
+                Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${ModelApiKeySecretName}-*
               # Deliberately absent:
               # - GitHub credentials. The agent never pushes or calls GitHub;
               #   the orchestrator clones before and pushes after the agent runs
               #   with a short-lived, single-repository token never stored in
               #   the session.
-              # - Direct access to the model API key secret. The harness fetches
-              #   the key through AgentCore Identity (GetResourceApiKey above).
               # - events:PutEvents. The agent's shell shares this role, so any
               #   event the harness could emit, a prompt-injected agent could
               #   forge. Completion is observed by the orchestrator instead.

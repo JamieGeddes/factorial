@@ -511,11 +511,17 @@ Resources:
               - Sid: PromoteLiveAliases
                 Effect: Allow
                 Action:
+                  # Harness endpoint operations also perform the underlying
+                  # runtime endpoint operations, so both sets are needed.
                   - bedrock-agentcore:GetHarness
                   - bedrock-agentcore:ListHarnessVersions
                   - bedrock-agentcore:GetHarnessEndpoint
                   - bedrock-agentcore:ListHarnessEndpoints
                   - bedrock-agentcore:UpdateHarnessEndpoint
+                  - bedrock-agentcore:GetAgentRuntime
+                  - bedrock-agentcore:ListAgentRuntimeVersions
+                  - bedrock-agentcore:GetAgentRuntimeEndpoint
+                  - bedrock-agentcore:ListAgentRuntimeEndpoints
                   - bedrock-agentcore:UpdateAgentRuntimeEndpoint
                   - states:DescribeStateMachine
                   - states:ListStateMachineVersions

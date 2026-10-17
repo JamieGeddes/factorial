@@ -166,8 +166,10 @@ jobs:
           fi
           latest=$(aws bedrock-agentcore-control list-harness-versions --harness-id "$harness_id" \
             --query 'max_by(harnessVersions, &to_number(harnessVersion)).harnessVersion' --output text)
+          # A freshly created endpoint reports no targetVersion yet; fall back
+          # to the version actually serving traffic.
           current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-            --query 'endpoint.targetVersion' --output text)
+            --query 'endpoint.[targetVersion, liveVersion] | [?@ != null] | [0]' --output text)
           if [ "$latest" = "$current" ]; then
             echo "live endpoint already at harness version $latest."
             exit 0
