@@ -3,6 +3,8 @@ name: Deploy
 # Runs after CI succeeds on main, or on demand. Assumes the factorial-deploy
 # role through GitHub OIDC (no stored keys) and deploys Factorial's stacks in
 # order. The foundation stack (00-*) is excluded: it is deployed by a human.
+# A push that changes only non-functional paths since the last successful
+# deploy (see scripts/classify-changes.ts) is skipped without touching a stack.
 
 on:
   workflow_run:
@@ -23,20 +25,76 @@ env:
   AWS_REGION: eu-west-1
 
 jobs:
+  # Classifies the pushed commit against the last successfully deployed one
+  # (the `FactorialVersion` parameter on the `factorial-orchestration` stack)
+  # using scripts/classify-changes.ts, the single definition of what is
+  # non-functional. A docs-only push lands on the deploy job as a no-op
+  # instead of redeploying anything.
+  classify:
+    name: Compare against the last deployed commit
+    runs-on: ubuntu-latest
+    outputs:
+      functional: ${{ steps.classify.outputs.functional }}
+    steps:
+      # Actions are pinned to full commit SHAs (v4 at the time of pinning).
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # The classifier diffs against the last deployed commit, which a
+          # shallow checkout does not contain.
+          fetch-depth: 0
+
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: factorial-deploy-classify-${{ github.run_id }}
+
+      - name: Read the last deployed commit
+        id: version
+        run: |
+          set -euo pipefail
+          # The orchestration stack does not exist yet on a first deployment.
+          version=$(aws cloudformation describe-stacks --stack-name factorial-orchestration \
+            --query "Stacks[0].Parameters[?ParameterKey=='FactorialVersion'].ParameterValue" \
+            --output text 2>/dev/null || true)
+          if [ -z "$version" ] || [ "$version" = "None" ]; then
+            echo "factorial-orchestration has no FactorialVersion yet; nothing has been deployed."
+            echo "version=" >> "$GITHUB_OUTPUT"
+          else
+            echo "Last deployed commit is $version."
+            echo "version=$version" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: classify
+        uses: ./.github/actions/classify-changes
+        with:
+          # Empty when nothing has been deployed yet; the action then treats
+          # the change as functional.
+          base: ${{ steps.version.outputs.version }}
+          head: ${{ github.event.workflow_run.head_sha || github.sha }}
+
   deploy:
     name: Deploy Factorial stacks
+    needs: classify
+    # Deploy only from a successful CI run of a push to main in this repository
+    # (CI also runs for pull requests), or an on-demand run from main; and skip
+    # everything when only non-functional paths changed since the last
+    # successful deploy (an explicit workflow_dispatch always deploys). A
+    # skipped job reports success.
+    if: >-
+      !cancelled() && needs.classify.result == 'success' &&
+      ((github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+       (github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        github.event.workflow_run.head_repository.full_name == github.repository)) &&
+      (needs.classify.outputs.functional != 'false' ||
+       github.event_name == 'workflow_dispatch')
     # The deploy role trusts only jobs in this environment, whose deployment
     # branch policy allows only main (see docs/bootstrap.md).
     environment: production
-    # Deploy only from a successful CI run of a push to main in this repository
-    # (CI also runs for pull requests), or an on-demand run from main.
-    if: >-
-      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_branch == 'main' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     steps:
       # Actions are pinned to full commit SHAs.
