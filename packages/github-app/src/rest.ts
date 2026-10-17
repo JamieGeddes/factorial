@@ -28,6 +28,15 @@ export interface PullRequest {
   htmlUrl: string;
 }
 
+/** A job in a GitHub Actions run, as far as Factorial is concerned. */
+export interface CheckJob {
+  id: number;
+  name: string;
+  htmlUrl: string;
+  /** `failure` for the jobs that failed; `null` while still running. */
+  conclusion: string | null;
+}
+
 export class GitHubClient {
   readonly #token: string;
   readonly #fetch: typeof fetch;
@@ -94,6 +103,48 @@ export class GitHubClient {
   async getUser(login: string): Promise<{ id: number; login: string; type: string }> {
     const user = await this.#request<{ id: number; login: string; type: string }>('GET', `/users/${encodeURIComponent(login)}`);
     return { id: user.id, login: user.login, type: user.type };
+  }
+
+  /** A job from the Actions API, trimmed to the fields Factorial uses. */
+  async #listJobs(repo: Repo, path: string): Promise<CheckJob[]> {
+    const page = await this.#request<{
+      jobs?: Array<{ id: number; name: string; html_url: string; conclusion: string | null }>;
+    }>('GET', path);
+    return (page.jobs ?? []).map((job) => ({ id: job.id, name: job.name, htmlUrl: job.html_url, conclusion: job.conclusion }));
+  }
+
+  /** The jobs that ran for a commit, across every workflow run on it. */
+  async listJobsForHeadSha(repo: Repo, sha: string): Promise<CheckJob[]> {
+    const runs = await this.#request<{ workflow_runs?: Array<{ id: number }> }>(
+      'GET',
+      `/repos/${repo.owner}/${repo.name}/actions/runs?head_sha=${encodeURIComponent(sha)}&per_page=100`,
+    );
+    const jobs: CheckJob[] = [];
+    for (const run of runs.workflow_runs ?? []) {
+      jobs.push(...(await this.#listJobs(repo, `/repos/${repo.owner}/${repo.name}/actions/runs/${run.id}/jobs?per_page=100`)));
+    }
+    return jobs;
+  }
+
+  /**
+   * A job's log. GitHub answers with a redirect to a short-lived signed URL;
+   * fetch follows it and, per the fetch specification, drops the Authorization
+   * header on the cross-origin hop, so the token never reaches the blob store.
+   */
+  async getJobLog(repo: Repo, jobId: number): Promise<string> {
+    const response = await this.#fetch(`${this.#baseUrl}/repos/${repo.owner}/${repo.name}/actions/jobs/${jobId}/logs`, {
+      method: 'GET',
+      headers: {
+        authorization: `Bearer ${this.#token}`,
+        'user-agent': 'factorial',
+        'x-github-api-version': '2022-11-28',
+      },
+      redirect: 'follow',
+    });
+    if (!response.ok) {
+      throw new GitHubApiError('GET', `/repos/${repo.owner}/${repo.name}/actions/jobs/${jobId}/logs`, response.status, await response.text());
+    }
+    return response.text();
   }
 
   /** The commit a branch currently points at. */

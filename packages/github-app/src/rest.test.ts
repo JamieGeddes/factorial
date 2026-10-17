@@ -80,3 +80,46 @@ describe('getUser', () => {
     assert.equal(seen[0]?.url, 'https://api.github.com/users/factorial-x%5Bbot%5D');
   });
 });
+
+describe('Actions checks and logs', () => {
+  const job = { id: 4242, name: 'npm test', html_url: 'https://github.com/JamieGeddes/factorial/job/4242', conclusion: 'failure' };
+
+  it('lists the jobs of every run for a head sha', async () => {
+    const pages: Array<{ status: number; body: unknown }> = [
+      { status: 200, body: { workflow_runs: [{ id: 11 }, { id: 12 }] } },
+      { status: 200, body: { jobs: [job] } },
+      { status: 200, body: { jobs: [{ id: 4243, name: 'lint', html_url: 'u', conclusion: 'success' }] } },
+    ];
+    const seen: Seen[] = [];
+    const fetchImpl = (async (_url: string | URL, init?: RequestInit) => {
+      seen.push({ url: String(_url), method: init?.method, headers: (init?.headers as Record<string, string>) ?? {}, body: undefined });
+      const page = pages.shift() ?? { status: 200, body: {} };
+      return new Response(JSON.stringify(page.body), { status: page.status });
+    }) as typeof fetch;
+    const client = new GitHubClient({ token: 'ghs_x', fetchImpl });
+    const jobs = await client.listJobsForHeadSha(repo, 'a'.repeat(40));
+    assert.deepEqual(jobs, [job, { id: 4243, name: 'lint', htmlUrl: 'u', conclusion: 'success' }]);
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/actions/runs?head_sha=' + 'a'.repeat(40) + '&per_page=100');
+  });
+
+  it('fetches a job log without JSON-encoding it', async () => {
+    const seen: Seen[] = [];
+    const fetchImpl = (async (url: string | URL, init?: RequestInit) => {
+      seen.push({ url: String(url), method: init?.method, headers: (init?.headers as Record<string, string>) ?? {}, body: undefined });
+      return new Response('npm ERR! code ELIFECYCLE\n', { status: 200 });
+    }) as typeof fetch;
+    const client = new GitHubClient({ token: 'ghs_x', fetchImpl });
+    const log = await client.getJobLog(repo, 4242);
+    assert.equal(log, 'npm ERR! code ELIFECYCLE\n');
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/actions/jobs/4242/logs');
+    assert.equal(seen[0]?.headers.authorization, 'Bearer ghs_x');
+  });
+
+  it('throws a GitHubApiError when a log cannot be fetched', async () => {
+    const client = new GitHubClient({ token: 'ghs_x', fetchImpl: fakeFetch(410, { message: 'Gone' }, []) });
+    await assert.rejects(
+      client.getJobLog(repo, 4242),
+      (error: unknown) => error instanceof GitHubApiError && error.status === 410,
+    );
+  });
+});
