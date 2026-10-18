@@ -270,8 +270,9 @@ Resources:
   # Agent permissions boundary. Agent execution roles are shared with the
   # agent's own shell, so once an agent has run its session is treated as
   # hostile. Their ceiling is therefore only what a harness needs to run:
-  # pull its image, resolve its model key through the service, and emit
-  # telemetry. No data, orchestration, Factorial roles or other services.
+  # pull its image, resolve its model key through the service, search the web
+  # through a Factorial gateway, and emit telemetry. No data, orchestration,
+  # Factorial roles or other services.
   #
   # The execution role enforces which boundary a role gets: roles named
   # factorial-agent or factorial-agent-* must carry this one, and only those
@@ -318,6 +319,18 @@ Resources:
             Condition:
               Bool:
                 aws:ViaAWSService: 'true'
+          # Web search through Factorial's own gateways. InvokeGateway is the
+          # harness calling the gateway; InvokeWebSearch is the gateway's
+          # service role calling the AWS-owned connector. The gateway role is
+          # passed to AgentCore, so it is an agent role under this boundary.
+          - Sid: WebSearch
+            Effect: Allow
+            Action:
+              - bedrock-agentcore:InvokeGateway
+              - bedrock-agentcore:InvokeWebSearch
+            Resource:
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-*
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:aws:tool/web-search.v1
           - Sid: AgentImages
             Effect: Allow
             Action:
@@ -536,11 +549,14 @@ Resources:
               # AgentCore resources are scoped by name. Harness and runtime
               # names allow only [A-Za-z0-9_], hence factorial_; a harness's
               # underlying runtime and workload identity are prefixed harness_.
+              # Gateway names allow hyphens, and a gateway's ID (and ARN) is
+              # its lower-cased name plus a random suffix, hence factorial-.
               - Sid: AgentCore
                 Effect: Allow
                 Action: bedrock-agentcore:*
                 Resource:
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/factorial_*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
@@ -550,13 +566,14 @@ Resources:
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_*
               # These actions authorise against no resource, so cannot be
               # scoped by name; everything done to the result afterwards is.
-              # Other AgentCore resource types (memory, gateways, ...) are
-              # added here when Factorial first needs them.
+              # Other AgentCore resource types (memory, ...) are added here
+              # when Factorial first needs them.
               - Sid: AgentCoreUnscoped
                 Effect: Allow
                 Action:
                   - bedrock-agentcore:CreateHarness
                   - bedrock-agentcore:CreateAgentRuntime
+                  - bedrock-agentcore:CreateGateway
                   - bedrock-agentcore:List*
                 Resource: '*'
               - Sid: ContainerRegistry
