@@ -86,6 +86,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_TEST_CALLBACK_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: factorial-test-${{ github.run_id }}
+          # The account ID is a secret in the logs; v4 does not mask it by default.
+          mask-aws-account-id: true
       - name: Send the task result
         env:
           TASK_TOKEN: ${{ inputs.task_token }}
