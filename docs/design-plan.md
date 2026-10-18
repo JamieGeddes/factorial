@@ -158,7 +158,7 @@ Green items are new. Everything else exists today.
 
 ```mermaid
 sequenceDiagram
-    participant O as Orchestrator (Lambda)
+    participant O as Orchestrator Lambda
     participant E as Explorer session
     participant P as Planner session
     participant B as Builder session
@@ -173,7 +173,7 @@ sequenceDiagram
     O->>P: InvokeHarness factorial_planner
     P-->>O: plan.md, plan.json (command API)
     O->>S: plan/plan.md, plan.json, transcript
-    Note over O: validate plan.json; fan out children if the plan asks for it
+    Note over O: validate plan.json, fan out children if the plan asks for it
 
     O->>B: clone + seed context.md, plan.md
     O->>B: InvokeHarness factorial_builder
