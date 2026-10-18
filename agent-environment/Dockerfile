@@ -42,6 +42,14 @@ RUN git config --system init.defaultBranch main \
 # The identity above only lets the agent commit. Commits are re-created with
 # the GitHub App's bot identity in the clean-room push, outside this image.
 
+# quiet: runs a command, keeps the full output in /workspace/logs and prints a
+# short report, so test and build output does not fill the agent's context.
+# Node runs the TypeScript source directly (type stripping, Node 22.18+).
+COPY tools/package.json /opt/factorial/tools/package.json
+COPY tools/src/digest.ts tools/src/quiet.ts /opt/factorial/tools/src/
+RUN printf '#!/bin/sh\nexec node --disable-warning=ExperimentalWarning /opt/factorial/tools/src/quiet.ts "$@"\n' > /usr/local/bin/quiet \
+ && chmod 755 /usr/local/bin/quiet
+
 # Sessions run as root inside an isolated microVM; the IAM execution role is the
 # real boundary. The orchestrator's pre-invocation commands also run as root, so
 # a non-root agent user would only create ownership mismatches.
