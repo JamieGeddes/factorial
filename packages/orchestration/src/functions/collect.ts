@@ -8,7 +8,7 @@
  * bundle (pure data), and the push happens in a separate clean-room session
  * from a pristine clone, with hooks disabled and the token sent as a header.
  */
-import type { WorkContext } from '../lib/context.ts';
+import { type WorkContext, reworkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { cleanRoomTarget, mustRun, runCommand, sessionTarget } from '../lib/session.ts';
 import {
@@ -110,6 +110,8 @@ export function cleanRoomPushScript(params: {
   baseBranch: string;
   baseCommit: string;
   headSha: string;
+  /** True for rework, which pushes onto an existing branch; false for a fresh branch, which must not exist yet. */
+  existingBranch: boolean;
   token: string;
   bundleBase64: string;
   /** Author and committer for every pushed commit; the agent's own identity is discarded. */
@@ -142,9 +144,12 @@ export function cleanRoomPushScript(params: {
     // the same header or it fails asking for a username.
     `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} fetch --quiet ../incoming.bundle HEAD`,
     `test "$(git rev-parse FETCH_HEAD)" = ${shellQuote(headSha)}`,
-    // The branch's current head: everything new must descend from it, so the
-    // push is a fast-forward. Refuse and fail loudly if the branch has moved.
-    `test "$(git rev-parse refs/heads/${branch})" = ${shellQuote(baseCommit)}`,
+    // An existing branch must still be at the head the session started from,
+    // so the push is a fast-forward; refuse and fail loudly if it has moved.
+    // A fresh branch must not exist yet, so the push never overwrites one.
+    params.existingBranch
+      ? `test "$(git rev-parse --verify --quiet refs/heads/${branch})" = ${shellQuote(baseCommit)}`
+      : `test -z "$(git rev-parse --verify --quiet refs/heads/${branch})"`,
     `git merge-base --is-ancestor ${shellQuote(baseCommit)} FETCH_HEAD`,
     `base=${shellQuote(baseCommit)}`,
     'test -z "$(git rev-list --merges "$base..FETCH_HEAD")"',
@@ -216,6 +221,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
       baseBranch: ctx.baseBranch,
       baseCommit: ctx.baseCommit,
       headSha,
+      existingBranch: reworkContext(ctx.workItem) !== undefined,
       token,
       bundleBase64,
       identity,

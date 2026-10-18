@@ -86,6 +86,7 @@ describe('cleanRoomPushScript', () => {
     baseBranch: 'main',
     baseCommit: base,
     headSha: sha,
+    existingBranch: true,
     token: TOKEN,
     bundleBase64: 'QUJD',
     identity,
@@ -123,7 +124,7 @@ describe('cleanRoomPushScript', () => {
   it('pushes only on top of the branch head the session started from, as a fast-forward', () => {
     const script = cleanRoomPushScript(params);
     // the branch must still point at the base commit; anything else fails
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse refs/heads/factorial/abc\\)" = '${base}'`));
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse --verify --quiet refs/heads/factorial/abc\\)" = '${base}'`));
     // and the agent's head must descend from it, so the push is a fast-forward
     assert.match(script, new RegExp(`git merge-base --is-ancestor '${base}' FETCH_HEAD`));
     // never a force push
@@ -131,6 +132,14 @@ describe('cleanRoomPushScript', () => {
     // the ancestry check happens before the rewrite and the push
     assert.ok(script.indexOf('merge-base --is-ancestor') < script.indexOf('commit-tree'));
     assert.ok(script.indexOf('merge-base --is-ancestor') < script.indexOf('push --quiet'));
+  });
+
+  it('requires a fresh branch not to exist yet, so the push never overwrites one', () => {
+    const script = cleanRoomPushScript({ ...params, existingBranch: false });
+    assert.match(script, /test -z "\$\(git rev-parse --verify --quiet refs\/heads\/factorial\/abc\)"/);
+    assert.doesNotMatch(script, /rev-parse --verify --quiet refs\/heads\/factorial\/abc\)" =/);
+    // the agent's head must still descend from the base commit
+    assert.match(script, new RegExp(`git merge-base --is-ancestor '${base}' FETCH_HEAD`));
   });
 
   it('rejects an identity or branch that could break out of the shell command', () => {
