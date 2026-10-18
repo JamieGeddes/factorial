@@ -62,6 +62,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: factorial-deploy-classify-${{ github.run_id }}
+          # The account ID is a secret in the logs: v4 of the action does not mask
+          # it by default, and it appears in ECR registry hosts and ARNs.
+          mask-aws-account-id: true
 
       - name: Read the last deployed commit
         id: version
@@ -129,6 +132,9 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: factorial-deploy-${{ github.run_id }}
+          # The account ID is a secret in the logs: v4 of the action does not mask
+          # it by default, and it appears in ECR registry hosts and ARNs.
+          mask-aws-account-id: true
 
       - name: Confirm identity
         run: aws sts get-caller-identity --query Arn --output text | sed -E 's/[0-9]{12}/<account>/'
