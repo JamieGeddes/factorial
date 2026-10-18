@@ -66,9 +66,24 @@ Resources:
       AttributeDefinitions:
         - AttributeName: workItemId
           AttributeType: S
+        - AttributeName: prNumber
+          AttributeType: N
+        - AttributeName: createdAt
+          AttributeType: S
       KeySchema:
         - AttributeName: workItemId
           KeyType: HASH
+      # Lets the PR rework trigger look up the WorkItems already recorded
+      # against a pull request, for previousWorkItemId and the checks-failed cap.
+      GlobalSecondaryIndexes:
+        - IndexName: prNumber-index
+          KeySchema:
+            - AttributeName: prNumber
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:

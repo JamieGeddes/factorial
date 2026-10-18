@@ -20,11 +20,26 @@ export class DuplicateWorkItemError extends Error {
 /** Record a new WorkItem exactly once. */
 export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string): Promise<void> {
   const now = new Date().toISOString();
+  // prNumber and cause feed the prNumber-index GSI, which the PR rework
+  // trigger reads to find a PR's WorkItems and to count automatic reworks.
+  const rework = workItem.context?.kind === 'rework' ? workItem.context : undefined;
+  const gsiAttributes = rework
+    ? { prNumber: rework.pullRequest.number, cause: rework.cause }
+    : {};
   try {
     await documents.send(
       new PutCommand({
         TableName: requireEnv('TABLE_NAME'),
-        Item: { workItemId: workItem.id, workItem, status: 'accepted', factorialVersion, createdAt: now, updatedAt: now },
+        Item: {
+          workItemId: workItem.id,
+          workItem,
+          status: 'accepted',
+          factorialVersion,
+          requestedBy: workItem.requestedBy,
+          createdAt: now,
+          updatedAt: now,
+          ...gsiAttributes,
+        },
         ConditionExpression: 'attribute_not_exists(workItemId)',
       }),
     );

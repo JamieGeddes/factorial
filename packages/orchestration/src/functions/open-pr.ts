@@ -50,7 +50,13 @@ export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; p
     await client.commentOnIssue(repo, issue, `Factorial has opened ${pr.htmlUrl} for review.`);
   }
 
-  await recordProgress(ctx.workItem.id, 'pr-opened', { prUrl: pr.htmlUrl, prNumber: pr.number, testRunUrl: input.test.runUrl });
+  // prNumber makes the row visible through the prNumber-index GSI, which the
+  // PR rework trigger reads to link rework items to this pull request.
+  await recordProgress(ctx.workItem.id, 'pr-opened', {
+    prUrl: pr.htmlUrl,
+    prNumber: pr.number,
+    testRunUrl: input.test.runUrl,
+  });
   console.log(JSON.stringify({ message: 'pull request opened', workItemId: ctx.workItem.id, prUrl: pr.htmlUrl }));
   return { prNumber: pr.number, prUrl: pr.htmlUrl };
 };
