@@ -94,6 +94,15 @@ export class GitHubClient {
     await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}/comments`, { body });
   }
 
+  /**
+   * Comment on a pull request's conversation. GitHub exposes this through the
+   * Issues API (a pull request is an issue), so the token needs
+   * `issues: write`; `pull_requests: write` alone cannot comment.
+   */
+  async commentOnPullRequest(repo: Repo, pullRequestNumber: number, body: string): Promise<void> {
+    await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/issues/${pullRequestNumber}/comments`, { body });
+  }
+
   async getDefaultBranch(repo: Repo): Promise<string> {
     const info = await this.#request<{ default_branch: string }>('GET', `/repos/${repo.owner}/${repo.name}`);
     return info.default_branch;

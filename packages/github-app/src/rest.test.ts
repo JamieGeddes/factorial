@@ -55,6 +55,15 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
+  it('comments on a pull request through the Issues API', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { id: 2 }, seen) });
+    await client.commentOnPullRequest(repo, 12, 'rework pushed');
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/12/comments');
+    assert.equal(seen[0]?.method, 'POST');
+    assert.deepEqual(seen[0]?.body, { body: 'rework pushed' });
+  });
+
   it('reads a branch head through the git refs API', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { object: { sha: 'b'.repeat(40) } }, seen) });

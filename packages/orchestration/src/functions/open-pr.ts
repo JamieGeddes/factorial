@@ -3,7 +3,7 @@
  * Before opening it, confirm that the branch still points at the commit that
  * was tested, so the PR cannot present untested code.
  */
-import { issueNumber, type WorkContext } from '../lib/context.ts';
+import { issueNumber, reworkContext, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
@@ -23,6 +23,11 @@ export class UntestedHeadError extends Error {
   }
 }
 
+/** The comment posted on an existing pull request when rework is pushed. */
+export function reworkComment(ctx: WorkContext, summary: string, test: TestResult, headSha: string): string {
+  return ['Factorial has pushed the reworked changes for review.', '', pullRequestBody(ctx, summary, test, headSha)].join('\n');
+}
+
 export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; prUrl: string }> => {
   const { ctx } = input;
   const headSha = assertCommitSha(input.collect.headSha, 'head sha');
@@ -36,6 +41,26 @@ export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; p
   const remoteHead = await client.getBranchSha(repo, ctx.branch);
   if (remoteHead !== headSha) {
     throw new UntestedHeadError(`branch ${ctx.branch} now points at ${remoteHead}, not the tested ${headSha}`);
+  }
+
+    const rework = reworkContext(ctx.workItem);
+    if (rework !== undefined) {
+      // Rework: the pull request already exists, so comment on it with the
+      // update instead of opening a second one. Pull request comments go
+      // through the Issues API, so they need the issues: write permission
+      // granted above.
+      await client.commentOnPullRequest(repo, rework.pullRequest.number, reworkComment(ctx, input.collect.summary, input.test, headSha));
+    await recordProgress(ctx.workItem.id, 'rework-pushed', {
+      prUrl: rework.pullRequest.url,
+      prNumber: rework.pullRequest.number,
+      testRunUrl: input.test.runUrl,
+    });
+    console.log(JSON.stringify({
+      message: 'rework pushed',
+      workItemId: ctx.workItem.id,
+      prUrl: rework.pullRequest.url,
+    }));
+    return { prNumber: rework.pullRequest.number, prUrl: rework.pullRequest.url };
   }
 
   const pr = await client.createPullRequest(repo, {
