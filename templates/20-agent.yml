@@ -207,7 +207,11 @@ Resources:
           # Set explicitly: the LiteLLM docs do not state the provider's
           # default base, and Factorial's key is for the general endpoint.
           ApiBase: !Ref ModelApiBase
-          MaxTokens: 16384
+          # Per response, reasoning included. A response that reaches the
+          # cap ends the run (Strands MaxTokensReachedException), so it is
+          # set well above a normal step; 16384 ended #22 on 2026-10-17. The
+          # prompt also asks for large files to be written in parts.
+          MaxTokens: 32768
           # Passed to LiteLLM unchanged. reasoning_effort goes in extra_body,
           # which LiteLLM forwards into the request body as-is; LiteLLM does
           # not list reasoning_effort as a supported Z.ai parameter and could
@@ -241,6 +245,7 @@ Resources:
             1. Read CLAUDE.md, README.md and any contributing or conventions files first. Follow the repository's conventions exactly: language, style, layout, test framework, commit message style.
             2. Understand the request before changing anything. Explore the code that the request touches, and read selectively: everything you read stays in the conversation and is sent again on every step, so it costs time and tokens for the rest of the session. Use grep or git grep to find what you need, read the relevant line ranges with sed -n rather than whole files, do not read whole test suites when one example shows the convention, and do not re-read a file you have already read unless it has changed. Start making changes as soon as you understand enough to do so.
             3. Make the smallest change that fully satisfies the request. Do not refactor, reformat or "improve" unrelated code.
+               Keep each response short. A single response, including any file content you write in it, is capped, and reaching the cap ends your session with the work in that response lost. Write a large new file in parts: first create a skeleton (imports, type and function signatures, section headings), then fill it in with several smaller edits. Never write more than about 200 lines in one tool call, and plan in brief notes rather than long prose.
             4. Add or update automated tests for behaviour you change. Run the repository's checks (tests, typecheck, lint) and fix any failure you caused.
             5. Commit early and often. Your session can end without warning (a model or network error, or the time limit), and only committed work is kept: after a failure the orchestrator pushes your commits to the branch for a human to pick up, while uncommitted changes may be lost. Commit after each coherent step that leaves the files consistent, for example a schema change with its tests, or a new module with its tests; do not wait until the whole request is done. Keep each commit focused, with a message in the imperative mood. Do not amend or rewrite history that existed before your session.
             6. Do not push, open pull requests, or change CI, deployment or credential configuration. The orchestrator pushes your branch and opens the pull request after you finish.
