@@ -31,9 +31,10 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    | Contents | Read and write | Clone and push branches. |
    | Pull requests | Read and write | Open the PR. |
    | Actions | Read and write | Dispatch the test workflow and read its result. Rework of failed checks also reads the failing jobs' logs (the orchestrator's token is narrowed to `actions: read` for that). |
+   | Checks | Read-only | Receive `check_suite` events for the PR rework trigger (failed checks become rework WorkItems). |
    | Workflows | Read and write | Push branches that change files under `.github/workflows/`. GitHub rejects such pushes otherwise. The orchestrator requests this permission on a token only when the change edits a workflow file. |
 
-6. Under **Subscribe to events**, tick **Issues**.
+6. Under **Subscribe to events**, tick **Issues**, **Pull request review**, **Pull request review comment**, **Issue comment**, **Check suite** and **Workflow run**.
 7. Under **Where can this GitHub App be installed?**, choose **Only on this account**.
 8. Click **Create GitHub App**.
 
@@ -80,6 +81,28 @@ where `ruleset.json` targets `~DEFAULT_BRANCH` with the rules `deletion`, `non_f
 3. Open a test issue and add the `factorial` label. Only users listed in the triggers stack's `AllowedGitHubUserIds` parameter (default: the repository owner) can trigger work: both the issue author and whoever applies the label must be listed, otherwise the delivery returns `202` with an "untrusted user" reason and no WorkItem is created. The delivery for the `issues` event should show `202` with a `workItemId` in the response body, and the adapter's log group `/aws/lambda/factorial-github-issues-adapter` should contain a `WorkItem created` line.
 
 Until the orchestration stack exists, nothing consumes the event. That is expected.
+
+## The PR rework trigger
+
+Factorial's own pull requests — opened by the App on a `factorial/*` branch — trigger rework automatically:
+
+- A review submitted with **Request changes** becomes a rework WorkItem.
+- A comment on the PR that mentions the App's bot login (from the triggers stack's `GitHubBotLogin` parameter, e.g. `my-factorial[bot]`) or starts with `/factorial` becomes one too. Plain comments do nothing.
+- A failed check suite or workflow run on the PR's head commit becomes one, limited to two per PR without a human comment in between.
+
+Only users listed in `AllowedGitHubUserIds` can trigger rework, and comments from bots — including Factorial's own — never count.
+
+If the App already exists and was subscribed only to **Issues**, add the rest by hand:
+
+1. Click your profile photo, **Settings**, then **Developer settings** at the bottom of the left nav, then **GitHub Apps**, then **Edit** next to the Factorial App.
+2. In the left nav click **Permissions & events**.
+3. Under **Repository permissions**, expand **Checks** and set it to **Read-only**.
+4. Scroll to **Subscribe to events** and tick **Pull request review**, **Pull request review comment**, **Issue comment**, **Check suite** and **Workflow run**.
+5. Scroll down and click **Save changes**.
+6. If the permission change banner appears on the installation, accept it: profile photo, **Settings**, **Applications**, the **Installed GitHub Apps** tab, **Configure** next to the Factorial App, **Review request**, **Accept new permissions**.
+7. Set the `GitHubBotLogin` parameter for the triggers stack (the same value as the App's bot login, `<app-slug>[bot]`; see the App's **General** page) and let the deploy workflow redeploy `10-triggers.yml`.
+
+Verify it the same way as the issue trigger: **Advanced** → **Recent Deliveries** shows a `202` response with a `workItemId` in the body for the triggering event, and the adapter's log group contains a `WorkItem created` line.
 
 ## Adding a permission later
 
