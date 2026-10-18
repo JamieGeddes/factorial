@@ -2,7 +2,8 @@
  * Prepare: accept the WorkItem exactly once, then set up the agent's session
  * deterministically: clone the repository, put the session on the work branch
  * (a fresh branch off the default head, or the existing rework branch), and
- * leave the WorkItem on disk for the agent to read. For rework items, the
+ * leave the WorkItem on disk for the agent to read, with the request copied to
+ * the top of /workspace/notes.md so it stays in view. For rework items, the
  * review details — including the failing checks' logs, fetched here with a
  * short-lived read-only token and redacted — are left at /workspace/rework.md.
  * No model is involved.
@@ -12,7 +13,7 @@
  * written anywhere in the session.
  */
 import type { CheckJob, GitHubClient } from '@factorial/github-app';
-import { assertWorkItem, type ReworkContext, type WorkItemReviewDetail } from '@factorial/workitem';
+import { assertWorkItem, type ReworkContext, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
 import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
@@ -40,6 +41,8 @@ export function cloneScript(params: {
   branch: string;
   token: string;
   workItemJson: string;
+  /** The initial /workspace/notes.md, from `initialNotes`. */
+  notes: string;
   /** Checkout mode: a new branch off the default head, or an existing remote branch. */
   mode: 'create' | 'checkout';
 }): string {
@@ -48,6 +51,7 @@ export function cloneScript(params: {
   const branch = assertGitBranch(params.branch, 'work branch');
   const url = `https://github.com/${owner}/${name}.git`;
   const workItemBase64 = Buffer.from(params.workItemJson, 'utf8').toString('base64');
+  const notesBase64 = Buffer.from(params.notes, 'utf8').toString('base64');
   const checkout =
     params.mode === 'create'
       ? `git checkout --quiet -b ${shellQuote(branch)}`
@@ -61,7 +65,35 @@ export function cloneScript(params: {
     checkout,
     'git rev-parse HEAD',
     `printf '%s' ${shellQuote(workItemBase64)} | base64 -d > /workspace/workitem.json`,
+    `printf '%s' ${shellQuote(notesBase64)} | base64 -d > /workspace/notes.md`,
     `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'`,
+  ].join('\n');
+}
+
+/**
+ * The starting /workspace/notes.md: the request itself, ahead of the agent's
+ * own notes. The harness drops older messages, including the prompt, so the
+ * notes file is what keeps the task in view for the whole session.
+ */
+export function initialNotes(workItem: WorkItem, rework: boolean): string {
+  return [
+    '# Task',
+    '',
+    '_Copied from the work item by the orchestrator. Do not edit this section; re-read it before you plan, before each commit and before writing summary.md._',
+    '',
+    `Source: ${workItem.source.url}`,
+    '',
+    `## ${workItem.title}`,
+    '',
+    workItem.body.trim() || '_No further description was given._',
+    ...(rework ? ['', 'This is rework: every point in /workspace/rework.md must be addressed.'] : []),
+    '',
+    '# Plan',
+    '',
+    '_Write the plan here before changing any code: each requirement above, and the change that meets it._',
+    '',
+    '# Notes',
+    '',
   ].join('\n');
 }
 
@@ -147,6 +179,7 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
       branch,
       token,
       workItemJson: JSON.stringify(workItem, null, 2),
+      notes: initialNotes(workItem, rework !== undefined),
       mode: rework ? 'checkout' : 'create',
     }),
     600,
