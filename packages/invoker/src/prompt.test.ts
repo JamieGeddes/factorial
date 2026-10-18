@@ -69,6 +69,11 @@ describe('buildPrompt for rework', () => {
     assert.match(prompt, /how each of the points in \/workspace\/rework\.md was handled/);
   });
 
+  it('tells the agent to re-read rework.md once older messages are dropped', () => {
+    const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
+    assert.match(prompt, /re-read \/workspace\/workitem\.json, \/workspace\/rework\.md and your notes/);
+  });
+
   it('does not quote review comments in the prompt itself; they live in rework.md', () => {
     const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
     assert.doesNotMatch(prompt, /Add a test\./);
