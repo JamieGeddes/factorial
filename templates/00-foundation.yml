@@ -578,9 +578,12 @@ Resources:
                 Resource: '*'
               # A gateway's ARN embeds an ID assigned at creation, so tagging
               # on create is authorised against gateway/*, not the factorial-
-              # name. Only the stack tag may be applied. This also lets the
-              # role add Project=Factorial to any gateway in the account, so
-              # never grant AgentCore access by aws:ResourceTag/Project.
+              # name. Only the stack tag, and the aws:cloudformation:* tags
+              # CloudFormation adds to every create (seen in CloudTrail on
+              # 2026-10-18), may be applied, from a factorial- stack. This
+              # also lets the role add Project=Factorial to any gateway in the
+              # account, so never grant AgentCore access by
+              # aws:ResourceTag/Project.
               - Sid: AgentCoreGatewayTagOnCreate
                 Effect: Allow
                 Action: bedrock-agentcore:TagResource
@@ -588,9 +591,14 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestTag/Project: Factorial
+                  StringLike:
+                    aws:RequestTag/aws:cloudformation:stack-name: factorial-*
                   ForAllValues:StringEquals:
                     aws:TagKeys:
                       - Project
+                      - aws:cloudformation:stack-name
+                      - aws:cloudformation:stack-id
+                      - aws:cloudformation:logical-id
               - Sid: ContainerRegistry
                 Effect: Allow
                 Action: ecr:*
