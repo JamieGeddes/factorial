@@ -8,7 +8,7 @@ Factorial is built incrementally, largely by itself. This file is split accordin
 - **Fixed from day one** lists the parts that must be in place from the first version and must not be weakened.
 - **Current stage** describes what exists now and what to build next. Work to this section; do not implement target features unless the current task asks for them.
 
-The background design conversation is in `docs/design-conversation.md`, and the proposed design beyond Stage 0 is in `docs/design-plan.md`. Only what is written in this file is agreed; anything else in those documents is a proposal and should not be treated as binding.
+The architecture principles in `docs/architecture-principles.md` are binding on every stage and every design decision; **Fixed from day one** below is how they are enforced today. The background design conversation is in `docs/design-conversation.md`, and the proposed design beyond Stage 0 is in `docs/design-plan.md`. Only what is written in this file and in the principles is agreed; anything else in those documents is a proposal and should not be treated as binding.
 
 ## Requirements
 
