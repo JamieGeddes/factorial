@@ -28,7 +28,7 @@ describe('buildPrompt', () => {
     assert.match(buildPrompt(workItem, 'b', 'main'), /Commit on this branch as you go/);
   });
 
-  it('points to the work item file and the notes file, since older messages are dropped', () => {
+  it('points to the work item file and the notes file, since older messages are condensed', () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
     assert.match(prompt, /\/workspace\/notes\.md already starts with this request/);
   });
@@ -74,7 +74,7 @@ describe('buildPrompt for rework', () => {
     assert.match(prompt, /how each of the points in \/workspace\/rework\.md was handled/);
   });
 
-  it('tells the agent to re-read rework.md once older messages are dropped', () => {
+  it('tells the agent to re-read rework.md once older messages are condensed', () => {
     const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
     assert.match(prompt, /re-read it and \/workspace\/rework\.md rather than relying on memory/);
   });
