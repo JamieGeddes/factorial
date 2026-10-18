@@ -115,15 +115,8 @@ flowchart TB
     store[("S3: factorial-work-artefacts<br/>workItemId / attempt / stage /<br/>versioned, no delete")]:::new
     ledger[("DynamoDB: factorial-work-items<br/>status, lineage, usage,<br/>pointers into the store")]
 
-    prepare --> store
-    explore --> store
-    plan --> store
-    build --> store
-    collect --> store
-    test --> store
-    smoke --> store
-    review --> store
-    sfn --> ledger
+    sfn -->|"every stage writes<br/>its inputs and outputs"| store
+    sfn -->|"status, lineage,<br/>usage, pointers"| ledger
 
     plan -->|"child WorkItems<br/>(fan-out)"| bus
 
