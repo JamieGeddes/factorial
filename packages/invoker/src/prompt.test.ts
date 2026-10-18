@@ -30,8 +30,13 @@ describe('buildPrompt', () => {
 
   it('points to the work item file and the notes file, since older messages are dropped', () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
-    assert.match(prompt, /re-read \/workspace\/workitem\.json/);
-    assert.match(prompt, /\/workspace\/notes\.md/);
+    assert.match(prompt, /\/workspace\/notes\.md already starts with this request/);
+  });
+
+  it('asks for a plan against the request before any code, and a check before each commit', () => {
+    const prompt = buildPrompt(workItem, 'b', 'main');
+    assert.match(prompt, /Before changing any code, re-read the Task section and write your plan/);
+    assert.match(prompt, /Re-read the Task section before each commit and before writing the summary/);
   });
 
   it('marks an empty body explicitly', () => {
@@ -71,7 +76,7 @@ describe('buildPrompt for rework', () => {
 
   it('tells the agent to re-read rework.md once older messages are dropped', () => {
     const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
-    assert.match(prompt, /re-read \/workspace\/workitem\.json, \/workspace\/rework\.md and your notes/);
+    assert.match(prompt, /re-read it and \/workspace\/rework\.md rather than relying on memory/);
   });
 
   it('does not quote review comments in the prompt itself; they live in rework.md', () => {

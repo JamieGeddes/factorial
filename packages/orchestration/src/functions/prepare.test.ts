@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 import { type CheckJob, GitHubClient } from '@factorial/github-app';
 
-import { buildReworkFile, cloneScript, logSection } from './prepare.ts';
+import { buildReworkFile, cloneScript, initialNotes, logSection } from './prepare.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
@@ -29,6 +29,7 @@ describe('cloneScript', () => {
     branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
     token: TOKEN,
     workItemJson: '{"id":"x"}',
+    notes: '# Task\n',
     mode: 'create' as const,
   };
 
@@ -64,6 +65,11 @@ describe('cloneScript', () => {
     assert.doesNotMatch(script, /\{"id"/);
   });
 
+  it('writes the initial notes via base64', () => {
+    const encoded = Buffer.from(params.notes).toString('base64');
+    assert.match(cloneScript(params), new RegExp(`printf '%s' '${encoded}' \\| base64 -d > /workspace/notes\\.md`));
+  });
+
   it('rejects owner or repository names that are not plain GitHub names', () => {
     assert.throws(() => cloneScript({ ...params, owner: 'evil;rm -rf /' }), /not a valid GitHub name/);
     assert.throws(() => cloneScript({ ...params, name: "x'y" }), /not a valid GitHub name/);
@@ -71,6 +77,37 @@ describe('cloneScript', () => {
 
   it('rejects a rework branch that is not a plain branch name', () => {
     assert.throws(() => cloneScript({ ...params, branch: 'evil;rm', mode: 'checkout' }), /not a valid branch name/);
+  });
+});
+
+describe('initialNotes', () => {
+  const workItem: WorkItem = {
+    schemaVersion: 1,
+    id: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+    source: { type: 'github-issue', id: '7', url: 'https://github.com/JamieGeddes/factorial/issues/7' },
+    repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
+    title: 'Fix typo',
+    body: 'The word "recieve" should be "receive".',
+    requestedBy: 'JamieGeddes',
+    createdAt: '2026-10-17T09:00:00Z',
+  };
+
+  it('opens with the full request, then a plan section and a notes section', () => {
+    const notes = initialNotes(workItem, false);
+    assert.match(notes, /^# Task\n/);
+    assert.match(notes, /Source: https:\/\/github\.com\/JamieGeddes\/factorial\/issues\/7/);
+    assert.match(notes, /## Fix typo\n\nThe word "recieve" should be "receive"\./);
+    assert.ok(notes.indexOf('# Task') < notes.indexOf('# Plan'));
+    assert.ok(notes.indexOf('# Plan') < notes.indexOf('# Notes'));
+    assert.doesNotMatch(notes, /rework\.md/);
+  });
+
+  it('marks an empty body explicitly', () => {
+    assert.match(initialNotes({ ...workItem, body: ' ' }, false), /_No further description was given\._/);
+  });
+
+  it('points rework items at rework.md', () => {
+    assert.match(initialNotes(workItem, true), /every point in \/workspace\/rework\.md must be addressed/);
   });
 });
 
