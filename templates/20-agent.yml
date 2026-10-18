@@ -249,7 +249,8 @@ Resources:
             4. Add or update automated tests for behaviour you change. Run the repository's checks (tests, typecheck, lint) and fix any failure you caused.
             5. Commit early and often. Your session can end without warning (a model or network error, or the time limit), and only committed work is kept: after a failure the orchestrator pushes your commits to the branch for a human to pick up, while uncommitted changes may be lost. Commit after each coherent step that leaves the files consistent, for example a schema change with its tests, or a new module with its tests; do not wait until the whole request is done. Keep each commit focused, with a message in the imperative mood. Do not amend or rewrite history that existed before your session.
             6. Do not push, open pull requests, or change CI, deployment or credential configuration. The orchestrator pushes your branch and opens the pull request after you finish.
-            7. When done, write /workspace/summary.md containing: what changed and why, how you verified it, and anything a reviewer should look at. This file becomes the pull request description.
+            7. Keep running notes in /workspace/notes.md (outside the repository; never commit it). Older messages in this conversation are dropped as it grows, including the original request and what you read early on, so anything you will still need must be on disk. After each step, append: decisions taken and why, files changed, commits made, approaches that failed, and what remains to do. When you are unsure what was asked or what you have done, re-read /workspace/workitem.json (the full request) and /workspace/notes.md rather than relying on memory.
+            8. When done, write /workspace/summary.md containing: what changed and why, how you verified it, and anything a reviewer should look at. This file becomes the pull request description.
 
             If the request is unclear, out of scope for a code change, or impossible, do not guess. Make no commits, and write /workspace/summary.md explaining what is missing or why it cannot be done.
 
@@ -260,32 +261,21 @@ Resources:
         Disabled: {}
       MaxIterations: !Ref MaxIterations
       # Context management. Every model call resends the whole conversation,
-      # so without this a long build costs roughly the square of its length
-      # (one 17-minute run used about 5 million tokens). Summarisation
-      # condenses older turns and keeps the most recent ones verbatim. Not a
-      # sliding window: that drops old messages outright, including the
-      # original request. Check maxCallInputTokens in the invoker's
-      # "harness finished" log to see whether the context stays bounded.
+      # so without this a long build costs roughly the square of its length.
+      # Summarisation did not bound it: on #23 (2026-10-17) the context grew
+      # to 68,570 tokens on the last of 106 calls, about 4.9 million tokens
+      # in all. A sliding window keeps only the most recent messages (a tool
+      # call and its result are two). It drops the original request too, so
+      # the prompt tells the agent to re-read /workspace/workitem.json and to
+      # keep its decisions and progress in /workspace/notes.md. AWS documents
+      # truncation as applying once the history outgrows the model's context
+      # window; check maxCallInputTokens in the invoker's "harness finished"
+      # log to see whether the window holds during a run.
       Truncation:
-        Strategy: summarization
+        Strategy: sliding_window
         Config:
-          Summarization:
-            SummaryRatio: 0.5
-            PreserveRecentMessages: 16
-            # One line: the harness passes this to the runtime as an
-            # environment variable, which may not contain newlines or other
-            # control characters (the update failed with a multi-line prompt).
-            SummarizationSystemPrompt: >-
-              You are condensing the earlier part of a coding agent's working session so it can continue with less context.
-              Write a factual summary that preserves everything the agent still needs:
-              (1) the request it is working on, in full, including acceptance criteria and constraints;
-              (2) the repository conventions it has learned (language, layout, test framework, commit style, checks to run);
-              (3) every file it has created or changed, and what each change was;
-              (4) commits made so far, with their messages;
-              (5) decisions taken and why, and approaches tried that failed;
-              (6) what remains to be done.
-              Keep file paths, function names, commands and error messages exact.
-              Omit file contents the agent can read again from disk.
+          SlidingWindow:
+            MessagesCount: 40
       # Wall-clock limit for the agent loop in one invocation. Fixed here, not
       # a parameter, so a change reaches the existing stack (see ModelId).
       # Keep it below the orchestration stack's BuildTimeoutSeconds (7200) so

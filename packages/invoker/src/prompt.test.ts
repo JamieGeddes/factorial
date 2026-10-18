@@ -28,6 +28,12 @@ describe('buildPrompt', () => {
     assert.match(buildPrompt(workItem, 'b', 'main'), /Commit on this branch as you go/);
   });
 
+  it('points to the work item file and the notes file, since older messages are dropped', () => {
+    const prompt = buildPrompt(workItem, 'b', 'main');
+    assert.match(prompt, /re-read \/workspace\/workitem\.json/);
+    assert.match(prompt, /\/workspace\/notes\.md/);
+  });
+
   it('marks an empty body explicitly', () => {
     assert.match(buildPrompt({ ...workItem, body: '  ' }, 'b', 'main'), /_No further description was given\._/);
   });
