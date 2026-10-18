@@ -3,7 +3,7 @@
  * Before opening it, confirm that the branch still points at the commit that
  * was tested, so the PR cannot present untested code.
  */
-import { artefactUri, putJsonArtefact, testResultArtefact } from '../lib/artefacts.ts';
+import { putJsonArtefact, testResultArtefact } from '../lib/artefacts.ts';
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { assertCommitSha } from '../lib/shell.ts';
@@ -42,7 +42,7 @@ export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; p
 
   const pr = await client.createPullRequest(repo, {
     title: ctx.workItem.title,
-    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, artefactUri(ctx.artefactPrefix)),
+    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha),
     head: ctx.branch,
     base: ctx.baseBranch,
   });

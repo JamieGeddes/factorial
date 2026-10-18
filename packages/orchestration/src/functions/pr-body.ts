@@ -26,7 +26,7 @@ export function closingReference(workItem: WorkItem): string | undefined {
 }
 
 /** The pull request description: the agent's summary, the closing reference, then the evidence. */
-export function pullRequestBody(ctx: WorkContext, summary: string, test: TestResult, headSha: string, artefacts: string): string {
+export function pullRequestBody(ctx: WorkContext, summary: string, test: TestResult, headSha: string): string {
   const summaryText = summary.trim() || '_The agent did not write a summary._';
   const rows: Array<[string, string]> = [
     ['Work item', `[${ctx.workItem.source.type} ${ctx.workItem.source.id}](${ctx.workItem.source.url})`],
@@ -35,7 +35,8 @@ export function pullRequestBody(ctx: WorkContext, summary: string, test: TestRes
     ['Head', `\`${headSha.slice(0, 12)}\``],
     ['Built by', `Factorial \`${ctx.factorialVersion.slice(0, 12)}\``],
     ['Session', `\`${ctx.sessionId}\``],
-    ['Artefacts', `\`${artefacts}\``],
+    // The prefix only: the bucket name carries the account ID, which stays out of GitHub.
+    ['Artefacts', `\`${ctx.artefactPrefix}\``],
   ];
   const table = ['| | |', '|---|---|', ...rows.map(([k, v]) => `| ${k} | ${v} |`)].join('\n');
   const closes = closingReference(ctx.workItem);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { artefactKey, artefactObject, artefactPrefix, artefactUri, testResultArtefact } from './artefacts.ts';
+import { artefactKey, artefactObject, artefactPrefix, testResultArtefact } from './artefacts.ts';
 
 const id = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 
@@ -28,10 +28,6 @@ describe('artefact keys', () => {
     for (const path of ['', '/report.json', '../x.json', 'a/../b.json', 'a//b.json', 'build/', 'a b.json']) {
       assert.throws(() => artefactKey(prefix, path), path);
     }
-  });
-
-  it('gives an s3 URI for the prefix', () => {
-    assert.equal(artefactUri(`${id}/1/`, 'factorial-work-artefacts-1'), `s3://factorial-work-artefacts-1/${id}/1/`);
   });
 });
 

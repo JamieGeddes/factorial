@@ -33,11 +33,6 @@ export function artefactKey(prefix: string, path: string): string {
   return `${prefix}${path}`;
 }
 
-/** Where a reviewer finds an attempt's record. */
-export function artefactUri(prefix: string, bucket = requireEnv('ARTEFACT_BUCKET')): string {
-  return `s3://${bucket}/${prefix}`;
-}
-
 /** The upload for one artefact, its text redacted. */
 export function artefactObject(
   bucket: string,
