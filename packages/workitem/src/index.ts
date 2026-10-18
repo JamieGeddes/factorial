@@ -25,6 +25,8 @@ export const WORKITEM_DETAIL_TYPE = 'WorkItem' as const;
 /** Trigger types known to this version of Factorial. The schema accepts any kebab-case value. */
 export const TRIGGER_TYPES = {
   githubIssue: 'github-issue',
+  /** Rework of a previous WorkItem's pull request, triggered by a review or failed checks. */
+  githubPrRework: 'github-pr-rework',
 } as const;
 
 export interface WorkItemSource {

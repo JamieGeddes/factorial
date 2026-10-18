@@ -1,5 +1,8 @@
 /**
- * GitHub issue trigger adapter.
+ * GitHub trigger adapter: issue events and events on Factorial's own pull
+ * requests both become WorkItems on the Factorial bus. Receives GitHub webhook
+ * deliveries on a Lambda function URL, verifies the HMAC signature, and routes
+ * each delivery to the matching decision function. Nothing downstream knows about GitHub.
  *
  * Receives GitHub webhook deliveries on a Lambda function URL, verifies the
  * HMAC signature, and when the trigger label is added to an issue, places one
@@ -8,10 +11,14 @@
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
+import { GetParametersCommand, SSMClient } from '@aws-sdk/client-ssm';
 
-import { WORKITEM_DETAIL_TYPE, WORKITEM_EVENT_SOURCE } from '@factorial/workitem';
+import { WORKITEM_DETAIL_TYPE, WORKITEM_EVENT_SOURCE, type WorkItem } from '@factorial/workitem';
 
+import { decidePrEvent, isReworkRequestComment, type PrEventDecision } from './pr-event.ts';
 import { BadPayloadError, decideIssueEvent } from './issue-event.ts';
+import { buildRework, GitHubFetch } from './enrich.ts';
+import { parseIssueCommentPayload } from './payloads.ts';
 import { verifyGitHubSignature } from './signature.ts';
 
 const eventBridge = new EventBridgeClient({});
@@ -80,9 +87,18 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   if (githubEvent === 'ping') {
     return respond(200, { message: 'pong' });
   }
-  if (githubEvent !== 'issues') {
+  const PR_EVENTS = new Set([
+    'pull_request_review',
+    'pull_request_review_comment',
+    'issue_comment',
+    'check_suite',
+    'workflow_run',
+  ]);
+  if (githubEvent !== undefined && githubEvent !== 'issues' && !PR_EVENTS.has(githubEvent)) {
     return respond(202, { message: `ignored event "${githubEvent ?? ''}"` });
   }
+  // Narrowed to a known event name by the checks above.
+  const eventName = githubEvent as string;
 
   let payload: unknown;
   try {
@@ -91,13 +107,22 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     return respond(400, { message: 'body is not valid JSON' });
   }
 
-  let decision;
+  let workItem;
+  let ignored: string | undefined;
   try {
-    decision = decideIssueEvent(payload, {
-      triggerLabel: process.env.TRIGGER_LABEL ?? 'factorial',
-      allowedUserIds: allowedUserIds(),
-      deliveryId,
-    });
+    const decision =
+      githubEvent === 'issues'
+        ? decideIssueEvent(payload, {
+            triggerLabel: process.env.TRIGGER_LABEL ?? 'factorial',
+            allowedUserIds: allowedUserIds(),
+            deliveryId,
+          })
+        : await prDecision(eventName, payload, deliveryId);
+    if (decision.kind === 'ignore') {
+      ignored = decision.reason;
+    } else if ('workItem' in decision) {
+      workItem = decision.workItem;
+    }
   } catch (error) {
     if (error instanceof BadPayloadError) {
       console.warn(JSON.stringify({ message: 'rejected malformed payload', deliveryId, error: error.message }));
@@ -106,11 +131,9 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     throw error;
   }
 
-  if (decision.kind === 'ignore') {
-    return respond(202, { message: decision.reason });
+  if (workItem === undefined) {
+    return respond(202, { message: ignored ?? 'ignored' });
   }
-
-  const { workItem } = decision;
   const result = await eventBridge.send(
     new PutEventsCommand({
       Entries: [
@@ -140,3 +163,89 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   );
   return respond(202, { workItemId: workItem.id });
 };
+
+/**
+ * The App credentials, for the read-only GitHub lookups the PR rework path
+ * needs. Only the trigger adapter reads these here; tokens are scoped to one
+ * repository and `pull_requests: read`.
+ */
+async function appCredentials(): Promise<{ appId: string; installationId: string; privateKeyPem: string }> {
+  const [params, key] = await Promise.all([
+    new SSMClient({}).send(
+      new GetParametersCommand({
+        Names: [requireEnv('GITHUB_APP_ID_PARAM'), requireEnv('GITHUB_INSTALLATION_ID_PARAM')],
+      }),
+    ),
+    new SecretsManagerClient({}).send(new GetSecretValueCommand({ SecretId: requireEnv('GITHUB_PRIVATE_KEY_SECRET') })),
+  ]);
+  const byName = new Map((params.Parameters ?? []).map((p) => [p.Name, p.Value]));
+  const appId = byName.get(requireEnv('GITHUB_APP_ID_PARAM'));
+  const installationId = byName.get(requireEnv('GITHUB_INSTALLATION_ID_PARAM'));
+  if (!appId || !installationId || !key.SecretString) {
+    throw new Error('Missing GitHub App configuration for the PR rework path');
+  }
+  return { appId, installationId, privateKeyPem: key.SecretString };
+}
+
+/**
+ * Route a pull-request event: the pure decision function first, then, only if
+ * it says rework, the GitHub and ledger lookups that complete the guards and
+ * build the WorkItem. `issue_comment` payloads carry no PR shape, so the PR
+ * record is fetched from the API before deciding, but only when the comment
+ * body looks like a rework request.
+ */
+async function prDecision(
+  githubEvent: string,
+  payload: unknown,
+  deliveryId: string | undefined,
+): Promise<{ kind: 'ignore'; reason: string } | { kind: 'work'; workItem: WorkItem }> {
+  const botLogin = requireEnv('FACTORIAL_BOT_LOGIN');
+  const allowed = allowedUserIds();
+
+  if (githubEvent === 'issue_comment') {
+    const event = parseIssueCommentPayload(payload);
+    if (event.action !== 'created') {
+      return { kind: 'ignore', reason: `ignored issue_comment action "${event.action}"` };
+    }
+    if (!isReworkRequestComment(event.comment.body, botLogin)) {
+      return { kind: 'ignore', reason: 'plain issue comment' };
+    }
+    const github = await GitHubFetch.create(event.repository, await appCredentials());
+    const pullRequest = await github.getPullRequest(event.repository, event.issue.number);
+    const enriched = { ...(payload as object), pull_request: pullRequest };
+    const decision = decidePrEvent('issue_comment', enriched, { botLogin, allowedUserIds: allowed });
+    if (decision.kind === 'ignore') return decision;
+    const outcome = await buildRework(decision, event.repository, github, {
+      deliveryId,
+      baseBranch: decision.pullRequest.base.ref,
+      botLogin,
+    });
+    return 'kind' in outcome && outcome.kind === 'ignore' ? outcome : { kind: 'work', workItem: outcome as WorkItem };
+  }
+
+  const decision = decidePrEvent(githubEvent as string, payload, { botLogin, allowedUserIds: allowed });
+  if (decision.kind === 'ignore') return decision;
+  const repository = repositoryOf(githubEvent as string, payload);
+  const github = await GitHubFetch.create(repository, await appCredentials());
+  const outcome = await buildRework(decision, repository, github, {
+    deliveryId,
+    baseBranch: decision.pullRequest.base.ref,
+    botLogin,
+  });
+  return 'kind' in outcome && outcome.kind === 'ignore' ? outcome : { kind: 'work', workItem: outcome as WorkItem };
+}
+
+/** The repository of a PR-shaped event, for the API lookups. */
+function repositoryOf(githubEvent: string, payload: unknown): { owner: { login: string }; name: string } {
+  const record = payload as Record<string, unknown>;
+  const repository = record.repository as { name?: unknown; owner?: { login?: unknown } } | undefined;
+  if (
+    repository === undefined ||
+    typeof repository.name !== 'string' ||
+    repository.owner === undefined ||
+    typeof repository.owner.login !== 'string'
+  ) {
+    throw new BadPayloadError(`the ${githubEvent} payload has no repository`);
+  }
+  return { name: repository.name, owner: { login: repository.owner.login } };
+}
