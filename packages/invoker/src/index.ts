@@ -28,6 +28,8 @@ const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
 const branch = requireEnv('BRANCH');
 const baseBranch = requireEnv('BASE_BRANCH');
+const baseCommit = requireEnv('BASE_COMMIT');
+if (!/^[0-9a-f]{40}$/.test(baseCommit)) throw new Error('BASE_COMMIT is not a commit sha');
 const maxIterations = Number(process.env.MAX_ITERATIONS ?? '150');
 const timeoutSeconds = Number(process.env.TIMEOUT_SECONDS ?? '3600');
 

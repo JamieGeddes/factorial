@@ -19,6 +19,7 @@ const ctx: WorkContext = {
   sessionId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   baseBranch: 'main',
+  baseCommit: 'b'.repeat(40),
   factorialVersion: '0123456789abcdef0123456789abcdef01234567',
 };
 

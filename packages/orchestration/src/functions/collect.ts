@@ -37,17 +37,18 @@ const MAX_BUNDLE_BYTES = 8_000_000;
 export const LEFTOVER_COMMIT_MESSAGE = 'Apply remaining changes left by the agent';
 export const SALVAGE_COMMIT_MESSAGE = 'Save work in progress after the build failed';
 
-export function inspectScript(baseBranch: string, leftoverMessage: string = LEFTOVER_COMMIT_MESSAGE): string {
+export function inspectScript(baseCommit: string, leftoverMessage: string = LEFTOVER_COMMIT_MESSAGE): string {
+  const base = shellQuote(assertCommitSha(baseCommit, 'base commit'));
   return [
     'set -uo pipefail',
     HARDENED_GIT_ENV,
     'cd /workspace/repo',
     `if [ -n "$(git -c core.hooksPath=/dev/null status --porcelain=v1)" ]; then git -c core.hooksPath=/dev/null add -A && git -c core.hooksPath=/dev/null -c user.name=Factorial -c user.email=agent@factorial.invalid commit --quiet -m ${shellQuote(leftoverMessage)}; fi`,
-    `git rev-list --count ${shellQuote(`origin/${baseBranch}`)}..HEAD`,
+    `git rev-list --count ${base}..HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
     'git rev-parse HEAD',
     `printf '%s' ${shellQuote(SECTION)}`,
-    `git diff --name-only "$(git merge-base ${shellQuote(`origin/${baseBranch}`)} HEAD)" HEAD`,
+    `git diff --name-only ${base} HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
     'if [ -f /workspace/summary.md ]; then head -c 60000 /workspace/summary.md; fi',
   ].join('\n');
@@ -80,13 +81,13 @@ export function touchesWorkflows(changedPaths: string[]): boolean {
 }
 
 /** Export the new commits from the agent's session as a base64 bundle on stdout. */
-export function bundleScript(baseBranch: string, headSha: string): string {
+export function bundleScript(baseCommit: string, headSha: string): string {
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
     'cd /workspace/repo',
     `test "$(git rev-parse HEAD)" = ${shellQuote(assertCommitSha(headSha, 'head sha'))}`,
-    `git -c core.hooksPath=/dev/null bundle create /tmp/factorial.bundle ${shellQuote(`origin/${baseBranch}`)}..HEAD >/dev/null 2>&1`,
+    `git -c core.hooksPath=/dev/null bundle create /tmp/factorial.bundle ${shellQuote(assertCommitSha(baseCommit, 'base commit'))}..HEAD >/dev/null 2>&1`,
     `size=$(stat -c %s /tmp/factorial.bundle); if [ "$size" -gt ${MAX_BUNDLE_BYTES} ]; then echo "bundle too large: $size bytes" >&2; exit 3; fi`,
     'base64 -w0 /tmp/factorial.bundle',
   ].join('\n');
@@ -95,12 +96,19 @@ export function bundleScript(baseBranch: string, headSha: string): string {
 /**
  * Import the bundle into a pristine clone and push exactly the expected
  * commit to the work branch. Runs in the clean-room session.
+ *
+ * `baseCommit` is the commit the work branch must currently point at: the
+ * tip of the base branch for a new item, the head the agent started from
+ * for rework. The rewrite replays the bundle's commits on top of it, so the
+ * push is always a fast-forward; the check refuses anything else, and no
+ * force is ever passed.
  */
 export function cleanRoomPushScript(params: {
   owner: string;
   name: string;
   branch: string;
   baseBranch: string;
+  baseCommit: string;
   headSha: string;
   token: string;
   bundleBase64: string;
@@ -110,6 +118,7 @@ export function cleanRoomPushScript(params: {
   const owner = assertGitHubName(params.owner, 'repository owner');
   const name = assertGitHubName(params.name, 'repository name');
   const headSha = assertCommitSha(params.headSha, 'head sha');
+  const baseCommit = assertCommitSha(params.baseCommit, 'base commit');
   const branch = assertGitBranch(params.branch, 'work branch');
   const baseBranch = assertGitBranch(params.baseBranch, 'base branch');
   const identity = assertGitIdentity(params.identity);
@@ -133,10 +142,11 @@ export function cleanRoomPushScript(params: {
     // the same header or it fails asking for a username.
     `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} fetch --quiet ../incoming.bundle HEAD`,
     `test "$(git rev-parse FETCH_HEAD)" = ${shellQuote(headSha)}`,
-    // Re-create the agent's commits with the App's identity: same trees,
-    // messages and author dates, linear history only. The agent chose its
-    // own author inside the sandbox; what GitHub attributes is decided here.
-    `base=$(git merge-base ${shellQuote(`refs/heads/${baseBranch}`)} FETCH_HEAD)`,
+    // The branch's current head: everything new must descend from it, so the
+    // push is a fast-forward. Refuse and fail loudly if the branch has moved.
+    `test "$(git rev-parse refs/heads/${branch})" = ${shellQuote(baseCommit)}`,
+    `git merge-base --is-ancestor ${shellQuote(baseCommit)} FETCH_HEAD`,
+    `base=${shellQuote(baseCommit)}`,
     'test -z "$(git rev-list --merges "$base..FETCH_HEAD")"',
     'new=$base',
     'for c in $(git rev-list --reverse "$base..FETCH_HEAD"); do',
@@ -161,7 +171,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
   const agentSession = sessionTarget(ctx.sessionId);
   const inspection = await runCommand(
     agentSession,
-    inspectScript(ctx.baseBranch, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE),
+    inspectScript(ctx.baseCommit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE),
     300,
   );
   if (inspection.exitCode !== 0) {
@@ -175,7 +185,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
     return { pushed: false, commitCount, headSha, summary };
   }
 
-  const bundle = await mustRun(agentSession, bundleScript(ctx.baseBranch, headSha), 300);
+  const bundle = await mustRun(agentSession, bundleScript(ctx.baseCommit, headSha), 300);
   const bundleBase64 = bundle.stdout.trim();
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');
@@ -204,6 +214,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
       name: repo.name,
       branch: ctx.branch,
       baseBranch: ctx.baseBranch,
+      baseCommit: ctx.baseCommit,
       headSha,
       token,
       bundleBase64,

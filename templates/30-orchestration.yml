@@ -709,7 +709,8 @@ Resources:
                         { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
                         { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },
                         { "Name": "BRANCH", "Value": "{% $ctx.branch %}" },
-                        { "Name": "BASE_BRANCH", "Value": "{% $ctx.baseBranch %}" }
+                        { "Name": "BASE_BRANCH", "Value": "{% $ctx.baseBranch %}" },
+                        { "Name": "BASE_COMMIT", "Value": "{% $ctx.baseCommit %}" }
                       ]
                     }
                   ]

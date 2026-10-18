@@ -15,6 +15,7 @@ const TOKEN = `ghs_${'t'.repeat(36)}`;
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
 const sha = 'a'.repeat(40);
+const base = 'b'.repeat(40);
 
 describe('parseInspection', () => {
   it('extracts the commit count, head sha, changed paths and summary', () => {
@@ -52,27 +53,27 @@ describe('touchesWorkflows', () => {
 
 describe('agent-session scripts carry no credentials', () => {
   it('inspects with hooks disabled and commits leftovers first', () => {
-    const script = inspectScript('main');
+    const script = inspectScript(base);
     assert.match(script, /GIT_CONFIG_NOSYSTEM=1/);
-    assert.match(script, /git rev-list --count 'origin\/main'\.\.HEAD/);
+    assert.match(script, new RegExp(`git rev-list --count '${base}'\\.\\.HEAD`));
     assert.ok(script.indexOf('add -A') < script.indexOf('git rev-list'));
     assert.doesNotMatch(script, /AUTHORIZATION|x-access-token|ghs_/);
     assert.ok(script.includes(`commit --quiet -m '${LEFTOVER_COMMIT_MESSAGE}'`));
   });
 
   it('labels leftovers as saved work in progress after a failed build', () => {
-    const script = inspectScript('main', SALVAGE_COMMIT_MESSAGE);
+    const script = inspectScript(base, SALVAGE_COMMIT_MESSAGE);
     assert.ok(script.includes(`commit --quiet -m 'Save work in progress after the build failed'`));
   });
 
   it('bundles only the new commits, pins the head and caps the size', () => {
-    const script = bundleScript('main', sha);
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${sha}'`));
-    assert.match(script, /bundle create \/tmp\/factorial\.bundle 'origin\/main'\.\.HEAD/);
+    const script = bundleScript(base, sha);
+    assert.match(script, new RegExp(`test \"\\$\\(git rev-parse HEAD\\)\" = '${sha}'`));
+    assert.match(script, new RegExp(`bundle create /tmp/factorial\\.bundle '${base}'\\.\\.HEAD`));
     assert.match(script, /bundle too large/);
     assert.match(script, /base64 -w0 \/tmp\/factorial\.bundle$/m);
     assert.doesNotMatch(script, /AUTHORIZATION|x-access-token|ghs_/);
-    assert.throws(() => bundleScript('main', 'nope'), /not a commit sha/);
+    assert.throws(() => bundleScript(base, 'nope'), /not a commit sha/);
   });
 });
 
@@ -83,6 +84,7 @@ describe('cleanRoomPushScript', () => {
     name: 'factorial',
     branch: 'factorial/abc',
     baseBranch: 'main',
+    baseCommit: base,
     headSha: sha,
     token: TOKEN,
     bundleBase64: 'QUJD',
@@ -108,7 +110,7 @@ describe('cleanRoomPushScript', () => {
 
   it('re-creates every commit with the App identity, keeping trees, messages and author dates', () => {
     const script = cleanRoomPushScript(params);
-    assert.match(script, /base=\$\(git merge-base 'refs\/heads\/main' FETCH_HEAD\)/);
+    assert.match(script, new RegExp(`base='${base}'`));
     assert.match(script, /test -z "\$\(git rev-list --merges "\$base\.\.FETCH_HEAD"\)"/);
     assert.match(script, /for c in \$\(git rev-list --reverse "\$base\.\.FETCH_HEAD"\); do/);
     assert.match(script, /GIT_AUTHOR_NAME='factorial-x\[bot\]' GIT_AUTHOR_EMAIL='12345\+factorial-x\[bot\]@users\.noreply\.github\.com' GIT_COMMITTER_NAME='factorial-x\[bot\]' GIT_COMMITTER_EMAIL='12345\+factorial-x\[bot\]@users\.noreply\.github\.com'/);
@@ -116,6 +118,19 @@ describe('cleanRoomPushScript', () => {
     // the rewrite happens after the head check and before the push
     assert.ok(script.indexOf('rev-parse FETCH_HEAD') < script.indexOf('commit-tree'));
     assert.ok(script.indexOf('commit-tree') < script.indexOf('push --quiet'));
+  });
+
+  it('pushes only on top of the branch head the session started from, as a fast-forward', () => {
+    const script = cleanRoomPushScript(params);
+    // the branch must still point at the base commit; anything else fails
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse refs/heads/factorial/abc\\)" = '${base}'`));
+    // and the agent's head must descend from it, so the push is a fast-forward
+    assert.match(script, new RegExp(`git merge-base --is-ancestor '${base}' FETCH_HEAD`));
+    // never a force push
+    assert.doesNotMatch(script, /--force|-f refs|push -f/);
+    // the ancestry check happens before the rewrite and the push
+    assert.ok(script.indexOf('merge-base --is-ancestor') < script.indexOf('commit-tree'));
+    assert.ok(script.indexOf('merge-base --is-ancestor') < script.indexOf('push --quiet'));
   });
 
   it('rejects an identity or branch that could break out of the shell command', () => {
