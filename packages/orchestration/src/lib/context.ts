@@ -15,6 +15,10 @@ export interface WorkContext {
    */
   baseCommit: string;
   factorialVersion: string;
+  /** Which attempt at this source the item is: 1, or one more than the attempt it resumes. */
+  attempt: number;
+  /** `<workItemId>/<attempt>/` in the artefact store. */
+  artefactPrefix: string;
 }
 
 export function branchFor(workItem: WorkItem): string {

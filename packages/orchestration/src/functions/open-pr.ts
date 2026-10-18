@@ -3,6 +3,7 @@
  * Before opening it, confirm that the branch still points at the commit that
  * was tested, so the PR cannot present untested code.
  */
+import { artefactUri, putJsonArtefact, testResultArtefact } from '../lib/artefacts.ts';
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { assertCommitSha } from '../lib/shell.ts';
@@ -25,6 +26,7 @@ export class UntestedHeadError extends Error {
 
 export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; prUrl: string }> => {
   const { ctx } = input;
+  await putJsonArtefact(ctx.artefactPrefix, 'test/result.json', testResultArtefact(input.test));
   const headSha = assertCommitSha(input.collect.headSha, 'head sha');
   if (input.test.sha !== undefined && input.test.sha !== headSha) {
     throw new UntestedHeadError(`tests ran on ${input.test.sha}, but the branch head is ${headSha}`);
@@ -40,7 +42,7 @@ export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; p
 
   const pr = await client.createPullRequest(repo, {
     title: ctx.workItem.title,
-    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha),
+    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, artefactUri(ctx.artefactPrefix)),
     head: ctx.branch,
     base: ctx.baseBranch,
   });
@@ -51,6 +53,14 @@ export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; p
   }
 
   await recordProgress(ctx.workItem.id, 'pr-opened', { prUrl: pr.htmlUrl, prNumber: pr.number, testRunUrl: input.test.runUrl });
+  // The pull request is open, so a failure to record it must not turn the run
+  // into a reported failure.
+  try {
+    await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.htmlUrl, headSha });
+    await putJsonArtefact(ctx.artefactPrefix, 'report.json', { outcome: 'pr-opened', reason: `Pull request #${pr.number} opened for review.` });
+  } catch (error) {
+    console.log(JSON.stringify({ message: 'artefacts not stored', workItemId: ctx.workItem.id, error: String(error) }));
+  }
   console.log(JSON.stringify({ message: 'pull request opened', workItemId: ctx.workItem.id, prUrl: pr.htmlUrl }));
   return { prNumber: pr.number, prUrl: pr.htmlUrl };
 };

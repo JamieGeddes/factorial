@@ -17,8 +17,9 @@
 import type { CheckJob, GitHubClient } from '@factorial/github-app';
 import { assertWorkItem, type ReworkContext, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
+import { artefactPrefix, putJsonArtefact } from '../lib/artefacts.ts';
 import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.ts';
-import { resumableAttempt, type Attempt } from '../lib/resume.ts';
+import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
 import { mustRun, sessionTarget } from '../lib/session.ts';
 import {
@@ -31,7 +32,7 @@ import {
   redactSecrets,
   shellQuote,
 } from '../lib/shell.ts';
-import { acceptWorkItem, attemptsAtSource, recordProgress } from '../lib/table.ts';
+import { acceptWorkItem, attemptRecord, attemptsAtSource, recordProgress } from '../lib/table.ts';
 
 interface PrepareInput {
   workItem: unknown;
@@ -186,7 +187,8 @@ async function resumable(repo: { owner: string; name: string }, workItem: WorkIt
     if (!branch.startsWith('factorial/')) return undefined;
     const client = await repositoryClient(repo, { contents: 'read' });
     await client.getBranchSha(repo, branch);
-    return { ...attempt, branch };
+    const record = await attemptRecord(attempt.workItemId);
+    return { ...attempt, branch, ...(record?.attempt === undefined ? {} : { attempt: record.attempt }) };
   } catch (error) {
     console.log(JSON.stringify({ message: 'not resuming', workItemId: workItem.id, error: String(error) }));
     return undefined;
@@ -198,11 +200,17 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
   const workItem = input.workItem;
   assertUuid(workItem.id, 'WorkItem id');
 
-  await acceptWorkItem(workItem, input.factorialVersion);
-
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const rework = reworkContext(workItem);
+  // Looked up before accepting, so the row is written with its attempt
+  // number. The lookup only reads, so a duplicate delivery changes nothing.
   const resumedFrom = rework ? undefined : await resumable(repo, workItem);
+  const attempt = nextAttempt(resumedFrom);
+  const prefix = artefactPrefix(workItem.id, attempt);
+
+  await acceptWorkItem(workItem, input.factorialVersion, attempt);
+  await putJsonArtefact(prefix, 'workitem.json', workItem);
+
   const branch = resumedFrom?.branch ?? workBranchFor(workItem);
   const token = await repositoryToken(repo, { contents: 'read' });
   const target = sessionTarget(workItem.id);
@@ -223,6 +231,13 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
   const stdoutLines = result.stdout.trim().split('\n');
   const baseCommit = assertCommitSha(stdoutLines[stdoutLines.length - 2] ?? '', 'branch head');
   const baseBranch = rework ? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
+
+  await putJsonArtefact(prefix, 'prepare/branch.json', {
+    branch,
+    baseSha: baseCommit,
+    factorialVersion: input.factorialVersion,
+    ...(resumedFrom ? { resumedFromWorkItemId: resumedFrom.workItemId } : {}),
+  });
 
   if (rework) {
     const client = await repositoryClient(repo, { contents: 'read', actions: 'read' });
@@ -250,6 +265,7 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
       baseBranch,
       rework: rework !== undefined,
       resumedFrom: resumedFrom?.workItemId,
+      attempt,
     }),
   );
 
@@ -260,5 +276,7 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
     baseBranch,
     baseCommit,
     factorialVersion: input.factorialVersion,
+    attempt,
+    artefactPrefix: prefix,
   };
 };

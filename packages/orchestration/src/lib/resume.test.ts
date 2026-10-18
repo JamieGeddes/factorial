@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkItem } from '@factorial/workitem';
 
-import { resumableAttempt, sourceKey, type Attempt } from './resume.ts';
+import { nextAttempt, resumableAttempt, sourceKey, type Attempt } from './resume.ts';
 
 const current = 'cccccccc-0000-4000-8000-000000000000';
 const saved: Attempt = { workItemId: 'a1', status: 'failed', savedWork: true, branch: 'factorial/a1' };
@@ -46,5 +46,20 @@ describe('resumableAttempt', () => {
   it('starts fresh when there is no earlier attempt or no branch was recorded', () => {
     assert.equal(resumableAttempt([], current), undefined);
     assert.equal(resumableAttempt([{ workItemId: 'a5', status: 'failed', savedWork: true }], current), undefined);
+  });
+});
+
+describe('nextAttempt', () => {
+  it('starts at 1 for a fresh item', () => {
+    assert.equal(nextAttempt(), 1);
+  });
+
+  it('is one more than the attempt it resumes', () => {
+    assert.equal(nextAttempt({ attempt: 1 }), 2);
+    assert.equal(nextAttempt({ attempt: 4 }), 5);
+  });
+
+  it('counts an unnumbered earlier row as attempt 1', () => {
+    assert.equal(nextAttempt({}), 2);
   });
 });
