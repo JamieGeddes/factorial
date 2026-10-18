@@ -37,6 +37,15 @@ function num(value: unknown, path: string): number {
   return value;
 }
 
+/**
+ * A user as it appears inside a PR-shaped payload: GitHub omits the numeric id
+ * there, so only login and type are required.
+ */
+function botUser(value: unknown, path: string): User {
+  if (!isRecord(value)) throw new BadPayloadError(`${path} must be an object`);
+  return { id: -1, login: str(value.login, `${path}.login`), type: str(value.type, `${path}.type`) };
+}
+
 function user(value: unknown, path: string): User {
   if (!isRecord(value)) throw new BadPayloadError(`${path} must be an object`);
   return { id: num(value.id, `${path}.id`), login: str(value.login, `${path}.login`), type: str(value.type, `${path}.type`) };
@@ -70,7 +79,7 @@ function pullRequest(value: unknown, path: string, options: { requireHeadSha?: b
     html_url: str(value.html_url, `${path}.html_url`),
     head: { ref: head.ref, sha: head.sha ?? '' },
     base: { ref: base },
-    user: user(value.user, `${path}.user`),
+    user: botUser(value.user, `${path}.user`),
   };
 }
 

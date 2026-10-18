@@ -59,10 +59,9 @@ export function buildReworkWorkItem(
         author: options.botLogin,
         body: `The check "${job.name}" failed.\n${job.url}`,
       }))
-    : [
-        ...additional,
-        { author: decision.comment.author, body: decision.comment.body, ...(pathOf(decision.comment)) },
-      ]
+    : additional.some((detail) => detail.author === decision.comment.author && detail.body === decision.comment.body)
+      ? additional
+      : [...additional, decision.comment]
       .map((detail) => ({ ...detail, body: detail.body.slice(0, 8000) }))
       .slice(0, 50);
 
@@ -111,6 +110,3 @@ export function buildReworkWorkItem(
 
 }
 
-function pathOf(comment: { path?: string; line?: number }): { path?: string; line?: number } {
-  return comment.path === undefined ? {} : { path: comment.path, ...(comment.line === undefined ? {} : { line: comment.line }) };
-}

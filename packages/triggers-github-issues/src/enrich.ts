@@ -5,7 +5,7 @@
  */
 import { mintInstallationToken } from '@factorial/github-app';
 
-import { listPrWorkItems, resolveChecksFailed } from './ledger.ts';
+import { listPrWorkItems, resolveChecksFailed, type LedgerRow } from './ledger.ts';
 import { buildReworkWorkItem } from './rework-item.ts';
 import type { PrEventDecision } from './pr-event.ts';
 import type { PullRequestRef, RepositoryRef } from './payloads.ts';
@@ -109,11 +109,13 @@ export async function buildRework(
   repo: RepositoryRef,
   github: GitHubFetch,
   options: { deliveryId: string | undefined; baseBranch: string; botLogin: string },
+  /** Override for tests. */
+  listRows: (prNumber: number) => Promise<LedgerRow[]> = listPrWorkItems,
 ): Promise<WorkItem | ReworkOutcome> {
   if (decision.kind === 'ignore') return { kind: 'ignore', reason: decision.reason };
 
   const pullRequest = decision.pullRequest;
-  const rows = await listPrWorkItems(pullRequest.number);
+  const rows = await listRows(pullRequest.number);
   const previous = rows[0]?.workItemId;
   if (previous === undefined) {
     return { kind: 'ignore', reason: 'no WorkItem recorded for this pull request' };
@@ -133,19 +135,20 @@ export async function buildRework(
     });
   }
 
-  // rework-review: gather the PR's review comments addressed to the bot, then
-  // add the comment that triggered the decision if it is not already among them.
+  // rework-review: the PR's review comments are the details, plus the comment
+  // that triggered the decision when it is not already among them.
   const reviewComments = await github.listReviewComments(repo, pullRequest.number);
-  const botComments = reviewComments.map((comment) => ({
+  const existing = reviewComments.map((comment) => ({
     author: comment.user,
     body: comment.body,
     ...(comment.path === undefined ? {} : { path: comment.path }),
     ...(comment.line === undefined ? {} : { line: comment.line }),
   }));
   const triggered = decision.comment;
-  const triggeredIsReviewComment =
-    triggered.path !== undefined && botComments.some((comment) => comment.body === triggered.body && comment.author === triggered.author);
-  const additional = triggeredIsReviewComment ? [] : [triggered];
+  const alreadyIncluded = existing.some(
+    (comment) => comment.author === triggered.author && comment.body === triggered.body,
+  );
+  const additional = alreadyIncluded ? existing : [...existing, triggered];
   return buildReworkWorkItem(decision, additional, {
     repository: repo,
     baseBranch: options.baseBranch,
