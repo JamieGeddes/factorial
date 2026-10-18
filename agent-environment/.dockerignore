@@ -1,2 +1,5 @@
 *
 !Dockerfile
+!tools/package.json
+!tools/src/digest.ts
+!tools/src/quiet.ts

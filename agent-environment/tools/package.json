@@ -1,0 +1,11 @@
+{
+  "name": "@factorial/agent-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Command-line tools baked into the agent environment image",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  }
+}

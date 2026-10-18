@@ -59,7 +59,7 @@ export function cloneScript(params: {
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
-    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md',
+    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs',
     `git -c http.extraHeader=${shellQuote(gitAuthHeader(params.token))} clone --quiet ${shellQuote(url)} /workspace/repo`,
     'cd /workspace/repo',
     checkout,
