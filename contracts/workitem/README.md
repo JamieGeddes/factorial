@@ -40,11 +40,24 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 New kinds add a new `kind` const without changing anything else in the contract. `body` on the `WorkItem` itself stays the human-readable instruction, so a consumer that ignores `context` still gets something sensible.
 
 
+## One repository per WorkItem
+
+A `WorkItem` is one unit of work for the pipeline: one repository, one branch, one pull request.
+
+A trigger that applies to several repositories produces one `WorkItem` per repository. Fan-out happens before the pipeline: in the adapter when the repository list comes from configuration, or in a future intake step when the list has to be worked out.
+
+`repository` stays a single object. Turning it into a list is a breaking change and is not planned.
+
+Linking the items from one trigger, for example an optional `group` field with an id and size so results can be reported back to the source as a set, is deferred until the first multi-repository use case. Adding it would follow the normal contract change process.
+
+Coordinated changes that must merge in order across repositories are out of scope. If they are needed, they would be expressed as dependencies between items, not as a multi-repository item.
+
 ## What is deliberately left out
 
 - **The Factorial version that handled the work.** That is a property of the execution, not the request. The state machine records it in its output and the PR body.
 - **Priority, labels, assignees.** Not needed to close the Stage 0 loop. Add them when a stage needs them.
 - **Free-form metadata.** `additionalProperties` is `false` at every level, so unknown fields are rejected at the edge rather than silently carried through.
+- **Multiple target repositories.** See One repository per WorkItem.
 
 ## Changing the contract
 
