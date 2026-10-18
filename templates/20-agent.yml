@@ -342,7 +342,7 @@ Resources:
             4. Add or update automated tests for behaviour you change. Run the repository's checks (tests, typecheck, lint) and fix any failure you caused.
             5. Commit early and often. Your session can end without warning (a model or network error, or the time limit), and only committed work is kept: after a failure the orchestrator pushes your commits to the branch for a human to pick up, while uncommitted changes may be lost. Commit after each coherent step that leaves the files consistent, for example a schema change with its tests, or a new module with its tests; do not wait until the whole request is done. Keep each commit focused, with a message in the imperative mood. Do not amend or rewrite history that existed before your session.
             6. Do not push, open pull requests, or change CI, deployment or credential configuration. The orchestrator pushes your branch and opens the pull request after you finish.
-            7. Keep running notes in /workspace/notes.md (outside the repository; never commit it), below the Task and Plan sections; never edit the Task section. Older messages in this conversation are dropped as it grows, including the original request and what you read early on, so anything you will still need must be on disk. After each step, append under "# Notes": decisions taken and why, files changed, commits made, approaches that failed, and what remains to do. Re-read the Task section before each commit and before writing /workspace/summary.md, and check the work against each requirement. When you are unsure what was asked or what you have done, re-read /workspace/notes.md (and /workspace/workitem.json for the full WorkItem) rather than relying on memory.
+            7. Keep running notes in /workspace/notes.md (outside the repository; never commit it), below the Task and Plan sections; never edit the Task section. Older messages in this conversation are condensed into a summary as it grows, and detail from the original request and what you read early on can be lost, so anything you will still need must be on disk. After each step, append under "# Notes": decisions taken and why, files changed, commits made, approaches that failed, and what remains to do. Re-read the Task section before each commit and before writing /workspace/summary.md, and check the work against each requirement. When you are unsure what was asked or what you have done, re-read /workspace/notes.md (and /workspace/workitem.json for the full WorkItem) rather than relying on memory.
             8. When done, write /workspace/summary.md containing: what changed and why, how you verified it, and anything a reviewer should look at. This file becomes the pull request description.
 
             If the request is unclear, out of scope for a code change, or impossible, do not guess. Make no commits, and write /workspace/summary.md explaining what is missing or why it cannot be done.
@@ -369,22 +369,34 @@ Resources:
         Disabled: {}
       MaxIterations: !Ref MaxIterations
       # Context management. Every model call resends the whole conversation,
-      # so without this a long build costs roughly the square of its length.
-      # Summarisation did not bound it: on #23 (2026-10-17) the context grew
-      # to 68,570 tokens on the last of 106 calls, about 4.9 million tokens
-      # in all. A sliding window keeps only the most recent messages (a tool
-      # call and its result are two). It drops the original request too, so
-      # Prepare copies the request to the top of /workspace/notes.md, and the
-      # prompt tells the agent to plan against it, re-read it before each
-      # commit and keep its decisions and progress below it. AWS documents
-      # truncation as applying once the history outgrows the model's context
-      # window; check maxCallInputTokens in the invoker's "harness finished"
-      # log to see whether the window holds during a run.
+      # but the provider caches the repeated prefix: on #23 (2026-10-17, 106
+      # calls) 98.5% of the 4.9 million input tokens were cache reads, about
+      # 72,000 uncached. A sliding window (40 messages) was tried on #22
+      # (2026-10-18, 57 calls): dropping the oldest messages changes the
+      # prefix on every call, so only the system prompt stayed cached and
+      # about 786,000 tokens were uncached, roughly 55% dearer per call. It
+      # also dropped the request, and the builder drifted to other work.
+      # Summarisation keeps the full history, so the cache holds, and AWS
+      # applies it only once the history outgrows the model's context window,
+      # which bounds the longest runs. Prepare still copies the request to the
+      # top of /workspace/notes.md, since a summary can lose detail. Check
+      # cacheReadInputTokens and maxCallInputTokens in the invoker's "harness
+      # finished" log to compare runs.
       Truncation:
-        Strategy: sliding_window
+        Strategy: summarization
         Config:
-          SlidingWindow:
-            MessagesCount: 40
+          Summarization:
+            SummaryRatio: 0.5
+            PreserveRecentMessages: 16
+            SummarizationSystemPrompt: |
+              You are condensing the earlier part of a coding agent's working session so it can continue with less context. Write a factual summary that preserves everything the agent still needs:
+              - the request it is working on, in full, including acceptance criteria and constraints;
+              - the repository conventions it has learned (language, layout, test framework, commit style, checks to run);
+              - every file it has created or changed, and what each change was;
+              - commits made so far, with their messages;
+              - decisions taken and why, and approaches tried that failed;
+              - what remains to be done, as a list.
+              Keep file paths, function names, commands and error messages exact. Omit file contents the agent can read again from disk.
       # Wall-clock limit for the agent loop in one invocation. Fixed here, not
       # a parameter, so a change reaches the existing stack (see ModelId).
       # Keep it below the orchestration stack's BuildTimeoutSeconds (7200) so

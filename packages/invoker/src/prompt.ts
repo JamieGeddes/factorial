@@ -30,7 +30,7 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
     '---',
     'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json.',
     'Commit on this branch as you go, after each coherent step: if the session ends early, only committed work is kept.',
-    `Older messages, including this one, are dropped as the session grows. /workspace/notes.md already starts with this request under "# Task": keep that section, add your notes below it, and re-read it${isRework ? ' and /workspace/rework.md' : ''} rather than relying on memory.`,
+    `Older messages, including this one, are condensed into a summary as the session grows, and detail can be lost. /workspace/notes.md already starts with this request under "# Task": keep that section, add your notes below it, and re-read it${isRework ? ' and /workspace/rework.md' : ''} rather than relying on memory.`,
     'Before changing any code, re-read the Task section and write your plan under "# Plan" in /workspace/notes.md: each requirement, and the change that meets it. Re-read the Task section before each commit and before writing the summary, and check the work against it.',
     'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions.',
   ].join('\n');
