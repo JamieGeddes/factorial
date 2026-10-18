@@ -56,7 +56,9 @@ Globals:
 Resources:
   # ---------------------------------------------------------------------------
   # Ledger: one row per WorkItem. Also the idempotency guard against duplicate
-  # deliveries, since EventBridge cannot name executions.
+  # deliveries, since EventBridge cannot name executions. The source index
+  # finds earlier attempts at the same issue, so Prepare can resume one that
+  # failed after saving its work.
   # ---------------------------------------------------------------------------
   WorkItemsTable:
     Type: AWS::DynamoDB::Table
@@ -66,9 +68,26 @@ Resources:
       AttributeDefinitions:
         - AttributeName: workItemId
           AttributeType: S
+        - AttributeName: sourceKey
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
       KeySchema:
         - AttributeName: workItemId
           KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: sourceKey-createdAt-index
+          KeySchema:
+            - AttributeName: sourceKey
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - status
+              - branch
+              - savedWork
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
@@ -364,6 +383,10 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
+            - Sid: LedgerSourceIndex
+              Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
 

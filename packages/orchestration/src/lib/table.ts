@@ -1,10 +1,11 @@
 /** The work item ledger: one row per WorkItem, also the idempotency guard. */
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import type { WorkItem } from '@factorial/workitem';
 
 import { requireEnv } from './env.ts';
+import { sourceKey, type Attempt } from './resume.ts';
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -24,7 +25,15 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
     await documents.send(
       new PutCommand({
         TableName: requireEnv('TABLE_NAME'),
-        Item: { workItemId: workItem.id, workItem, status: 'accepted', factorialVersion, createdAt: now, updatedAt: now },
+        Item: {
+          workItemId: workItem.id,
+          workItem,
+          sourceKey: sourceKey(workItem),
+          status: 'accepted',
+          factorialVersion,
+          createdAt: now,
+          updatedAt: now,
+        },
         ConditionExpression: 'attribute_not_exists(workItemId)',
       }),
     );
@@ -34,6 +43,21 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
     }
     throw error;
   }
+}
+
+/** Earlier attempts at the same source as this WorkItem, newest first. */
+export async function attemptsAtSource(workItem: WorkItem): Promise<Attempt[]> {
+  const result = await documents.send(
+    new QueryCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      IndexName: 'sourceKey-createdAt-index',
+      KeyConditionExpression: 'sourceKey = :key',
+      ExpressionAttributeValues: { ':key': sourceKey(workItem) },
+      ScanIndexForward: false,
+      Limit: 10,
+    }),
+  );
+  return (result.Items ?? []) as Attempt[];
 }
 
 /** Merge progress into the row. Keys are attribute names; values replace. */

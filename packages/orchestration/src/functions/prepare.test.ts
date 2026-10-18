@@ -93,7 +93,7 @@ describe('initialNotes', () => {
   };
 
   it('opens with the full request, then a plan section and a notes section', () => {
-    const notes = initialNotes(workItem, false);
+    const notes = initialNotes(workItem);
     assert.match(notes, /^# Task\n/);
     assert.match(notes, /Source: https:\/\/github\.com\/JamieGeddes\/factorial\/issues\/7/);
     assert.match(notes, /## Fix typo\n\nThe word "recieve" should be "receive"\./);
@@ -103,11 +103,22 @@ describe('initialNotes', () => {
   });
 
   it('marks an empty body explicitly', () => {
-    assert.match(initialNotes({ ...workItem, body: ' ' }, false), /_No further description was given\._/);
+    assert.match(initialNotes({ ...workItem, body: ' ' }), /_No further description was given\._/);
   });
 
   it('points rework items at rework.md', () => {
-    assert.match(initialNotes(workItem, true), /every point in \/workspace\/rework\.md must be addressed/);
+    assert.match(initialNotes(workItem, { rework: true }), /every point in \/workspace\/rework\.md must be addressed/);
+  });
+
+  it('tells a resumed attempt what the previous one did and to continue from it', () => {
+    const notes = initialNotes(workItem, {
+      resumedFrom: { workItemId: 'a1', status: 'failed', savedWork: true, branch: 'factorial/a1' },
+    });
+    assert.match(notes, /# Previous attempt\n\nThis continues work item a1, which stopped before finishing\./);
+    assert.match(notes, /git log --oneline origin\/HEAD\.\.HEAD/);
+    assert.match(notes, /Do not redo work that is already committed/);
+    assert.ok(notes.indexOf('# Previous attempt') < notes.indexOf('# Plan'));
+    assert.doesNotMatch(initialNotes(workItem), /Previous attempt/);
   });
 });
 

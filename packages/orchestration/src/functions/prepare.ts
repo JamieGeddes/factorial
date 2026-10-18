@@ -3,7 +3,9 @@
  * deterministically: clone the repository, put the session on the work branch
  * (a fresh branch off the default head, or the existing rework branch), and
  * leave the WorkItem on disk for the agent to read, with the request copied to
- * the top of /workspace/notes.md so it stays in view. For rework items, the
+ * the top of /workspace/notes.md so it stays in view. When an earlier attempt
+ * at the same source failed but saved its work, the session resumes on that
+ * attempt's branch instead of starting afresh. For rework items, the
  * review details — including the failing checks' logs, fetched here with a
  * short-lived read-only token and redacted — are left at /workspace/rework.md.
  * No model is involved.
@@ -16,6 +18,7 @@ import type { CheckJob, GitHubClient } from '@factorial/github-app';
 import { assertWorkItem, type ReworkContext, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
 import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.ts';
+import { resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
 import { mustRun, sessionTarget } from '../lib/session.ts';
 import {
@@ -28,7 +31,7 @@ import {
   redactSecrets,
   shellQuote,
 } from '../lib/shell.ts';
-import { acceptWorkItem, recordProgress } from '../lib/table.ts';
+import { acceptWorkItem, attemptsAtSource, recordProgress } from '../lib/table.ts';
 
 interface PrepareInput {
   workItem: unknown;
@@ -75,7 +78,7 @@ export function cloneScript(params: {
  * own notes. The harness drops older messages, including the prompt, so the
  * notes file is what keeps the task in view for the whole session.
  */
-export function initialNotes(workItem: WorkItem, rework: boolean): string {
+export function initialNotes(workItem: WorkItem, options: { rework?: boolean; resumedFrom?: Attempt } = {}): string {
   return [
     '# Task',
     '',
@@ -86,7 +89,8 @@ export function initialNotes(workItem: WorkItem, rework: boolean): string {
     `## ${workItem.title}`,
     '',
     workItem.body.trim() || '_No further description was given._',
-    ...(rework ? ['', 'This is rework: every point in /workspace/rework.md must be addressed.'] : []),
+    ...(options.rework ? ['', 'This is rework: every point in /workspace/rework.md must be addressed.'] : []),
+    ...(options.resumedFrom ? ['', ...previousAttemptSection(options.resumedFrom)] : []),
     '',
     '# Plan',
     '',
@@ -95,6 +99,17 @@ export function initialNotes(workItem: WorkItem, rework: boolean): string {
     '# Notes',
     '',
   ].join('\n');
+}
+
+function previousAttemptSection(attempt: Attempt): string[] {
+  const how = attempt.status === 'tests-failed' ? 'finished, but its tests failed' : 'stopped before finishing';
+  return [
+    '# Previous attempt',
+    '',
+    `This continues work item ${attempt.workItemId}, which ${how}. Its commits are already on this branch.`,
+    'Before planning, run `git log --oneline origin/HEAD..HEAD` and `git diff --stat origin/HEAD...HEAD` to see what was done, and check it against the Task.',
+    'Plan only what remains. Do not redo work that is already committed.',
+  ];
 }
 
 /** The last lines of a failing job's log, secrets stripped, as a Markdown section. */
@@ -158,6 +173,26 @@ function detailSection(detail: WorkItemReviewDetail): string[] {
   return [`- **@${detail.author}${where}**`, '', redactSecrets(detail.body.trim()), ''];
 }
 
+/**
+ * The earlier attempt to resume, if any, and only while its branch still
+ * exists. Any failure to tell (a lookup error, a deleted branch) starts the
+ * item afresh, as before.
+ */
+async function resumable(repo: { owner: string; name: string }, workItem: WorkItem): Promise<Attempt | undefined> {
+  try {
+    const attempt = resumableAttempt(await attemptsAtSource(workItem), workItem.id);
+    if (!attempt?.branch) return undefined;
+    const branch = assertGitBranch(attempt.branch, 'resume branch');
+    if (!branch.startsWith('factorial/')) return undefined;
+    const client = await repositoryClient(repo, { contents: 'read' });
+    await client.getBranchSha(repo, branch);
+    return { ...attempt, branch };
+  } catch (error) {
+    console.log(JSON.stringify({ message: 'not resuming', workItemId: workItem.id, error: String(error) }));
+    return undefined;
+  }
+}
+
 export const handler = async (input: PrepareInput): Promise<WorkContext> => {
   assertWorkItem(input.workItem);
   const workItem = input.workItem;
@@ -167,7 +202,8 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
 
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const rework = reworkContext(workItem);
-  const branch = workBranchFor(workItem);
+  const resumedFrom = rework ? undefined : await resumable(repo, workItem);
+  const branch = resumedFrom?.branch ?? workBranchFor(workItem);
   const token = await repositoryToken(repo, { contents: 'read' });
   const target = sessionTarget(workItem.id);
 
@@ -179,8 +215,8 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
       branch,
       token,
       workItemJson: JSON.stringify(workItem, null, 2),
-      notes: initialNotes(workItem, rework !== undefined),
-      mode: rework ? 'checkout' : 'create',
+      notes: initialNotes(workItem, { rework: rework !== undefined, ...(resumedFrom ? { resumedFrom } : {}) }),
+      mode: rework || resumedFrom ? 'checkout' : 'create',
     }),
     600,
   );
@@ -204,6 +240,7 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
     baseBranch,
     sessionId: workItem.id,
     ...(rework ? { reworkOf: { previousWorkItemId: rework.previousWorkItemId, prNumber: rework.pullRequest.number } } : {}),
+    ...(resumedFrom ? { resumedFrom: resumedFrom.workItemId } : {}),
   });
   console.log(
     JSON.stringify({
@@ -212,6 +249,7 @@ export const handler = async (input: PrepareInput): Promise<WorkContext> => {
       branch,
       baseBranch,
       rework: rework !== undefined,
+      resumedFrom: resumedFrom?.workItemId,
     }),
   );
 
