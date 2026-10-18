@@ -358,10 +358,13 @@ Resources:
               GatewayArn: !GetAtt WebSearchGateway.GatewayArn
               OutboundAuth:
                 AwsIam: {}
-      # A gateway tool is named <target>___<tool>, with three underscores.
+      # A plain name matches built-in tools only. A gateway's tools are
+      # matched as @<harness tool name>/<gateway tool name>, and a gateway
+      # tool is named <target>___<tool>. Verified by direct invocation on
+      # 2026-10-18: the bare name hid the tool, this pattern exposed it.
       AllowedTools:
         - '@builtin'
-        - web-search___WebSearch
+        - '@web-search/web-search___WebSearch'
       Memory:
         Disabled: {}
       MaxIterations: !Ref MaxIterations
