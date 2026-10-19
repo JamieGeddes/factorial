@@ -216,3 +216,55 @@ describe('WorkItem rework context', () => {
     assert.equal(item.context, undefined);
   });
 });
+
+describe('WorkItem lineage', () => {
+  it('accepts a fan-out sibling and a planner child', async () => {
+    const sibling = parseWorkItem(await loadExample('fan-out-sibling.json'));
+    assert.deepEqual(sibling.group, { id: 'b2c4d6e8-1a3c-4e5f-8a7b-9c0d1e2f3a4b', size: 3, index: 2 });
+    assert.equal(sibling.parentId, undefined);
+    const child = parseWorkItem(await loadExample('planner-child.json'));
+    assert.equal(child.parentId, '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c');
+  });
+
+  it('accepts index equal to size', async () => {
+    const item = clone(await loadExample('fan-out-sibling.json')) as { group: Record<string, unknown> };
+    item.group.index = 3;
+    assert.equal(validateWorkItem(item).ok, true);
+  });
+
+  it('rejects an index greater than size', async () => {
+    const item = clone(await loadExample('fan-out-sibling.json')) as { group: Record<string, unknown> };
+    item.group.index = 4;
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/group/index')));
+  });
+
+  it('rejects a zero size or index, and a fractional one', async () => {
+    const base = await loadExample('fan-out-sibling.json');
+    for (const [field, value] of [['size', 0], ['index', 0], ['size', 2.5]] as const) {
+      const item = clone(base) as { group: Record<string, unknown> };
+      item.group[field] = value;
+      assert.equal(validateWorkItem(item).ok, false, `${field} = ${value}`);
+    }
+  });
+
+  it('rejects a group missing a field or carrying an unknown one', async () => {
+    const base = await loadExample('fan-out-sibling.json');
+    const missing = clone(base) as { group: Record<string, unknown> };
+    delete missing.group.size;
+    assert.equal(validateWorkItem(missing).ok, false);
+    const extra = clone(base) as { group: Record<string, unknown> };
+    extra.group.name = 'runtime upgrade';
+    assert.equal(validateWorkItem(extra).ok, false);
+  });
+
+  it('rejects malformed group and parent ids', async () => {
+    const badGroup = clone(await loadExample('fan-out-sibling.json')) as { group: Record<string, unknown> };
+    badGroup.group.id = 'group-1';
+    assert.equal(validateWorkItem(badGroup).ok, false);
+    const badParent = clone(await loadExample('planner-child.json')) as Record<string, unknown>;
+    badParent.parentId = 'parent';
+    assert.equal(validateWorkItem(badParent).ok, false);
+  });
+});

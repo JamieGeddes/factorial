@@ -6,6 +6,7 @@ import { artefactPrefix } from '@factorial/artefacts';
 import type { WorkItem } from '@factorial/workitem';
 
 import { requireEnv } from './env.ts';
+import { lineageAttributes } from './lineage.ts';
 import { sourceKey, type Attempt } from './resume.ts';
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
@@ -19,7 +20,7 @@ export class DuplicateWorkItemError extends Error {
   }
 }
 
-/** Record a new WorkItem exactly once, with its attempt number and artefact prefix. */
+/** Record a new WorkItem exactly once, with its attempt number, artefact prefix and any lineage. */
 export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string, attempt: number): Promise<void> {
   const now = new Date().toISOString();
   try {
@@ -34,6 +35,7 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
           factorialVersion,
           attempt,
           artefactPrefix: artefactPrefix(workItem.id, attempt),
+          ...lineageAttributes(workItem),
           createdAt: now,
           updatedAt: now,
         },
