@@ -64,8 +64,10 @@ Resources:
   # Ledger: one row per WorkItem. Also the idempotency guard against duplicate
   # deliveries, since EventBridge cannot name executions. The source index
   # finds earlier attempts at the same issue, so Prepare can resume one that
-  # failed after saving its work. The group index lists the items one trigger
-  # produced (WorkItem `group`); it is sparse, holding only items with a group.
+  # failed after saving its work. The group and parent indexes list the items
+  # one trigger produced (WorkItem `group`) and the items a parent emitted
+  # (`parentId`); both are sparse, holding only items with that field. A table
+  # update can add only one index, so each new index needs its own deploy.
   # ---------------------------------------------------------------------------
   WorkItemsTable:
     Type: AWS::DynamoDB::Table
@@ -80,6 +82,8 @@ Resources:
         - AttributeName: createdAt
           AttributeType: S
         - AttributeName: groupId
+          AttributeType: S
+        - AttributeName: parentId
           AttributeType: S
       KeySchema:
         - AttributeName: workItemId
@@ -110,6 +114,18 @@ Resources:
               - groupSize
               - groupIndex
               - parentId
+        - IndexName: parentId-createdAt-index
+          KeySchema:
+            - AttributeName: parentId
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - status
+              - groupId
+              - groupIndex
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
