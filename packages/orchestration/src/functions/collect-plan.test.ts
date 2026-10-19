@@ -22,6 +22,6 @@ describe('InvalidPlanError', () => {
     const error = new InvalidPlanError(['/workspace/plan.json is missing', 'plan.json /steps must NOT have fewer than 1 items']);
     assert.equal(error.name, 'InvalidPlan');
     const cause = JSON.stringify({ errorType: 'InvalidPlan', errorMessage: error.message });
-    assert.deepEqual(invalidPlanProblems(cause), ['/workspace/plan.json is missing', 'plan.json /steps must NOT have fewer than 1 items']);
+    assert.deepEqual(invalidPlanProblems(cause), ['`/workspace/plan.json is missing`', '`plan.json /steps must NOT have fewer than 1 items`']);
   });
 });

@@ -39,14 +39,23 @@ export interface RawPlanFiles {
   json?: { text: string; size: number } | undefined;
 }
 
+/**
+ * The size the session reported, or the bytes actually received if more. The
+ * session is hostile and its `stat` or `head` could lie, so the cap is
+ * enforced on what arrived as well.
+ */
 export function parsePlanRead(stdout: string): RawPlanFiles {
   const sections = stdout.split(SECTION);
   if (sections.length !== FILES.length) throw new Error(`expected ${FILES.length} plan files from the session, got ${sections.length}`);
   const [markdown, json] = sections.map((section) => {
     if (section.startsWith('missing:')) return undefined;
-    const match = /^ok:([0-9]+):([A-Za-z0-9+/=]*)\s*$/.exec(section);
+    const match = /^ok:([0-9]{1,12}):([A-Za-z0-9+/=]*)\s*$/.exec(section);
     if (!match) throw new Error('plan export did not produce base64 output');
-    return { text: Buffer.from(match[2] ?? '', 'base64').toString('utf8'), size: Number(match[1]) };
+    const base64 = match[2] ?? '';
+    // Base64 of MAX + 1 bytes; anything longer is over the cap before decoding.
+    if (base64.length > Math.ceil((MAX_PLAN_FILE_BYTES + 1) / 3) * 4) return { text: '', size: Number.MAX_SAFE_INTEGER };
+    const content = Buffer.from(base64, 'base64');
+    return { text: content.toString('utf8'), size: Math.max(Number(match[1]), content.length) };
   });
   return { markdown, json };
 }

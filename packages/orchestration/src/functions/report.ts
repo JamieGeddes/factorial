@@ -106,14 +106,25 @@ async function storeArtefacts(input: ReportInput, workItem: WorkItem, log: Logge
   }
 }
 
-/** The listed problems from an InvalidPlan error's cause (a Lambda error object as JSON). */
+/**
+ * The listed problems from an InvalidPlan error's cause (a Lambda error
+ * object as JSON), for a public comment. They can quote what the planner
+ * wrote (property names, a JSON snippet), so each is redacted, cut short,
+ * kept to one line and shown as inline code, which GitHub renders
+ * literally: no mentions, links or formatting. A JSON syntax error keeps
+ * only its first clause, without the snippet.
+ */
 export function invalidPlanProblems(cause: string | undefined): string[] {
   const message = safeJson(cause)?.errorMessage;
   if (typeof message !== 'string') return [];
   return message
     .split('\n')
     .filter((line) => line.startsWith('- '))
-    .map((line) => redactSecrets(line.slice(2)).replace(/`/g, "'"))
+    .map((line) => {
+      const problem = line.slice(2).replace(/(is not valid JSON).*$/, '$1');
+      const flat = redactSecrets(problem).replace(/[`\r\n\t]/g, ' ').slice(0, 200);
+      return `\`${flat}\``;
+    })
     .slice(0, 10);
 }
 

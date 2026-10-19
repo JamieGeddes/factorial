@@ -40,6 +40,21 @@ describe('parsePlanRead', () => {
     assert.ok(files.json);
   });
 
+  it('enforces the cap on the bytes received, whatever size the session reports', () => {
+    const big = 'x'.repeat(MAX_PLAN_FILE_BYTES + 1);
+    const files = parsePlanRead(`ok:10:${Buffer.from(big).toString('base64')}${SECTION}${encoded(validJson)}`);
+    assert.equal(files.markdown?.size, MAX_PLAN_FILE_BYTES + 1);
+    const checked = checkPlanFiles(files);
+    assert.ok(!checked.ok && checked.errors[0]?.includes('over the 65536-byte limit'));
+  });
+
+  it('refuses to decode base64 longer than the cap allows', () => {
+    const huge = Buffer.alloc(MAX_PLAN_FILE_BYTES * 2, 'x').toString('base64');
+    const files = parsePlanRead(`ok:10:${huge}${SECTION}${encoded(validJson)}`);
+    assert.equal(files.markdown?.text, '');
+    assert.ok(!checkPlanFiles(files).ok);
+  });
+
   it('rejects output that is not what the script prints', () => {
     assert.throws(() => parsePlanRead('ok:1:abc'), /expected 2 plan files/);
     assert.throws(() => parsePlanRead(`ok:x:${SECTION}missing:`), /did not produce base64/);

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { reportArtefact, reportMessage, savedWorkNote } from './report.ts';
+import { invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -98,9 +98,23 @@ describe('invalid-plan report', () => {
     });
     const message = reportMessage({ status: 'invalid-plan', error: { Error: 'InvalidPlan', Cause: cause } });
     assert.match(message, /did not produce a valid plan after two attempts, so nothing was built/);
-    assert.match(message, /- \/workspace\/plan\.json is missing/);
+    assert.match(message, /- `\/workspace\/plan\.json is missing`/);
     assert.doesNotMatch(message, /ghs_abcdefghijklmnopqrstuvwxyz0123456789/);
-    assert.match(message, /- 'x' ghs_\*\*\*/);
+    assert.match(message, /- ` x  ghs_\*\*\*`/);
+  });
+
+  it('shows what the planner wrote only as inline code, and drops JSON snippets', () => {
+    const cause = JSON.stringify({
+      errorType: 'InvalidPlan',
+      errorMessage: [
+        'The planner did not produce a valid plan in 2 attempts:',
+        '- plan.json (root) has unexpected property "@someone [x](https://evil.example)"',
+        '- plan.json (root) is not valid JSON: Unexpected token, "@team see https://evil.example" is not valid JSON',
+      ].join('\n'),
+    });
+    const problems = invalidPlanProblems(cause);
+    assert.equal(problems[0], '`plan.json (root) has unexpected property "@someone [x](https://evil.example)"`');
+    assert.equal(problems[1], '`plan.json (root) is not valid JSON`');
   });
 
   it('records the outcome in report.json', () => {
