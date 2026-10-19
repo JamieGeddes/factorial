@@ -7,6 +7,7 @@
 import type { WorkContext } from '../lib/context.ts';
 import { requireEnv } from '../lib/env.ts';
 import { repositoryClient } from '../lib/github.ts';
+import { logged, runKey } from '../lib/log.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
@@ -16,7 +17,7 @@ interface DispatchInput {
   collect: { headSha: string };
 }
 
-export const handler = async (input: DispatchInput): Promise<void> => {
+export const handler = logged('dispatch-tests', (input: DispatchInput) => runKey(input.ctx), async (input, log): Promise<void> => {
   const { ctx } = input;
   const sha = assertCommitSha(input.collect.headSha, 'head sha');
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
@@ -27,5 +28,5 @@ export const handler = async (input: DispatchInput): Promise<void> => {
     sha,
   });
   await recordProgress(ctx.workItem.id, 'testing', { testedSha: sha });
-  console.log(JSON.stringify({ message: 'test workflow dispatched', workItemId: ctx.workItem.id, sha }));
-};
+  log.info('test workflow dispatched', { sha });
+});

@@ -7,6 +7,7 @@ import { putJsonArtefact } from '@factorial/artefacts';
 
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
+import { logged, runKey } from '../lib/log.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
@@ -26,7 +27,9 @@ export class UntestedHeadError extends Error {
   }
 }
 
-export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; prUrl: string }> => {
+type OpenPrResult = { prNumber: number; prUrl: string };
+
+export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ctx), async (input, log): Promise<OpenPrResult> => {
   const { ctx } = input;
   await putJsonArtefact(ctx.artefactPrefix, 'test/result.json', testResultArtefact(input.test));
   const headSha = assertCommitSha(input.collect.headSha, 'head sha');
@@ -61,8 +64,8 @@ export const handler = async (input: OpenPrInput): Promise<{ prNumber: number; p
     await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.htmlUrl, headSha });
     await putJsonArtefact(ctx.artefactPrefix, 'report.json', { outcome: 'pr-opened', reason: `Pull request #${pr.number} opened for review.` });
   } catch (error) {
-    console.log(JSON.stringify({ message: 'artefacts not stored', workItemId: ctx.workItem.id, error: String(error) }));
+    log.error('artefacts not stored', { error });
   }
-  console.log(JSON.stringify({ message: 'pull request opened', workItemId: ctx.workItem.id, prUrl: pr.htmlUrl }));
+  log.info('pull request opened', { prUrl: pr.htmlUrl });
   return { prNumber: pr.number, prUrl: pr.htmlUrl };
-};
+});

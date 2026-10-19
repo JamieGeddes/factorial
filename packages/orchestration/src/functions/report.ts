@@ -7,6 +7,7 @@ import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
+import { logged, runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { attemptRecord, recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
@@ -71,27 +72,27 @@ export function reportArtefact(input: Pick<ReportInput, 'status' | 'error' | 'sa
  * The attempt's prefix: from the context once Prepare has run, otherwise from
  * the ledger row if Prepare got that far, otherwise attempt 1.
  */
-async function prefixFor(input: ReportInput, workItem: WorkItem): Promise<string> {
+async function prefixFor(input: ReportInput, workItem: WorkItem, log: Logger): Promise<string> {
   if (input.ctx) return input.ctx.artefactPrefix;
   try {
     const record = await attemptRecord(workItem.id);
     if (record?.artefactPrefix) return record.artefactPrefix;
   } catch (error) {
-    console.log(JSON.stringify({ message: 'no ledger row for artefacts', workItemId: workItem.id, error: String(error) }));
+    log.error('no ledger row for artefacts', { error });
   }
   return artefactPrefix(workItem.id, 1);
 }
 
 /** Store the outcome, and for failed tests their result. Never stops the requester being told. */
-async function storeArtefacts(input: ReportInput, workItem: WorkItem): Promise<void> {
+async function storeArtefacts(input: ReportInput, workItem: WorkItem, log: Logger): Promise<void> {
   try {
-    const prefix = await prefixFor(input, workItem);
+    const prefix = await prefixFor(input, workItem, log);
     if (input.status === 'tests-failed') {
       await putJsonArtefact(prefix, 'test/result.json', testResultArtefact(safeJson(input.error?.Cause) ?? {}));
     }
     await putJsonArtefact(prefix, 'report.json', reportArtefact(input));
   } catch (error) {
-    console.log(JSON.stringify({ message: 'artefacts not stored', workItemId: workItem.id, error: String(error) }));
+    log.error('artefacts not stored', { error });
   }
 }
 
@@ -115,21 +116,26 @@ function resolveWorkItem(input: ReportInput): WorkItem | undefined {
   }
 }
 
-export const handler = async (input: ReportInput): Promise<void> => {
+/** The run key from the context, or from the raw WorkItem when Prepare did not finish. */
+function reportKey(input: ReportInput): RunKey {
+  return input.ctx ? runKey(input.ctx) : { workItemId: unvalidatedId(input.workItem) };
+}
+
+export const handler = logged('report', reportKey, async (input: ReportInput, log): Promise<void> => {
   const workItem = resolveWorkItem(input);
   const message = reportMessage({ ...input, sessionIdHint: workItem?.id });
   const error = input.error
     ? { Error: input.error.Error, Cause: redactSecrets(input.error.Cause ?? '').slice(0, 4000) }
     : undefined;
-  console.log(JSON.stringify({ message: 'reporting', status: input.status, workItemId: workItem?.id, error }));
+  log.info('reporting', { status: input.status, error });
   if (!workItem) return;
 
   await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
-  await storeArtefacts({ ...input, ...(error ? { error } : {}) }, workItem);
+  await storeArtefacts({ ...input, ...(error ? { error } : {}) }, workItem, log);
   const issue = issueNumber(workItem);
   if (issue === undefined) return;
 
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const client = await repositoryClient(repo, { issues: 'write' });
   await client.commentOnIssue(repo, issue, message);
-};
+});
