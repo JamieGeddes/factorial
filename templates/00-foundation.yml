@@ -583,11 +583,16 @@ Resources:
               # call for the builder was checked against its real name, so
               # the service changed). Every later endpoint is checked
               # against the named runtime, which the AgentCore statement
-              # covers.
+              # covers. The ARN cannot be narrowed, so the grant is limited
+              # to calls AgentCore makes on this role's behalf: a template
+              # cannot create an endpoint on another runtime directly.
               - Sid: AgentCoreRuntimeEndpointOnCreate
                 Effect: Allow
                 Action: bedrock-agentcore:CreateAgentRuntimeEndpoint
                 Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*
+                Condition:
+                  Bool:
+                    aws:ViaAWSService: 'true'
               # A gateway's, harness's or runtime's ARN embeds an ID assigned
               # at creation, so tagging on create is authorised against
               # gateway/*, harness/* or runtime/*, not the factorial name
