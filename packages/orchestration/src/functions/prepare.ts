@@ -71,7 +71,7 @@ export function cloneScript(params: {
       : [
           `git checkout --quiet ${shellQuote(`origin/${branch}`)}`,
           `git branch --quiet ${shellQuote(branch)}`,
-          ...(at ? [`test "$(git rev-parse HEAD)" = ${shellQuote(at)} || { echo "branch ${branch} has moved since planning" >&2; exit 1; }`] : []),
+          ...(at ? [`test "$(git rev-parse HEAD)" = ${shellQuote(at)} || { echo ${shellQuote(`branch ${branch} has moved since planning`)} >&2; exit 1; }`] : []),
         ].join('\n');
   return [
     'set -euo pipefail',

@@ -98,7 +98,7 @@ describe('cloneScript pinned to a commit', () => {
 
   it('fails if an existing branch has moved since planning', () => {
     const script = cloneScript({ ...params, mode: 'checkout' });
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${'a'.repeat(40)}' \\|\\| \\{ echo "branch .* has moved since planning" >&2; exit 1; \\}`));
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${'a'.repeat(40)}' \\|\\| \\{ echo 'branch factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c has moved since planning' >&2; exit 1; \\}`));
   });
 
   it('rejects a start point that is not a commit', () => {
