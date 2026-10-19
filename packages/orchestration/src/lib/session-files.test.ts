@@ -94,15 +94,17 @@ describe('fetching', () => {
     const script = fetchScript(file ? [file] : []);
     assert.match(script, /\[ -f '\/workspace\/logs\/001-npm-test\.log' \] && \[ ! -L '\/workspace\/logs\/001-npm-test\.log' \]/);
     assert.match(script, new RegExp(`tail -c ${MAX_FILE_BYTES} -- '/workspace/logs/001-npm-test.log'`));
+    assert.match(script, /stat -c %s -- '\/workspace\/logs\/001-npm-test\.log'/);
   });
 
   it('decodes each section, and marks files that disappeared', () => {
     const plan = planExport([log('a.log', 5), log('b.log', 5)]).fetch;
     const script = fetchScript(plan);
     const separator = /printf '%s' '([^']*)'/.exec(script)?.[1] ?? '';
-    const stdout = `ok:${Buffer.from('hello').toString('base64')}${separator}missing:`;
+    const stdout = `ok:5:${Buffer.from('hello').toString('base64')}${separator}missing:`;
     const [a, b] = parseFetch(stdout, 2);
-    assert.equal(a?.toString('utf8'), 'hello');
+    assert.equal(a?.content.toString('utf8'), 'hello');
+    assert.equal(a?.size, 5);
     assert.equal(b, undefined);
   });
 
@@ -114,7 +116,8 @@ describe('fetching', () => {
   });
 
   it('refuses output that is not what the script prints', () => {
-    assert.throws(() => parseFetch('ok:not base64!', 1));
-    assert.throws(() => parseFetch('ok:aGVsbG8=', 2));
+    assert.throws(() => parseFetch('ok:5:not base64!', 1));
+    assert.throws(() => parseFetch('ok:aGVsbG8=', 1));
+    assert.throws(() => parseFetch('ok:5:aGVsbG8=', 2));
   });
 });

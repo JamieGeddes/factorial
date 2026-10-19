@@ -120,33 +120,42 @@ export function batches(files: readonly PlannedFile[]): PlannedFile[][] {
   return groups;
 }
 
-/** Print each file's last `readBytes` as base64, one section per file; `missing:` if it is gone or no longer a regular file. */
+/**
+ * Print each file's size at read time and its last `readBytes` as base64, one
+ * `ok:<size>:<base64>` section per file; `missing:` if it is gone or no longer
+ * a regular file. The size is taken at read time because the file may have
+ * grown since the listing.
+ */
 export function fetchScript(files: readonly PlannedFile[]): string {
   const lines = ['set -uo pipefail'];
   files.forEach((file, i) => {
     if (i > 0) lines.push(`printf '%s' ${shellQuote(SECTION)}`);
     const path = shellQuote(sourcePath(file));
     lines.push(
-      `if [ -f ${path} ] && [ ! -L ${path} ]; then printf 'ok:'; tail -c ${file.readBytes} -- ${path} | base64 -w0; else printf 'missing:'; fi`,
+      `if [ -f ${path} ] && [ ! -L ${path} ]; then printf 'ok:%s:' "$(stat -c %s -- ${path})"; tail -c ${file.readBytes} -- ${path} | base64 -w0; else printf 'missing:'; fi`,
     );
   });
   lines.push('exit 0');
   return lines.join('\n');
 }
 
+export interface FetchedFile {
+  content: Buffer;
+  /** The file's size when it was read. */
+  size: number;
+}
+
 /** The file contents from a fetch, in order; undefined where a file had gone. */
-export function parseFetch(stdout: string, count: number): Array<Buffer | undefined> {
+export function parseFetch(stdout: string, count: number): Array<FetchedFile | undefined> {
   const sections = stdout.split(SECTION);
   if (sections.length !== count) {
     throw new Error(`expected ${count} files from the session, got ${sections.length}`);
   }
   return sections.map((section) => {
     if (section.startsWith('missing:')) return undefined;
-    const encoded = section.startsWith('ok:') ? section.slice(3).trim() : undefined;
-    if (encoded === undefined || !/^[A-Za-z0-9+/=]*$/.test(encoded)) {
-      throw new Error('session file export did not produce base64 output');
-    }
-    return Buffer.from(encoded, 'base64');
+    const match = /^ok:([0-9]+):([A-Za-z0-9+/=]*)\s*$/.exec(section);
+    if (!match) throw new Error('session file export did not produce base64 output');
+    return { content: Buffer.from(match[2] ?? '', 'base64'), size: Number(match[1]) };
   });
 }
 
@@ -184,14 +193,17 @@ export async function exportSessionFiles(target: SessionTarget, prefix: string):
     const result = await mustRun(target, fetchScript(group), 300);
     const contents = parseFetch(result.stdout, group.length);
     for (const [i, file] of group.entries()) {
-      const content = contents[i];
-      if (!content) {
+      const fetched = contents[i];
+      if (!fetched) {
         gone.push(file.name);
         continue;
       }
-      const kept = file.truncated ? dropPartialFirstLine(content) : content;
+      // Decided from the size at read time: a file that grew after the
+      // listing was read from its end too.
+      const truncated = fetched.size > fetched.content.length;
+      const kept = truncated ? dropPartialFirstLine(fetched.content) : fetched.content;
       await putArtefact(prefix, file.path, kept.toString('utf8'), contentType(file.path));
-      stored.push({ name: file.name, path: file.path, bytes: file.bytes, storedBytes: kept.length, truncated: file.truncated });
+      stored.push({ name: file.name, path: file.path, bytes: fetched.size, storedBytes: kept.length, truncated });
     }
   }
   await putJsonArtefact(prefix, 'build/logs/index.json', {
