@@ -397,6 +397,8 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Each role's harness the state machine runs is listed here
+              # when its stage is added.
               - Sid: InvokeBuilder
                 Effect: Allow
                 Action:
@@ -453,17 +455,14 @@ Resources:
           Essential: true
           # Time to store the transcript and usage after ECS sends SIGTERM.
           StopTimeout: 120
+          # The role and its harness (ROLE, HARNESS_ARN, HARNESS_ID,
+          # HARNESS_QUALIFIER) come from the state machine's container
+          # overrides, so this one task definition serves every agent role.
           Environment:
             - Name: TABLE_NAME
               Value: !Ref WorkItemsTable
             - Name: ARTEFACT_BUCKET
               Value: !Ref WorkArtefactsBucket
-            - Name: HARNESS_ARN
-              Value: !ImportValue Factorial-BuilderHarnessArn
-            - Name: HARNESS_ID
-              Value: !ImportValue Factorial-BuilderHarnessId
-            - Name: HARNESS_QUALIFIER
-              Value: live
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -809,6 +808,8 @@ Resources:
         ReportFunctionAlias: !Ref ReportFunction.Alias
         ClusterArn: !GetAtt BuildCluster.Arn
         TaskDefinitionArn: !Ref InvokerTaskDefinition
+        BuilderHarnessArn: !ImportValue Factorial-BuilderHarnessArn
+        BuilderHarnessId: !ImportValue Factorial-BuilderHarnessId
         SubnetA: !Ref SubnetA
         SubnetB: !Ref SubnetB
         SecurityGroup: !Ref InvokerSecurityGroup
@@ -881,6 +882,10 @@ Resources:
                     {
                       "Name": "invoker",
                       "Environment": [
+                        { "Name": "ROLE", "Value": "builder" },
+                        { "Name": "HARNESS_ARN", "Value": "${BuilderHarnessArn}" },
+                        { "Name": "HARNESS_ID", "Value": "${BuilderHarnessId}" },
+                        { "Name": "HARNESS_QUALIFIER", "Value": "live" },
                         { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
                         { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },
                         { "Name": "BRANCH", "Value": "{% $ctx.branch %}" },

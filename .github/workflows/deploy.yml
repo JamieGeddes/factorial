@@ -258,29 +258,33 @@ jobs:
       # Promotion is the last step of a successful deployment: the next
       # WorkItem is handled by the version just deployed. Only this role may
       # move a live endpoint; the permissions boundary denies it to every
-      # role Factorial creates for itself.
-      - name: Promote the builder harness live endpoint
+      # role Factorial creates for itself. Every harness is promoted: each
+      # role block in the agent template outputs <Role>HarnessId, so a new
+      # role needs no change here.
+      - name: Promote every harness live endpoint
         run: |
           set -euo pipefail
-          harness_id=$(aws cloudformation describe-stacks --stack-name factorial-agent \
-            --query "Stacks[0].Outputs[?OutputKey=='BuilderHarnessId'].OutputValue" --output text 2>/dev/null || true)
-          if [ -z "$harness_id" ] || [ "$harness_id" = "None" ]; then
+          harness_ids=$(aws cloudformation describe-stacks --stack-name factorial-agent \
+            --query "Stacks[0].Outputs[?ends_with(OutputKey, 'HarnessId')].OutputValue" --output text 2>/dev/null || true)
+          if [ -z "$harness_ids" ] || [ "$harness_ids" = "None" ]; then
             echo "No agent stack yet; nothing to promote."
             exit 0
           fi
-          latest=$(aws bedrock-agentcore-control list-harness-versions --harness-id "$harness_id" \
-            --query 'max_by(harnessVersions, &to_number(harnessVersion)).harnessVersion' --output text)
-          # A freshly created endpoint reports no targetVersion yet; fall back
-          # to the version actually serving traffic.
-          current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-            --query 'endpoint.[targetVersion, liveVersion] | [?@ != null] | [0]' --output text)
-          status=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-            --query 'endpoint.status' --output text)
-          if [ "$latest" = "$current" ] && [ "$status" = "READY" ]; then
-            echo "live endpoint already at harness version $latest."
-            exit 0
-          fi
-          # Re-issuing the update also repairs an endpoint left in a failed state.
-          aws bedrock-agentcore-control update-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-            --target-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
-          echo "live endpoint moved from harness version $current to $latest."
+          for harness_id in $harness_ids; do
+            latest=$(aws bedrock-agentcore-control list-harness-versions --harness-id "$harness_id" \
+              --query 'max_by(harnessVersions, &to_number(harnessVersion)).harnessVersion' --output text)
+            # A freshly created endpoint reports no targetVersion yet; fall back
+            # to the version actually serving traffic.
+            current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
+              --query 'endpoint.[targetVersion, liveVersion] | [?@ != null] | [0]' --output text)
+            status=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
+              --query 'endpoint.status' --output text)
+            if [ "$latest" = "$current" ] && [ "$status" = "READY" ]; then
+              echo "$harness_id: live endpoint already at harness version $latest."
+              continue
+            fi
+            # Re-issuing the update also repairs an endpoint left in a failed state.
+            aws bedrock-agentcore-control update-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
+              --target-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
+            echo "$harness_id: live endpoint moved from harness version $current to $latest."
+          done
