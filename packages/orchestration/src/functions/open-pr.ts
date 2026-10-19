@@ -3,11 +3,13 @@
  * Before opening it, confirm that the branch still points at the commit that
  * was tested, so the PR cannot present untested code.
  */
-import { putJsonArtefact, testResultArtefact } from '../lib/artefacts.ts';
+import { putJsonArtefact } from '@factorial/artefacts';
+
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
+import { testResultArtefact } from '../lib/test-result.ts';
 
 import { pullRequestBody, type TestResult } from './pr-body.ts';
 

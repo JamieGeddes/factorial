@@ -191,7 +191,7 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.invoker_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:invoker HEAD:packages/invoker HEAD:packages/workitem HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:invoker HEAD:packages/invoker HEAD:packages/artefacts HEAD:packages/workitem HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/invoker --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Invoker image $tag already exists; skipping the build."

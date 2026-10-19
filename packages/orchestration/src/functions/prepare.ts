@@ -14,10 +14,10 @@
  * The read-only token is sent as an HTTP header for the clone only and is not
  * written anywhere in the session.
  */
+import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import type { CheckJob, GitHubClient } from '@factorial/github-app';
 import { assertWorkItem, type ReworkContext, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
-import { artefactPrefix, putJsonArtefact } from '../lib/artefacts.ts';
 import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.ts';
 import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
@@ -29,7 +29,6 @@ import {
   assertGitBranch,
   assertUuid,
   gitAuthHeader,
-  redactSecrets,
   shellQuote,
 } from '../lib/shell.ts';
 import { acceptWorkItem, attemptRecord, attemptsAtSource, recordProgress } from '../lib/table.ts';

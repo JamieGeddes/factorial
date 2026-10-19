@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { assertCommitSha, assertGitHubName, assertGitHubToken, assertUuid, gitAuthHeader, redactSecrets, shellQuote } from './shell.ts';
+import { assertCommitSha, assertGitHubName, assertGitHubToken, assertUuid, gitAuthHeader, shellQuote } from './shell.ts';
 
 /** Legacy 40-character installation token shape. */
 const TOKEN = `ghs_${'A'.repeat(36)}`;
@@ -12,22 +12,6 @@ describe('gitAuthHeader', () => {
   it('encodes the token as basic auth for x-access-token', () => {
     const header = gitAuthHeader(TOKEN);
     assert.equal(header, `AUTHORIZATION: basic ${Buffer.from(`x-access-token:${TOKEN}`).toString('base64')}`);
-  });
-});
-
-describe('redactSecrets', () => {
-  it('masks tokens in URLs, bare tokens and auth headers', () => {
-    const text = `fatal: https://x-access-token:ghs_SECRET@github.com/o/r.git and ghs_SECRET2 and ${STATELESS_TOKEN} and AUTHORIZATION: basic eC1hY2Nlc3M=`;
-    const out = redactSecrets(text);
-    assert.doesNotMatch(out, /SECRET/);
-    assert.doesNotMatch(out, /eC1hY2Nlc3M/);
-    assert.match(out, /x-access-token:\*\*\*@github\.com/);
-    assert.match(out, /ghs_\*\*\*/);
-    assert.doesNotMatch(out, /pppp|ssss/);
-  });
-
-  it('leaves ordinary text alone', () => {
-    assert.equal(redactSecrets('git exited 128: not a repository'), 'git exited 128: not a repository');
   });
 });
 

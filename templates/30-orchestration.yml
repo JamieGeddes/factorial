@@ -377,6 +377,17 @@ Resources:
                     - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
+              # Which version live serves, and its model, for build/usage.json.
+              - Sid: ReadBuilderVersion
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetHarness
+                  - bedrock-agentcore:GetHarnessEndpoint
+                Resource:
+                  - !ImportValue Factorial-BuilderHarnessArn
+                  - !Sub
+                    - ${HarnessArn}/harness-endpoint/*
+                    - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
@@ -408,6 +419,8 @@ Resources:
             - - !ImportValue Factorial-InvokerRepositoryUri
               - !Ref InvokerImageTag
           Essential: true
+          # Time to store the transcript and usage after ECS sends SIGTERM.
+          StopTimeout: 120
           Environment:
             - Name: TABLE_NAME
               Value: !Ref WorkItemsTable
@@ -415,6 +428,8 @@ Resources:
               Value: !Ref WorkArtefactsBucket
             - Name: HARNESS_ARN
               Value: !ImportValue Factorial-BuilderHarnessArn
+            - Name: HARNESS_ID
+              Value: !ImportValue Factorial-BuilderHarnessId
             - Name: HARNESS_QUALIFIER
               Value: live
           LogConfiguration:
@@ -487,10 +502,11 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: factorial-collect
-      Description: Commit leftovers, push the work branch and collect the agent's summary.
+      Description: Store the session's files, commit leftovers, push the work branch and collect the agent's summary.
       CodeUri: ../packages/orchestration/dist/collect/
       Handler: index.handler
-      Timeout: 600
+      Timeout: 900
+      MemorySize: 1024
       LoggingConfig:
         LogGroup: !Ref CollectLogGroup
       Policies:
@@ -501,6 +517,7 @@ Resources:
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
 
   DispatchTestsFunction:
     Type: AWS::Serverless::Function

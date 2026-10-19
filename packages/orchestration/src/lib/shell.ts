@@ -73,11 +73,3 @@ export function gitAuthHeader(token: string): string {
 /** Environment that keeps git from reading any configuration the agent could have planted. */
 export const HARDENED_GIT_ENV =
   'export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=/bin/false';
-
-/** Strip anything that looks like a GitHub credential before text is logged or shown. */
-export function redactSecrets(text: string): string {
-  return text
-    .replace(/x-access-token:[^@\s'"]+@/g, 'x-access-token:***@')
-    .replace(/\b(gh[pousr]|ghs|github_pat)_[A-Za-z0-9._-]+/g, '$1_***')
-    .replace(/AUTHORIZATION:\s*basic\s+[A-Za-z0-9+/=]+/gi, 'AUTHORIZATION: basic ***');
-}
