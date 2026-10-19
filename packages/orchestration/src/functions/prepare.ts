@@ -1,5 +1,5 @@
 /**
- * Prepare: accept the WorkItem exactly once, then set up the agent's session
+ * Prepare: accept the WorkItem exactly once, then set up the planner's session
  * deterministically: clone the repository, put the session on the work branch
  * (a fresh branch off the default head, or the existing rework branch), and
  * leave the WorkItem on disk for the agent to read, with the request copied to
@@ -8,7 +8,9 @@
  * attempt's branch instead of starting afresh. For rework items, the
  * review details — including the failing checks' logs, fetched here with a
  * short-lived read-only token and redacted — are left at /workspace/rework.md.
- * No model is involved.
+ * No model is involved. The builder's session is set up the same way, by
+ * `seedSession`, once the plan is accepted (CollectPlan): sessions close when
+ * idle, so it cannot wait through planning.
  *
  * The session is brand new at this point, so no agent code can be running.
  * The read-only token is sent as an HTTP header for the clone only and is not
@@ -22,7 +24,7 @@ import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.t
 import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
-import { mustRun, sessionTarget } from '../lib/session.ts';
+import { mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
   assertCommitSha,
@@ -49,6 +51,12 @@ export function cloneScript(params: {
   notes: string;
   /** Checkout mode: a new branch off the default head, or an existing remote branch. */
   mode: 'create' | 'checkout';
+  /**
+   * The commit the session must start from, when another session has already
+   * fixed it: a new branch is created there, and an existing branch must still
+   * be there.
+   */
+  at?: string;
 }): string {
   const owner = assertGitHubName(params.owner, 'repository owner');
   const name = assertGitHubName(params.name, 'repository name');
@@ -56,14 +64,19 @@ export function cloneScript(params: {
   const url = `https://github.com/${owner}/${name}.git`;
   const workItemBase64 = Buffer.from(params.workItemJson, 'utf8').toString('base64');
   const notesBase64 = Buffer.from(params.notes, 'utf8').toString('base64');
+  const at = params.at === undefined ? undefined : assertCommitSha(params.at, 'start commit');
   const checkout =
     params.mode === 'create'
-      ? `git checkout --quiet -b ${shellQuote(branch)}`
-      : [`git checkout --quiet ${shellQuote(`origin/${branch}`)}`, `git branch --quiet ${shellQuote(branch)}`].join('\n');
+      ? `git checkout --quiet -b ${shellQuote(branch)}${at ? ` ${shellQuote(at)}` : ''}`
+      : [
+          `git checkout --quiet ${shellQuote(`origin/${branch}`)}`,
+          `git branch --quiet ${shellQuote(branch)}`,
+          ...(at ? [`test "$(git rev-parse HEAD)" = ${shellQuote(at)} || { echo "branch ${branch} has moved since planning" >&2; exit 1; }`] : []),
+        ].join('\n');
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
-    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs',
+    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs /workspace/plan.md /workspace/plan.json',
     `git -c http.extraHeader=${shellQuote(gitAuthHeader(params.token))} clone --quiet ${shellQuote(url)} /workspace/repo`,
     'cd /workspace/repo',
     checkout,
@@ -79,7 +92,14 @@ export function cloneScript(params: {
  * own notes. The harness drops older messages, including the prompt, so the
  * notes file is what keeps the task in view for the whole session.
  */
-export function initialNotes(workItem: WorkItem, options: { rework?: boolean; resumedFrom?: Attempt } = {}): string {
+export function initialNotes(
+  workItem: WorkItem,
+  options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole } = {},
+): string {
+  const planSection =
+    options.role === 'planner'
+      ? '_Your plan goes in /workspace/plan.md and /workspace/plan.json, not here. Keep working notes under # Notes._'
+      : "_The planner's plan is in /workspace/plan.md. Follow it; note here any step you change or skip, and why._";
   return [
     '# Task',
     '',
@@ -95,7 +115,7 @@ export function initialNotes(workItem: WorkItem, options: { rework?: boolean; re
     '',
     '# Plan',
     '',
-    '_Write the plan here before changing any code: each requirement above, and the change that meets it._',
+    planSection,
     '',
     '# Notes',
     '',
@@ -195,6 +215,55 @@ async function resumable(repo: { owner: string; name: string }, workItem: WorkIt
   }
 }
 
+/**
+ * Clone the repository into one role's session and leave the WorkItem, the
+ * notes and, for rework, /workspace/rework.md beside it. The first session
+ * fixes the branch head; a later one passes it as `at`, so every role works
+ * from the same commit. Returns that commit and the base branch.
+ */
+export async function seedSession(params: {
+  role: SessionRole;
+  workItem: WorkItem;
+  branch: string;
+  resumedFrom?: Attempt;
+  at?: string;
+}): Promise<{ baseCommit: string; baseBranch: string }> {
+  const { workItem, branch, resumedFrom } = params;
+  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
+  const rework = reworkContext(workItem);
+  const token = await repositoryToken(repo, { contents: 'read' });
+  const target = sessionTarget(workItem.id, params.role);
+  const result = await mustRun(
+    target,
+    cloneScript({
+      owner: repo.owner,
+      name: repo.name,
+      branch,
+      token,
+      workItemJson: JSON.stringify(workItem, null, 2),
+      notes: initialNotes(workItem, { rework: rework !== undefined, role: params.role, ...(resumedFrom ? { resumedFrom } : {}) }),
+      mode: rework || resumedFrom ? 'checkout' : 'create',
+      ...(params.at ? { at: params.at } : {}),
+    }),
+    600,
+  );
+  const stdoutLines = result.stdout.trim().split('\n');
+  const baseCommit = assertCommitSha(stdoutLines[stdoutLines.length - 2] ?? '', 'branch head');
+  const baseBranch = rework ? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
+
+  if (rework) {
+    const client = await repositoryClient(repo, { contents: 'read', actions: 'read' });
+    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework);
+    const encoded = Buffer.from(reworkFile, 'utf8').toString('base64');
+    await mustRun(
+      target,
+      [`set -euo pipefail`, `printf '%s' ${shellQuote(encoded)} | base64 -d > /workspace/rework.md`].join('\n'),
+      60,
+    );
+  }
+  return { baseCommit, baseBranch };
+}
+
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
 export const handler = logged('prepare', prepareKey, async (input, stageLog): Promise<WorkContext> => {
@@ -215,25 +284,12 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
   await putJsonArtefact(prefix, 'workitem.json', workItem);
 
   const branch = resumedFrom?.branch ?? workBranchFor(workItem);
-  const token = await repositoryToken(repo, { contents: 'read' });
-  const target = sessionTarget(workItem.id);
-
-  const result = await mustRun(
-    target,
-    cloneScript({
-      owner: repo.owner,
-      name: repo.name,
-      branch,
-      token,
-      workItemJson: JSON.stringify(workItem, null, 2),
-      notes: initialNotes(workItem, { rework: rework !== undefined, ...(resumedFrom ? { resumedFrom } : {}) }),
-      mode: rework || resumedFrom ? 'checkout' : 'create',
-    }),
-    600,
-  );
-  const stdoutLines = result.stdout.trim().split('\n');
-  const baseCommit = assertCommitSha(stdoutLines[stdoutLines.length - 2] ?? '', 'branch head');
-  const baseBranch = rework ? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
+  const { baseCommit, baseBranch } = await seedSession({
+    role: 'planner',
+    workItem,
+    branch,
+    ...(resumedFrom ? { resumedFrom } : {}),
+  });
 
   await putJsonArtefact(prefix, 'prepare/branch.json', {
     branch,
@@ -241,17 +297,6 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     factorialVersion: input.factorialVersion,
     ...(resumedFrom ? { resumedFromWorkItemId: resumedFrom.workItemId } : {}),
   });
-
-  if (rework) {
-    const client = await repositoryClient(repo, { contents: 'read', actions: 'read' });
-    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework);
-    const encoded = Buffer.from(reworkFile, 'utf8').toString('base64');
-    await mustRun(
-      target,
-      [`set -euo pipefail`, `printf '%s' ${shellQuote(encoded)} | base64 -d > /workspace/rework.md`].join('\n'),
-      60,
-    );
-  }
 
   await recordProgress(workItem.id, 'prepared', {
     branch,
@@ -271,5 +316,6 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     factorialVersion: input.factorialVersion,
     attempt,
     artefactPrefix: prefix,
+    ...(resumedFrom ? { resumedFrom } : {}),
   };
 });

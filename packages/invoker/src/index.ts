@@ -1,16 +1,17 @@
 /**
  * Harness invoker. Runs as a Fargate task started by Step Functions with
  * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes one agent
- * role's harness (the role and harness come in the task input; only the
- * builder exists today) once in the prepared session, logs its progress as structured lines
- * (CloudWatch Logs; text and tool input capped at 4000 characters each),
- * records the outcome, and exits. Step Functions resumes
- * when the task stops, however long the build took. Nothing inside the agent
+ * role's harness (the planner or the builder; the role and harness come in
+ * the task input) once in the prepared session, logs its progress as
+ * structured lines (CloudWatch Logs; text and tool input capped at 4000
+ * characters each), records the outcome, and exits. Step Functions resumes
+ * when the task stops, however long the run took. Nothing inside the agent
  * sandbox can influence this process: it runs under its own task role.
  *
- * Every stream event is also buffered to disk and, however the build ends
+ * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
- * `build/transcript.jsonl` and `build/usage.json` in the artefact store.
+ * `<stage>/transcript.jsonl` and `<stage>/usage.json` in the artefact store
+ * (`plan/` for the planner, `build/` for the builder).
  */
 import { readFileSync } from 'node:fs';
 
@@ -27,7 +28,7 @@ import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts'
 import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { harnessTarget, promptFor } from './role.ts';
+import { ROLE_STAGES, harnessTarget, outcomeAttributes, promptFor } from './role.ts';
 import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
@@ -48,15 +49,20 @@ const branch = requireEnv('BRANCH');
 const baseBranch = requireEnv('BASE_BRANCH');
 const baseCommit = requireEnv('BASE_COMMIT');
 if (!/^[0-9a-f]{40}$/.test(baseCommit)) throw new Error('BASE_COMMIT is not a commit sha');
-const maxIterations = Number(process.env.MAX_ITERATIONS ?? '150');
-const timeoutSeconds = Number(process.env.TIMEOUT_SECONDS ?? '3600');
+// Which run of the planner this is: 2 when the first plan was rejected.
+const planAttempt = Number(process.env.PLAN_ATTEMPT ?? '1');
+if (!Number.isInteger(planAttempt) || planAttempt < 1) throw new Error('PLAN_ATTEMPT is not a positive integer');
+const { stage, running, done, failed } = ROLE_STAGES[role];
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
-const agentcore = new BedrockAgentCoreClient({ requestHandler: { requestTimeout: (timeoutSeconds + 300) * 1000 } });
+// The harness version's own loop timeout ends the stream; this only guards
+// against a connection that never closes. The state machine's timeout for
+// the stage stops the task first in any case.
+const agentcore = new BedrockAgentCoreClient({ requestHandler: { requestTimeout: 4 * 60 * 60 * 1000 } });
 const control = new BedrockAgentCoreControlClient({});
 
 /** Every line carries the work item id; the attempt is added once the ledger row is read. */
-let log = createLogger('build', { workItemId });
+let log = createLogger(stage, { workItemId });
 
 async function record(status: string, attributes: Record<string, unknown>): Promise<void> {
   const names: Record<string, string> = { '#status': 'status', '#updatedAt': 'updatedAt' };
@@ -107,6 +113,8 @@ async function harnessInfo(): Promise<HarnessInfo> {
       ...(harness?.harnessName ? { harnessName: harness.harnessName } : {}),
       ...(harnessVersion ? { harnessVersion } : {}),
       ...(modelId ? { modelId } : {}),
+      ...(harness?.maxIterations === undefined ? {} : { maxIterations: harness.maxIterations }),
+      ...(harness?.timeoutSeconds === undefined ? {} : { timeoutSeconds: harness.timeoutSeconds }),
     };
   } catch (error) {
     log.error('harness version unknown', { error });
@@ -114,50 +122,42 @@ async function harnessInfo(): Promise<HarnessInfo> {
   }
 }
 
-/** Upload the transcript and usage. Returns the ledger pointer: keys and sizes, never content. */
-async function storeBuildRecord(): Promise<Record<string, unknown> | undefined> {
+/** Upload the transcript and usage under the role's stage. Returns the ledger pointer: keys and sizes, never content. */
+async function storeRunRecord(): Promise<Record<string, unknown> | undefined> {
   const kept = transcript.close();
   if (!run.prefix) {
-    log.error('no artefact prefix on the ledger row; build record not stored');
+    log.error('no artefact prefix on the ledger row; run record not stored');
     return undefined;
   }
   try {
-    await putArtefact(run.prefix, 'build/transcript.jsonl', readFileSync(transcript.path, 'utf8'), 'application/x-ndjson');
-    await putJsonArtefact(
-      run.prefix,
-      'build/usage.json',
-      usageRecord({ ...run, endedAt: Date.now() }),
-    );
-    log.info('build record stored', { transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
+    await putArtefact(run.prefix, `${stage}/transcript.jsonl`, readFileSync(transcript.path, 'utf8'), 'application/x-ndjson');
+    await putJsonArtefact(run.prefix, `${stage}/usage.json`, usageRecord({ ...run, endedAt: Date.now() }));
+    log.info('run record stored', { transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
     return {
-      transcriptKey: artefactKey(run.prefix, 'build/transcript.jsonl'),
-      usageKey: artefactKey(run.prefix, 'build/usage.json'),
+      transcriptKey: artefactKey(run.prefix, `${stage}/transcript.jsonl`),
+      usageKey: artefactKey(run.prefix, `${stage}/usage.json`),
       transcriptBytes: kept.bytes,
       transcriptTruncated: kept.truncated,
     };
   } catch (error) {
-    log.error('build record not stored', { error });
+    log.error('run record not stored', { error });
     return undefined;
   }
 }
 
 let finished: Promise<void> | undefined;
 
-/** Store the build record and the outcome exactly once, whichever way the build ends. */
-function finish(status: 'built' | 'build-error'): Promise<void> {
+/** Store the run record and the outcome exactly once, whichever way the run ends. */
+function finish(succeeded: boolean): Promise<void> {
   finished ??= (async () => {
-    const build = await storeBuildRecord();
+    const stored = await storeRunRecord();
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
     log.info('harness finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage });
-    await record(status, {
-      stopReason,
-      toolCalls: run.toolCalls,
-      buildDurationSeconds: durationSeconds,
-      usage: run.usage,
-      buildError: run.error,
-      build,
-    });
+    await record(
+      succeeded ? done : failed,
+      outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored }),
+    );
   })();
   return finished;
 }
@@ -168,7 +168,7 @@ process.once('SIGTERM', () => {
   run.interrupted = true;
   run.error ??= 'interrupted';
   log.error('invoker interrupted');
-  void finish('build-error').finally(() => process.exit(1));
+  void finish(false).finally(() => process.exit(1));
 });
 
 async function main(): Promise<number> {
@@ -179,22 +179,22 @@ async function main(): Promise<number> {
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
 
-  const prompt = promptFor(role, workItem, branch, baseBranch);
+  const prompt = promptFor(role, workItem, branch, baseBranch, planAttempt);
   run.harness = await harnessInfo();
-  log.info('invoking harness', { role, sessionId, qualifier, maxIterations, timeoutSeconds, ...run.harness });
-  await record('building', { role, buildStartedAt: new Date().toISOString() });
+  log.info('invoking harness', { role, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...run.harness });
+  await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();
-  transcript.append({ request: { role, prompt, maxIterations, timeoutSeconds, ...run.harness } });
+  transcript.append({ request: { role, prompt, ...run.harness } });
   const response = await agentcore.send(
     new InvokeHarnessCommand({
       harnessArn,
       qualifier,
       runtimeSessionId: sessionId,
       baggage: traceBaggage(sessionId, workItemId, run.attempt),
+      // No maxIterations or timeoutSeconds: values passed here override the
+      // harness version's, and the limits, like the model, belong to the version.
       messages: [{ role: 'user', content: [{ text: prompt }] }],
-      maxIterations,
-      timeoutSeconds,
     }),
   );
 
@@ -236,7 +236,7 @@ async function main(): Promise<number> {
     }
   }
 
-  await finish(run.error ? 'build-error' : 'built');
+  await finish(!run.error);
   if (run.error) return 1;
   // max_iterations or a timeout may still have produced a usable commit; the
   // Collect step decides. Only a transport or service error is fatal here.
@@ -248,6 +248,6 @@ main().then(
   (error: unknown) => {
     run.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
     log.error('invoker failed', { error: run.error });
-    finish('build-error').finally(() => process.exit(1));
+    finish(false).finally(() => process.exit(1));
   },
 );

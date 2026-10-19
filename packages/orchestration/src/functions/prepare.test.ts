@@ -80,6 +80,36 @@ describe('cloneScript', () => {
   });
 });
 
+describe('cloneScript pinned to a commit', () => {
+  const params = {
+    owner: 'JamieGeddes',
+    name: 'factorial',
+    branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+    token: TOKEN,
+    workItemJson: '{"id":"x"}',
+    notes: '# Task\n',
+    mode: 'create' as const,
+    at: 'a'.repeat(40),
+  };
+
+  it('creates a new branch at the commit the planner saw', () => {
+    assert.match(cloneScript(params), new RegExp(`git checkout --quiet -b 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' '${'a'.repeat(40)}'`));
+  });
+
+  it('fails if an existing branch has moved since planning', () => {
+    const script = cloneScript({ ...params, mode: 'checkout' });
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${'a'.repeat(40)}' \\|\\| \\{ echo "branch .* has moved since planning" >&2; exit 1; \\}`));
+  });
+
+  it('rejects a start point that is not a commit', () => {
+    assert.throws(() => cloneScript({ ...params, at: 'HEAD; rm -rf /' }), /start commit/);
+  });
+
+  it('clears plan files left in the session', () => {
+    assert.match(cloneScript(params), /rm -rf .*\/workspace\/plan\.md \/workspace\/plan\.json/);
+  });
+});
+
 describe('initialNotes', () => {
   const workItem: WorkItem = {
     schemaVersion: 1,
@@ -119,6 +149,11 @@ describe('initialNotes', () => {
     assert.match(notes, /Do not redo work that is already committed/);
     assert.ok(notes.indexOf('# Previous attempt') < notes.indexOf('# Plan'));
     assert.doesNotMatch(initialNotes(workItem), /Previous attempt/);
+  });
+
+  it("points the builder at the planner's plan, and the planner at its plan files", () => {
+    assert.match(initialNotes(workItem), /The planner's plan is in \/workspace\/plan\.md\. Follow it/);
+    assert.match(initialNotes(workItem, { role: 'planner' }), /Your plan goes in \/workspace\/plan\.md and \/workspace\/plan\.json/);
   });
 });
 

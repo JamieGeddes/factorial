@@ -5,11 +5,63 @@
  */
 import type { WorkItem } from '@factorial/workitem';
 
-import { buildPrompt } from './prompt.ts';
+import { buildPrompt, planPrompt } from './prompt.ts';
 
 /** Roles the invoker knows how to start; each has a harness `factorial_<role>`. */
-export const ROLES = ['builder'] as const;
+export const ROLES = ['builder', 'planner'] as const;
 export type Role = (typeof ROLES)[number];
+
+/** Where a role's run is recorded: its artefact folder, log stage and ledger statuses. */
+export interface RoleStage {
+  /** The artefact folder under the attempt's prefix, and the log stage. */
+  stage: 'build' | 'plan';
+  running: string;
+  done: string;
+  failed: string;
+}
+
+export const ROLE_STAGES: Record<Role, RoleStage> = {
+  builder: { stage: 'build', running: 'building', done: 'built', failed: 'build-error' },
+  planner: { stage: 'plan', running: 'planning', done: 'planned', failed: 'plan-error' },
+};
+
+export interface RunOutcome {
+  stopReason: string | undefined;
+  toolCalls: number;
+  durationSeconds: number;
+  usage: unknown;
+  error: string | undefined;
+  /** Pointers to the stored transcript and usage, when they were stored. */
+  record: Record<string, unknown> | undefined;
+}
+
+/**
+ * The ledger attributes for a finished run. The builder's keep their
+ * existing top-level names; other roles' sit under their stage, until the
+ * progress record (#15) gives every stage the same shape.
+ */
+export function outcomeAttributes(role: Role, outcome: RunOutcome): Record<string, unknown> {
+  if (role === 'builder') {
+    return {
+      stopReason: outcome.stopReason,
+      toolCalls: outcome.toolCalls,
+      buildDurationSeconds: outcome.durationSeconds,
+      usage: outcome.usage,
+      buildError: outcome.error,
+      build: outcome.record,
+    };
+  }
+  return {
+    [ROLE_STAGES[role].stage]: {
+      stopReason: outcome.stopReason,
+      toolCalls: outcome.toolCalls,
+      durationSeconds: outcome.durationSeconds,
+      usage: outcome.usage,
+      ...(outcome.error ? { error: outcome.error } : {}),
+      ...outcome.record,
+    },
+  };
+}
 
 export interface HarnessTarget {
   role: Role;
@@ -46,9 +98,11 @@ export function harnessTarget(env: Record<string, string | undefined>): HarnessT
 }
 
 /** The user message that starts a session for the role. */
-export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBranch: string): string {
+export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBranch: string, planAttempt = 1): string {
   switch (role) {
     case 'builder':
       return buildPrompt(workItem, branch, baseBranch);
+    case 'planner':
+      return planPrompt(workItem, branch, baseBranch, planAttempt);
   }
 }

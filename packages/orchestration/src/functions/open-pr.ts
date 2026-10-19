@@ -8,6 +8,7 @@ import { putJsonArtefact } from '@factorial/artefacts';
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { logged, runKey } from '../lib/log.ts';
+import type { PlanDigest } from '../lib/plan-files.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
@@ -18,6 +19,8 @@ interface OpenPrInput {
   ctx: WorkContext;
   collect: { headSha: string; summary: string };
   test: TestResult & { sha?: string };
+  /** The plan the builder followed; absent for runs started before the Plan stage. */
+  plan?: PlanDigest | null;
 }
 
 export class UntestedHeadError extends Error {
@@ -47,7 +50,7 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
 
   const pr = await client.createPullRequest(repo, {
     title: ctx.workItem.title,
-    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha),
+    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, input.plan ?? undefined),
     head: ctx.branch,
     base: ctx.baseBranch,
   });

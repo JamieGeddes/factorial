@@ -24,9 +24,12 @@ export interface SessionTarget {
 
 const client = new BedrockAgentCoreClient({});
 
-export function sessionTarget(sessionId: string): SessionTarget {
+/** Each agent role is its own runtime, so the same session id names a different session per role. */
+export type SessionRole = 'builder' | 'planner';
+
+export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
   return {
-    harnessArn: requireEnv('HARNESS_ARN'),
+    harnessArn: requireEnv(role === 'planner' ? 'PLANNER_HARNESS_ARN' : 'HARNESS_ARN'),
     qualifier: requireEnv('HARNESS_QUALIFIER'),
     sessionId,
   };

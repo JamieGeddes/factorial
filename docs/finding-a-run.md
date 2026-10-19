@@ -14,7 +14,7 @@ Note `attempt`, `artefactPrefix`, `status` and, for a resumed or rework item, `r
 
 **Step Functions** → left nav **State machines** → **factorial-work** → **Executions** tab → search box: `<id>` → open the execution.
 
-Every state's output carries `workItemId` and `attempt`. **Build**'s output has `taskArn`; its last segment is the invoker task id.
+Every state's output carries `workItemId` and `attempt`. **Plan** and **Build** output `taskArn`; its last segment is the invoker task id for that run (the planner may run twice, shown by `planAttempt`).
 
 The execution log, with full state inputs and outputs, is the log group `/aws/vendedlogs/states/factorial-work`.
 
@@ -24,6 +24,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 
 - `/factorial/invoker`
 - `/aws/lambda/factorial-prepare`
+- `/aws/lambda/factorial-collect-plan`
 - `/aws/lambda/factorial-collect`
 - `/aws/lambda/factorial-dispatch-tests`
 - `/aws/lambda/factorial-open-pr`
@@ -44,7 +45,7 @@ Add `| filter level = "error"` to see only failures. The invoker's own stream is
 
 **S3** → **Buckets** → `factorial-work-artefacts-<account id>` → open the folder `<id>/` → `<attempt>/` (the ledger's `artefactPrefix`).
 
-It holds `workitem.json`, `prepare/`, `build/` (transcript, usage, the agent's notes and logs, the git bundle), `test/`, `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
+It holds `workitem.json`, `prepare/`, `plan/` (the plan as markdown and JSON, its validation result, and the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle), `test/`, `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
 
 ## 5. The AgentCore trace
 

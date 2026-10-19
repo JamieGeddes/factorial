@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { buildPrompt } from './prompt.ts';
+import { buildPrompt, planPrompt } from './prompt.ts';
 
 const workItem = {
   schemaVersion: 1 as const,
@@ -33,10 +33,11 @@ describe('buildPrompt', () => {
     assert.match(prompt, /\/workspace\/notes\.md already starts with this request/);
   });
 
-  it('asks for a plan against the request before any code, and a check before each commit', () => {
+  it("points at the planner's plan before any code, and asks for a report on each step", () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
-    assert.match(prompt, /Before changing any code, re-read the Task section and write your plan/);
+    assert.match(prompt, /its plan is \/workspace\/plan\.md .* Read it before changing any code and follow it step by step/);
     assert.match(prompt, /Re-read the Task section before each commit and before writing the summary/);
+    assert.match(prompt, /a "## Plan steps" section: one line per plan step id, saying done, skipped or changed/);
   });
 
   it('marks an empty body explicitly', () => {
@@ -83,5 +84,35 @@ describe('buildPrompt for rework', () => {
     const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
     assert.doesNotMatch(prompt, /Add a test\./);
     assert.doesNotMatch(prompt, /@JamieGeddes/);
+  });
+});
+
+describe('planPrompt', () => {
+  it('gives the request and asks for both plan files without changing the repository', () => {
+    const prompt = planPrompt(workItem, 'factorial/x', 'main', 1);
+    assert.match(prompt, /## Fix typo\n\nThe word "recieve" should be "receive"\./);
+    assert.match(prompt, /Read it; do not change it\./);
+    assert.match(prompt, /Write \/workspace\/plan\.md and \/workspace\/plan\.json/);
+    assert.doesNotMatch(prompt, /rejected/);
+  });
+
+  it('on a retry, points at the rejection in the notes', () => {
+    assert.match(planPrompt(workItem, 'b', 'main', 2), /under "# Plan rejected \(attempt 1\)" in \/workspace\/notes\.md/);
+  });
+
+  it('mentions rework.md for rework items', () => {
+    const rework = {
+      ...workItem,
+      context: {
+        kind: 'rework' as const,
+        pullRequest: { number: 7, url: 'https://github.com/JamieGeddes/factorial/pull/7' },
+        branch: 'factorial/x',
+        baseBranch: 'main',
+        previousWorkItemId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+        cause: 'review' as const,
+        details: [],
+      },
+    };
+    assert.match(planPrompt(rework, 'b', 'main', 1), /\/workspace\/rework\.md lists every point the plan must address/);
   });
 });
