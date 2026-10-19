@@ -30,6 +30,11 @@ Parameters:
     Type: String
     Default: main
     Description: Branch whose test workflow definition is trusted and dispatched.
+  ArtefactRetentionDays:
+    Type: Number
+    Default: 365
+    MinValue: 1
+    Description: Days a run's artefacts are kept before the lifecycle rule expires them.
 
 Globals:
   Function:
@@ -44,6 +49,7 @@ Globals:
       Variables:
         NODE_OPTIONS: --enable-source-maps
         TABLE_NAME: !Ref WorkItemsTable
+        ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
         HARNESS_ARN: !ImportValue Factorial-BuilderHarnessArn
         HARNESS_QUALIFIER: live
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
@@ -95,6 +101,87 @@ Resources:
       Tags:
         - Key: Project
           Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Artefact store: everything a run produces, under <workItemId>/<attempt>/.
+  # Versioned, and no principal may delete an object or a version: retention
+  # is the lifecycle rule, never a permission. Only orchestrator Lambdas and
+  # the invoker write; the agent permissions boundary grants no S3 at all.
+  # ---------------------------------------------------------------------------
+  WorkArtefactsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub factorial-work-artefacts-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireArtefacts
+            Status: Enabled
+            ExpirationInDays: !Ref ArtefactRetentionDays
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 7
+          - Id: RemoveExpiredDeleteMarkers
+            Status: Enabled
+            ExpiredObjectDeleteMarker: true
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  WorkArtefactsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WorkArtefactsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RequireTls
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt WorkArtefactsBucket.Arn
+              - !Sub ${WorkArtefactsBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          - Sid: DenyDeletes
+            Effect: Deny
+            Principal: '*'
+            Action:
+              - s3:DeleteObject
+              - s3:DeleteObjectVersion
+            Resource: !Sub ${WorkArtefactsBucket.Arn}/*
+
+  # Write-only: the orchestrator records artefacts but never reads them back.
+  WorkArtefactsWritePolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-work-artefacts-write
+      Description: Store run artefacts. No read, list or delete.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: s3:PutObject
+            Resource: !Sub ${WorkArtefactsBucket.Arn}/*
 
   # ---------------------------------------------------------------------------
   # Network for the Fargate invoker: public subnets, no NAT, egress only.
@@ -261,6 +348,8 @@ Resources:
     Properties:
       RoleName: factorial-invoker
       PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      ManagedPolicyArns:
+        - !Ref WorkArtefactsWritePolicy
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -322,6 +411,8 @@ Resources:
           Environment:
             - Name: TABLE_NAME
               Value: !Ref WorkItemsTable
+            - Name: ARTEFACT_BUCKET
+              Value: !Ref WorkArtefactsBucket
             - Name: HARNESS_ARN
               Value: !ImportValue Factorial-BuilderHarnessArn
             - Name: HARNESS_QUALIFIER
@@ -380,6 +471,7 @@ Resources:
             - Sid: Ledger
               Effect: Allow
               Action:
+                - dynamodb:GetItem
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
@@ -389,6 +481,7 @@ Resources:
               Resource: !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
 
   CollectFunction:
     Type: AWS::Serverless::Function
@@ -444,6 +537,7 @@ Resources:
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
 
   ReportFunction:
     Type: AWS::Serverless::Function
@@ -459,9 +553,12 @@ Resources:
         - Statement:
             - Sid: Ledger
               Effect: Allow
-              Action: dynamodb:UpdateItem
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
 
   SessionCommandPolicy:
     Type: AWS::IAM::ManagedPolicy
@@ -925,3 +1022,7 @@ Outputs:
       Name: Factorial-WorkItemsTableName
   BuildClusterArn:
     Value: !GetAtt BuildCluster.Arn
+  WorkArtefactsBucketName:
+    Value: !Ref WorkArtefactsBucket
+    Export:
+      Name: Factorial-WorkArtefactsBucketName

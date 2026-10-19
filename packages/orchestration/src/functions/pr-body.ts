@@ -35,6 +35,8 @@ export function pullRequestBody(ctx: WorkContext, summary: string, test: TestRes
     ['Head', `\`${headSha.slice(0, 12)}\``],
     ['Built by', `Factorial \`${ctx.factorialVersion.slice(0, 12)}\``],
     ['Session', `\`${ctx.sessionId}\``],
+    // The prefix only: the bucket name carries the account ID, which stays out of GitHub.
+    ['Artefacts', `\`${ctx.artefactPrefix}\``],
   ];
   const table = ['| | |', '|---|---|', ...rows.map(([k, v]) => `| ${k} | ${v} |`)].join('\n');
   const closes = closingReference(ctx.workItem);

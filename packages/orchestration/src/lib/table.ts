@@ -1,9 +1,10 @@
 /** The work item ledger: one row per WorkItem, also the idempotency guard. */
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import type { WorkItem } from '@factorial/workitem';
 
+import { artefactPrefix } from './artefacts.ts';
 import { requireEnv } from './env.ts';
 import { sourceKey, type Attempt } from './resume.ts';
 
@@ -18,8 +19,8 @@ export class DuplicateWorkItemError extends Error {
   }
 }
 
-/** Record a new WorkItem exactly once. */
-export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string): Promise<void> {
+/** Record a new WorkItem exactly once, with its attempt number and artefact prefix. */
+export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string, attempt: number): Promise<void> {
   const now = new Date().toISOString();
   try {
     await documents.send(
@@ -31,6 +32,8 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
           sourceKey: sourceKey(workItem),
           status: 'accepted',
           factorialVersion,
+          attempt,
+          artefactPrefix: artefactPrefix(workItem.id, attempt),
           createdAt: now,
           updatedAt: now,
         },
@@ -58,6 +61,19 @@ export async function attemptsAtSource(workItem: WorkItem): Promise<Attempt[]> {
     }),
   );
   return (result.Items ?? []) as Attempt[];
+}
+
+/** The attempt number and artefact prefix on a ledger row, if the row exists. */
+export async function attemptRecord(workItemId: string): Promise<{ attempt?: number; artefactPrefix?: string } | undefined> {
+  const result = await documents.send(
+    new GetCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      Key: { workItemId },
+      ProjectionExpression: '#attempt, #prefix',
+      ExpressionAttributeNames: { '#attempt': 'attempt', '#prefix': 'artefactPrefix' },
+    }),
+  );
+  return result.Item as { attempt?: number; artefactPrefix?: string } | undefined;
 }
 
 /** Merge progress into the row. Keys are attribute names; values replace. */

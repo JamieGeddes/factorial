@@ -21,6 +21,8 @@ const ctx: WorkContext = {
   baseBranch: 'main',
   baseCommit: 'b'.repeat(40),
   factorialVersion: '0123456789abcdef0123456789abcdef01234567',
+  attempt: 1,
+  artefactPrefix: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c/1/',
 };
 
 describe('pullRequestBody', () => {
@@ -32,6 +34,7 @@ describe('pullRequestBody', () => {
     assert.match(body, /\| Tests \| \[success\]\(https:\/\/x\/run\/1\) \|/);
     assert.match(body, /\| Head \| `ffffffffffff` \|/);
     assert.match(body, /\| Built by \| Factorial `0123456789ab` \|/);
+    assert.match(body, /\| Artefacts \| `7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c\/1\/` \|/);
     // the closing reference sits between the summary and the evidence
     assert.match(body, /Fixed it\.\n\nCloses #7\n\n---\n/);
   });

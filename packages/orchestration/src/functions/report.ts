@@ -4,10 +4,11 @@
  */
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
+import { artefactPrefix, putJsonArtefact, testResultArtefact } from '../lib/artefacts.ts';
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { redactSecrets } from '../lib/shell.ts';
-import { recordProgress } from '../lib/table.ts';
+import { attemptRecord, recordProgress } from '../lib/table.ts';
 
 interface ReportInput {
   status: 'no-changes' | 'tests-failed' | 'failed';
@@ -16,7 +17,7 @@ interface ReportInput {
   /** The raw WorkItem, for failures before Prepare completed. */
   workItem?: unknown;
   summary?: string;
-  error?: { Error?: string; Cause?: string };
+  error?: { Error?: string | undefined; Cause?: string };
   sessionIdHint?: string | undefined;
   /** What Collect pushed, if it ran: after a failed build, the saved work in progress. */
   saved?: { pushed?: boolean; commitCount?: number } | null;
@@ -51,6 +52,49 @@ export function reportMessage(input: ReportInput): string {
   }
 }
 
+/** `report.json`: the outcome and a short reason. Causes are kept, redacted, for the reviewer. */
+export function reportArtefact(input: Pick<ReportInput, 'status' | 'error' | 'saved'>): Record<string, unknown> {
+  const reasons = {
+    'no-changes': 'The agent made no changes.',
+    'tests-failed': "The change did not pass the repository's checks.",
+    failed: `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
+  };
+  return {
+    outcome: input.status,
+    reason: reasons[input.status],
+    ...(input.error ? { error: { Error: input.error.Error, Cause: input.error.Cause?.slice(0, 4000) } } : {}),
+    ...(input.saved?.pushed ? { savedWork: true } : {}),
+  };
+}
+
+/**
+ * The attempt's prefix: from the context once Prepare has run, otherwise from
+ * the ledger row if Prepare got that far, otherwise attempt 1.
+ */
+async function prefixFor(input: ReportInput, workItem: WorkItem): Promise<string> {
+  if (input.ctx) return input.ctx.artefactPrefix;
+  try {
+    const record = await attemptRecord(workItem.id);
+    if (record?.artefactPrefix) return record.artefactPrefix;
+  } catch (error) {
+    console.log(JSON.stringify({ message: 'no ledger row for artefacts', workItemId: workItem.id, error: String(error) }));
+  }
+  return artefactPrefix(workItem.id, 1);
+}
+
+/** Store the outcome, and for failed tests their result. Never stops the requester being told. */
+async function storeArtefacts(input: ReportInput, workItem: WorkItem): Promise<void> {
+  try {
+    const prefix = await prefixFor(input, workItem);
+    if (input.status === 'tests-failed') {
+      await putJsonArtefact(prefix, 'test/result.json', testResultArtefact(safeJson(input.error?.Cause) ?? {}));
+    }
+    await putJsonArtefact(prefix, 'report.json', reportArtefact(input));
+  } catch (error) {
+    console.log(JSON.stringify({ message: 'artefacts not stored', workItemId: workItem.id, error: String(error) }));
+  }
+}
+
 function safeJson(text: string | undefined): Record<string, unknown> | undefined {
   if (!text) return undefined;
   try {
@@ -81,6 +125,7 @@ export const handler = async (input: ReportInput): Promise<void> => {
   if (!workItem) return;
 
   await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
+  await storeArtefacts({ ...input, ...(error ? { error } : {}) }, workItem);
   const issue = issueNumber(workItem);
   if (issue === undefined) return;
 

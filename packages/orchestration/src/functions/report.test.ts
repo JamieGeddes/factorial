@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { reportMessage, savedWorkNote } from './report.ts';
+import { reportArtefact, reportMessage, savedWorkNote } from './report.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -21,6 +21,8 @@ const ctx: WorkContext = {
   baseBranch: 'main',
   baseCommit: 'b'.repeat(40),
   factorialVersion: '0123456789abcdef0123456789abcdef01234567',
+  attempt: 1,
+  artefactPrefix: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c/1/',
 };
 
 describe('reportMessage', () => {
@@ -71,5 +73,19 @@ describe('saved work after a failure', () => {
     assert.equal(savedWorkNote({ ctx, saved: { pushed: false, commitCount: 0 } }), '');
     assert.equal(savedWorkNote({ ctx, saved: null }), '');
     assert.equal(savedWorkNote({ saved: { pushed: true, commitCount: 2 } }), '');
+  });
+});
+
+describe('reportArtefact', () => {
+  it('records the outcome and a reason for each terminal status', () => {
+    assert.deepEqual(reportArtefact({ status: 'no-changes' }), { outcome: 'no-changes', reason: 'The agent made no changes.' });
+    assert.equal(reportArtefact({ status: 'tests-failed' }).outcome, 'tests-failed');
+  });
+
+  it('names the failing error and keeps the cause for the reviewer', () => {
+    const record = reportArtefact({ status: 'failed', error: { Error: 'States.TaskFailed', Cause: 'clone failed' }, saved: { pushed: true } });
+    assert.equal(record.reason, 'A step failed: States.TaskFailed.');
+    assert.deepEqual(record.error, { Error: 'States.TaskFailed', Cause: 'clone failed' });
+    assert.equal(record.savedWork, true);
   });
 });

@@ -11,6 +11,8 @@ export interface Attempt {
   status?: string;
   branch?: string;
   savedWork?: boolean;
+  /** Not projected into the source index; read from the attempt's own row. */
+  attempt?: number;
 }
 
 /** The ledger key that groups attempts at the same source in the same repository. */
@@ -34,4 +36,13 @@ export function resumableAttempt(attempts: readonly Attempt[], currentId: string
     return resumable && attempt.branch ? attempt : undefined;
   }
   return undefined;
+}
+
+/**
+ * The attempt number for a new item: one more than the attempt it resumes,
+ * or 1 when it starts afresh. Rows written before attempts were numbered
+ * count as attempt 1.
+ */
+export function nextAttempt(resumedFrom?: Pick<Attempt, 'attempt'>): number {
+  return resumedFrom ? (resumedFrom.attempt ?? 1) + 1 : 1;
 }
