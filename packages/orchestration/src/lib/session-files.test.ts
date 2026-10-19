@@ -5,6 +5,7 @@ import {
   MAX_FILE_BYTES,
   MAX_LOG_TOTAL_BYTES,
   batches,
+  dropPartialFirstLine,
   fetchScript,
   parseFetch,
   parseListing,
@@ -103,6 +104,13 @@ describe('fetching', () => {
     const [a, b] = parseFetch(stdout, 2);
     assert.equal(a?.toString('utf8'), 'hello');
     assert.equal(b, undefined);
+  });
+
+  it('drops the partial first line of a file read from its end', () => {
+    const token = `ghs_${'C'.repeat(36)}`;
+    const tail = Buffer.from(`${token.slice(10)} leaked\nnext line\n`);
+    assert.equal(dropPartialFirstLine(tail).toString(), 'next line\n');
+    assert.equal(dropPartialFirstLine(Buffer.from('no newline at all')).length, 0);
   });
 
   it('refuses output that is not what the script prints', () => {

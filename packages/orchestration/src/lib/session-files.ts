@@ -150,6 +150,15 @@ export function parseFetch(stdout: string, count: number): Array<Buffer | undefi
   });
 }
 
+/**
+ * A file read from its end starts mid-line, possibly mid-credential, where
+ * redaction cannot recognise what is left. Drop that partial line.
+ */
+export function dropPartialFirstLine(content: Buffer): Buffer {
+  const newline = content.indexOf(0x0a);
+  return newline === -1 ? Buffer.alloc(0) : content.subarray(newline + 1);
+}
+
 function contentType(path: string): string {
   return path.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8';
 }
@@ -180,8 +189,9 @@ export async function exportSessionFiles(target: SessionTarget, prefix: string):
         gone.push(file.name);
         continue;
       }
-      await putArtefact(prefix, file.path, content.toString('utf8'), contentType(file.path));
-      stored.push({ name: file.name, path: file.path, bytes: file.bytes, storedBytes: content.length, truncated: file.truncated });
+      const kept = file.truncated ? dropPartialFirstLine(content) : content;
+      await putArtefact(prefix, file.path, kept.toString('utf8'), contentType(file.path));
+      stored.push({ name: file.name, path: file.path, bytes: file.bytes, storedBytes: kept.length, truncated: file.truncated });
     }
   }
   await putJsonArtefact(prefix, 'build/logs/index.json', {
