@@ -17,6 +17,24 @@ describe('redactSecrets', () => {
     assert.doesNotMatch(out, /pppp|ssss/);
   });
 
+  it('masks tokens after a newline or a colour code once text is JSON-encoded', () => {
+    const token = `ghs_${'A'.repeat(36)}`;
+    for (const text of [`line\n${token}`, `\u001b[0m${token}`, `\u001b[1;31m${token}`, `tab\t${token}`]) {
+      const out = redactSecrets(JSON.stringify({ text }));
+      assert.doesNotMatch(out, /AAAA/, JSON.stringify(text));
+      assert.match(out, /ghs_\*\*\*/);
+      assert.doesNotThrow(() => JSON.parse(out));
+    }
+  });
+
+  it('masks a token straight after a colour sequence in raw text', () => {
+    assert.equal(redactSecrets(`\u001b[32mghs_${'A'.repeat(36)}`), '\u001b[32mghs_***');
+  });
+
+  it('does not mask a token-like suffix inside a longer word', () => {
+    assert.equal(redactSecrets('laughs_loudly'), 'laughs_loudly');
+  });
+
   it('leaves ordinary text alone', () => {
     assert.equal(redactSecrets('git exited 128: not a repository'), 'git exited 128: not a repository');
   });
