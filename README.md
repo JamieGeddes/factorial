@@ -8,8 +8,8 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 
 | Path | Contents |
 |---|---|
-| `contracts/` | Language-neutral, versioned contracts. `contracts/workitem/` is Factorial's API. |
-| `packages/` | TypeScript workspaces. `@factorial/workitem` validates the `WorkItem` contract; `@factorial/artefacts` holds the artefact store's key layout, redaction and upload; `@factorial/log` writes the structured log lines. |
+| `contracts/` | Language-neutral, versioned contracts. `contracts/workitem/` is Factorial's API; `contracts/plan/` is the planner's output, internal but versioned the same way. |
+| `packages/` | TypeScript workspaces. `@factorial/workitem` validates the `WorkItem` contract; `@factorial/artefacts` holds the artefact store's key layout, redaction and upload; `@factorial/log` writes the structured log lines; `@factorial/plan` validates plans. |
 | `templates/` | CloudFormation templates (`.yml`). |
 | `scripts/` | Repository tooling, in TypeScript, run directly by Node. |
 | `.github/workflows/` | CI and deployment. All deployments run through GitHub Actions. |
