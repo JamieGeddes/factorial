@@ -5,14 +5,28 @@
  * (CloudWatch Logs), records the outcome, and exits. Step Functions resumes
  * when the task stops, however long the build took. Nothing inside the agent
  * sandbox can influence this process: it runs under its own task role.
+ *
+ * Every stream event is also buffered to disk and, however the build ends
+ * (finished, failed, or the task stopped), stored with the run's usage as
+ * `build/transcript.jsonl` and `build/usage.json` in the artefact store.
  */
+import { readFileSync } from 'node:fs';
+
 import { BedrockAgentCoreClient, InvokeHarnessCommand } from '@aws-sdk/client-bedrock-agentcore';
+import {
+  BedrockAgentCoreControlClient,
+  GetHarnessCommand,
+  GetHarnessEndpointCommand,
+} from '@aws-sdk/client-bedrock-agentcore-control';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
+import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts';
 import { assertWorkItem } from '@factorial/workitem';
 
 import { buildPrompt } from './prompt.ts';
+import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
+import { TranscriptBuffer } from './transcript.ts';
 import { addCallUsage, emptyRunUsage, type CallUsage } from './usage.ts';
 
 function requireEnv(name: string): string {
@@ -23,6 +37,7 @@ function requireEnv(name: string): string {
 
 const tableName = requireEnv('TABLE_NAME');
 const harnessArn = requireEnv('HARNESS_ARN');
+const harnessId = requireEnv('HARNESS_ID');
 const qualifier = requireEnv('HARNESS_QUALIFIER');
 const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
@@ -35,6 +50,7 @@ const timeoutSeconds = Number(process.env.TIMEOUT_SECONDS ?? '3600');
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 const agentcore = new BedrockAgentCoreClient({ requestHandler: { requestTimeout: (timeoutSeconds + 300) * 1000 } });
+const control = new BedrockAgentCoreControlClient({});
 
 function log(entry: Record<string, unknown>): void {
   console.log(JSON.stringify({ workItemId, ...entry }));
@@ -63,16 +79,108 @@ async function record(status: string, attributes: Record<string, unknown>): Prom
   );
 }
 
+/** The run so far, shared with the stop handler so an interrupted build still records it. */
+const run = {
+  prefix: undefined as string | undefined,
+  harness: {} as HarnessInfo,
+  startedAt: Date.now(),
+  stopReason: undefined as string | undefined,
+  interrupted: false,
+  toolCalls: 0,
+  usage: emptyRunUsage(),
+  calls: [] as CallUsage[],
+  error: undefined as string | undefined,
+};
+const transcript = new TranscriptBuffer('/tmp/transcript.jsonl');
+
+/** The version `live` serves and its model. Best effort: the build goes ahead without it. */
+async function harnessInfo(): Promise<HarnessInfo> {
+  try {
+    const { endpoint } = await control.send(new GetHarnessEndpointCommand({ harnessId, endpointName: qualifier }));
+    const harnessVersion = endpoint?.liveVersion ?? endpoint?.targetVersion;
+    const { harness } = await control.send(new GetHarnessCommand({ harnessId, ...(harnessVersion ? { harnessVersion } : {}) }));
+    const modelId = modelIdOf(harness?.model);
+    return {
+      ...(harness?.harnessName ? { harnessName: harness.harnessName } : {}),
+      ...(harnessVersion ? { harnessVersion } : {}),
+      ...(modelId ? { modelId } : {}),
+    };
+  } catch (error) {
+    log({ message: 'harness version unknown', error: String(error) });
+    return {};
+  }
+}
+
+/** Upload the transcript and usage. Returns the ledger pointer: keys and sizes, never content. */
+async function storeBuildRecord(): Promise<Record<string, unknown> | undefined> {
+  const kept = transcript.close();
+  if (!run.prefix) {
+    log({ message: 'no artefact prefix on the ledger row; build record not stored' });
+    return undefined;
+  }
+  try {
+    await putArtefact(run.prefix, 'build/transcript.jsonl', readFileSync(transcript.path, 'utf8'), 'application/x-ndjson');
+    await putJsonArtefact(
+      run.prefix,
+      'build/usage.json',
+      usageRecord({ ...run, endedAt: Date.now() }),
+    );
+    log({ message: 'build record stored', transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
+    return {
+      transcriptKey: artefactKey(run.prefix, 'build/transcript.jsonl'),
+      usageKey: artefactKey(run.prefix, 'build/usage.json'),
+      transcriptBytes: kept.bytes,
+      transcriptTruncated: kept.truncated,
+    };
+  } catch (error) {
+    log({ message: 'build record not stored', error: String(error) });
+    return undefined;
+  }
+}
+
+let finished: Promise<void> | undefined;
+
+/** Store the build record and the outcome exactly once, whichever way the build ends. */
+function finish(status: 'built' | 'build-error'): Promise<void> {
+  finished ??= (async () => {
+    const build = await storeBuildRecord();
+    const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
+    const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
+    log({ message: 'harness finished', stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage });
+    await record(status, {
+      stopReason,
+      toolCalls: run.toolCalls,
+      buildDurationSeconds: durationSeconds,
+      usage: run.usage,
+      buildError: run.error,
+      build,
+    });
+  })();
+  return finished;
+}
+
+// ECS stops the task (a Step Functions timeout, or by hand) with SIGTERM,
+// then SIGKILL after the container's stop timeout. Record what there is.
+process.once('SIGTERM', () => {
+  run.interrupted = true;
+  run.error ??= 'interrupted';
+  log({ message: 'invoker interrupted' });
+  void finish('build-error').finally(() => process.exit(1));
+});
+
 async function main(): Promise<number> {
   const row = await documents.send(new GetCommand({ TableName: tableName, Key: { workItemId } }));
   const workItem: unknown = row.Item?.workItem;
   assertWorkItem(workItem);
+  run.prefix = typeof row.Item?.artefactPrefix === 'string' ? row.Item.artefactPrefix : undefined;
 
   const prompt = buildPrompt(workItem, branch, baseBranch);
-  log({ message: 'invoking harness', sessionId, qualifier, maxIterations, timeoutSeconds });
+  run.harness = await harnessInfo();
+  log({ message: 'invoking harness', sessionId, qualifier, maxIterations, timeoutSeconds, ...run.harness });
   await record('building', { buildStartedAt: new Date().toISOString() });
 
-  const started = Date.now();
+  run.startedAt = Date.now();
+  transcript.append({ request: { prompt, maxIterations, timeoutSeconds, ...run.harness } });
   const response = await agentcore.send(
     new InvokeHarnessCommand({
       harnessArn,
@@ -84,18 +192,13 @@ async function main(): Promise<number> {
     }),
   );
 
-  let stopReason: string | undefined;
-  // One usage record arrives per model call; the run's consumption is their sum.
-  let usage = emptyRunUsage();
-  let toolCalls = 0;
   let text = '';
-  let streamError: string | undefined;
-
   for await (const event of response.stream ?? []) {
+    transcript.append(event);
     if (event.messageStart) {
       log({ message: 'message start', role: event.messageStart.role });
     } else if (event.contentBlockStart?.start?.toolUse) {
-      toolCalls += 1;
+      run.toolCalls += 1;
       log({ message: 'tool use', tool: event.contentBlockStart.start.toolUse.name });
     } else if (event.contentBlockDelta?.delta?.text) {
       text += event.contentBlockDelta.delta.text;
@@ -108,28 +211,22 @@ async function main(): Promise<number> {
         text = '';
       }
     } else if (event.messageStop) {
-      stopReason = event.messageStop.stopReason;
-      log({ message: 'message stop', stopReason });
+      run.stopReason = event.messageStop.stopReason;
+      log({ message: 'message stop', stopReason: run.stopReason });
     } else if (event.metadata) {
-      usage = addCallUsage(usage, event.metadata.usage as CallUsage | undefined);
+      // One usage record arrives per model call; the run's consumption is their sum.
+      const call = event.metadata.usage as CallUsage | undefined;
+      run.usage = addCallUsage(run.usage, call);
+      if (call) run.calls.push(call);
     } else if (event.internalServerException || event.validationException || event.runtimeClientError) {
       const error = event.internalServerException ?? event.validationException ?? event.runtimeClientError;
-      streamError = `${error?.name ?? 'StreamError'}: ${error?.message ?? ''}`;
-      log({ message: 'stream error', error: streamError });
+      run.error = `${error?.name ?? 'StreamError'}: ${error?.message ?? ''}`;
+      log({ message: 'stream error', error: run.error });
     }
   }
 
-  const durationSeconds = Math.round((Date.now() - started) / 1000);
-  log({ message: 'harness finished', stopReason, toolCalls, durationSeconds, usage });
-  await record(streamError ? 'build-error' : 'built', {
-    stopReason,
-    toolCalls,
-    buildDurationSeconds: durationSeconds,
-    usage,
-    buildError: streamError,
-  });
-
-  if (streamError) return 1;
+  await finish(run.error ? 'build-error' : 'built');
+  if (run.error) return 1;
   // max_iterations or a timeout may still have produced a usable commit; the
   // Collect step decides. Only a transport or service error is fatal here.
   return 0;
@@ -138,7 +235,8 @@ async function main(): Promise<number> {
 main().then(
   (code) => process.exit(code),
   (error: unknown) => {
-    log({ message: 'invoker failed', error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });
-    record('build-error', { buildError: error instanceof Error ? error.message : String(error) }).finally(() => process.exit(1));
+    run.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    log({ message: 'invoker failed', error: run.error });
+    finish('build-error').finally(() => process.exit(1));
   },
 );

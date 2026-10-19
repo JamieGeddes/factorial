@@ -1,0 +1,17 @@
+{
+  "name": "@factorial/artefacts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The artefact store: key layout, redaction and upload, shared by the orchestrator and the invoker",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1152.0"
+  }
+}

@@ -2,13 +2,13 @@
  * Report: close the loop with the requester when no pull request will follow,
  * whether because the agent made no changes, tests failed, or a step errored.
  */
+import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
-import { artefactPrefix, putJsonArtefact, testResultArtefact } from '../lib/artefacts.ts';
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
-import { redactSecrets } from '../lib/shell.ts';
 import { attemptRecord, recordProgress } from '../lib/table.ts';
+import { testResultArtefact } from '../lib/test-result.ts';
 
 interface ReportInput {
   status: 'no-changes' | 'tests-failed' | 'failed';

@@ -1,6 +1,8 @@
 /**
  * Collect: after the agent finishes, inspect its session deterministically,
  * commit anything it left uncommitted, and bring back the summary it wrote.
+ * Before pushing, it stores the session's files and the bundle in the
+ * artefact store, so the record survives the session.
  *
  * The agent's session is treated as hostile once the agent has run: it may
  * have planted git hooks, configuration or background processes. So no
@@ -8,9 +10,12 @@
  * bundle (pure data), and the push happens in a separate clean-room session
  * from a pristine clone, with hooks disabled and the token sent as a header.
  */
+import { putBinaryArtefact, redactSecrets } from '@factorial/artefacts';
+
 import { type WorkContext, reworkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
-import { cleanRoomTarget, mustRun, runCommand, sessionTarget } from '../lib/session.ts';
+import { cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
+import { exportSessionFiles } from '../lib/session-files.ts';
 import {
   HARDENED_GIT_ENV,
   assertCommitSha,
@@ -18,7 +23,6 @@ import {
   assertGitHubName,
   assertGitIdentity,
   gitAuthHeader,
-  redactSecrets,
   shellQuote,
 } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
@@ -163,6 +167,27 @@ export function cleanRoomPushScript(params: {
   ].join('\n');
 }
 
+/**
+ * Store the session's files. The record must not cost the work: a failure
+ * here is logged, and the push goes ahead.
+ */
+async function storeSessionFiles(target: SessionTarget, ctx: WorkContext): Promise<void> {
+  try {
+    const summary = await exportSessionFiles(target, ctx.artefactPrefix);
+    console.log(JSON.stringify({ message: 'session files stored', workItemId: ctx.workItem.id, ...summary }));
+  } catch (error) {
+    console.log(JSON.stringify({ message: 'session files not stored', workItemId: ctx.workItem.id, error: redactSecrets(String(error)) }));
+  }
+}
+
+async function storeBundle(ctx: WorkContext, bundleBase64: string): Promise<void> {
+  try {
+    await putBinaryArtefact(ctx.artefactPrefix, 'build/bundle.git', Buffer.from(bundleBase64, 'base64'), 'application/octet-stream');
+  } catch (error) {
+    console.log(JSON.stringify({ message: 'bundle not stored', workItemId: ctx.workItem.id, error: redactSecrets(String(error)) }));
+  }
+}
+
 export interface CollectInput extends WorkContext {
   /**
    * Set when the build failed: push whatever the agent left so the work is
@@ -183,6 +208,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
   const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
+  await storeSessionFiles(agentSession, ctx);
 
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
@@ -195,6 +221,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');
   }
+  await storeBundle(ctx, bundleBase64);
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
   const identity = await commitIdentity(repo);

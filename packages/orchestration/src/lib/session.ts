@@ -6,8 +6,9 @@
  */
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand } from '@aws-sdk/client-bedrock-agentcore';
 
+import { redactSecrets } from '@factorial/artefacts';
+
 import { requireEnv } from './env.ts';
-import { redactSecrets } from './shell.ts';
 
 export interface CommandResult {
   stdout: string;

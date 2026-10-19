@@ -2,9 +2,9 @@
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
+import { artefactPrefix } from '@factorial/artefacts';
 import type { WorkItem } from '@factorial/workitem';
 
-import { artefactPrefix } from './artefacts.ts';
 import { requireEnv } from './env.ts';
 import { sourceKey, type Attempt } from './resume.ts';
 
