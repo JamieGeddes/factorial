@@ -1,6 +1,7 @@
 import type { WorkItem } from '@factorial/workitem';
 
 import type { WorkContext } from '../lib/context.ts';
+import type { PlanDigest } from '../lib/plan-files.ts';
 
 export interface TestResult {
   runUrl?: string;
@@ -25,9 +26,41 @@ export function closingReference(workItem: WorkItem): string | undefined {
   return sameRepo ? `Closes #${number}` : `Closes ${owner}/${repo}#${number}`;
 }
 
-/** The pull request description: the agent's summary, the closing reference, then the evidence. */
-export function pullRequestBody(ctx: WorkContext, summary: string, test: TestResult, headSha: string): string {
-  const summaryText = summary.trim() || '_The agent did not write a summary._';
+/** The heading the builder's prompt asks it to report each plan step under, in summary.md. */
+export const PLAN_STEPS_HEADING = '## Plan steps';
+
+/** Take the builder's report on the plan's steps out of its summary, so it can sit with the plan. */
+export function splitPlanSteps(summary: string): { rest: string; steps?: string } {
+  const lines = summary.split('\n');
+  const start = lines.findIndex((line) => line.trim().toLowerCase() === PLAN_STEPS_HEADING.toLowerCase());
+  if (start === -1) return { rest: summary };
+  const after = lines.slice(start + 1);
+  const next = after.findIndex((line) => /^#{1,2} /.test(line));
+  const end = next === -1 ? lines.length : start + 1 + next;
+  const steps = lines.slice(start + 1, end).join('\n').trim();
+  const rest = [...lines.slice(0, start), ...lines.slice(end)].join('\n').trim();
+  return { rest, ...(steps ? { steps } : {}) };
+}
+
+/** The plan the builder followed, and the builder's account of each step. */
+export function planSection(plan: PlanDigest, builderSteps: string | undefined): string {
+  return [
+    '## Plan',
+    '',
+    plan.summary.trim(),
+    '',
+    ...plan.steps.map((step, i) => `${i + 1}. \`${step.id}\`: ${step.description}`),
+    '',
+    '### How the builder followed it',
+    '',
+    builderSteps ?? '_The builder did not report on the plan\'s steps._',
+  ].join('\n');
+}
+
+/** The pull request description: the agent's summary, the plan, the closing reference, then the evidence. */
+export function pullRequestBody(ctx: WorkContext, summary: string, test: TestResult, headSha: string, plan?: PlanDigest): string {
+  const { rest, steps } = plan ? splitPlanSteps(summary) : { rest: summary, steps: undefined };
+  const summaryText = (rest.trim() || '_The agent did not write a summary._') + (plan ? `\n\n${planSection(plan, steps)}` : '');
   const rows: Array<[string, string]> = [
     ['Work item', `[${ctx.workItem.source.type} ${ctx.workItem.source.id}](${ctx.workItem.source.url})`],
     ['Requested by', `@${ctx.workItem.requestedBy}`],

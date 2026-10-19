@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { closingReference, pullRequestBody } from './pr-body.ts';
+import { closingReference, planSection, pullRequestBody, splitPlanSteps } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -59,5 +59,44 @@ describe('closingReference', () => {
   it('is absent for other triggers or an unrecognised url', () => {
     assert.equal(closingReference({ ...ctx.workItem, source: { type: 'jira-ticket', id: 'FAC-1', url: 'https://x.atlassian.net/browse/FAC-1' } }), undefined);
     assert.equal(closingReference({ ...ctx.workItem, source: { ...ctx.workItem.source, url: 'https://evil.example/JamieGeddes/factorial/issues/7' } }), undefined);
+  });
+});
+
+describe('plan in the pull request body', () => {
+  const plan = {
+    summary: 'Reject bad quantities.',
+    steps: [
+      { id: 'validate-quantity', description: 'Check quantity is a positive integer.' },
+      { id: 'handler-tests', description: 'Add tests.' },
+    ],
+  };
+
+  it("takes the builder's step report out of the summary", () => {
+    const summary = '# Done\n\nAdded validation.\n\n## Plan steps\n\n- validate-quantity: done\n- handler-tests: changed, reason\n\n## Verification\n\nnpm test';
+    const { rest, steps } = splitPlanSteps(summary);
+    assert.equal(steps, '- validate-quantity: done\n- handler-tests: changed, reason');
+    assert.equal(rest, '# Done\n\nAdded validation.\n\n## Verification\n\nnpm test');
+  });
+
+  it('leaves a summary without a step report unchanged', () => {
+    assert.deepEqual(splitPlanSteps('# Done'), { rest: '# Done' });
+  });
+
+  it('lists the plan steps and says when the builder did not report on them', () => {
+    const section = planSection(plan, undefined);
+    assert.match(section, /^## Plan\n\nReject bad quantities\.\n\n1\. `validate-quantity`: Check quantity/);
+    assert.match(section, /_The builder did not report on the plan's steps\._/);
+  });
+
+  it('puts the plan after the summary and before the evidence table', () => {
+    const body = pullRequestBody(ctx, '# Done\n\n## Plan steps\n\n- validate-quantity: done', {}, 'f'.repeat(40), plan);
+    assert.ok(body.indexOf('# Done') < body.indexOf('## Plan'));
+    assert.ok(body.indexOf('## Plan') < body.indexOf('| Work item |'));
+    assert.match(body, /### How the builder followed it\n\n- validate-quantity: done/);
+    assert.equal(body.match(/## Plan steps/g), null);
+  });
+
+  it('has no plan section without a plan', () => {
+    assert.doesNotMatch(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40)), /## Plan/);
   });
 });

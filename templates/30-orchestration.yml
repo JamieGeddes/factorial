@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
   Factorial orchestration: the work ledger, the Step Functions state machine
-  (build -> test -> PR) with its live alias, the rule that starts it from the
+  (plan -> build -> test -> PR) with its live alias, the rule that starts it from the
   work bus, the Fargate invoker that runs the harness, and the Lambda steps
   around the agent. Deployed by GitHub Actions.
 
@@ -15,6 +15,10 @@ Parameters:
     Type: String
     Description: Git commit of Factorial being deployed. Stamped on every WorkItem it handles.
     AllowedPattern: '^[0-9a-f]{7,40}$'
+  PlanTimeoutSeconds:
+    Type: Number
+    Default: 2400
+    Description: Upper bound for one planner run, above the planner harness's own 1800-second loop timeout.
   BuildTimeoutSeconds:
     Type: Number
     Default: 7200
@@ -51,6 +55,7 @@ Globals:
         TABLE_NAME: !Ref WorkItemsTable
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
         HARNESS_ARN: !ImportValue Factorial-BuilderHarnessArn
+        PLANNER_HARNESS_ARN: !ImportValue Factorial-PlannerHarnessArn
         HARNESS_QUALIFIER: live
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
@@ -399,7 +404,7 @@ Resources:
             Statement:
               # Each role's harness the state machine runs is listed here
               # when its stage is added.
-              - Sid: InvokeBuilder
+              - Sid: InvokeHarnesses
                 Effect: Allow
                 Action:
                   - bedrock-agentcore:InvokeHarness
@@ -411,8 +416,14 @@ Resources:
                     - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
-              # Which version live serves, and its model, for build/usage.json.
-              - Sid: ReadBuilderVersion
+                  - !ImportValue Factorial-PlannerHarnessArn
+                  - !Sub
+                    - ${HarnessArn}/harness-endpoint/*
+                    - HarnessArn: !ImportValue Factorial-PlannerHarnessArn
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*/runtime-endpoint/*
+              # Which version live serves, its model and its limits, for usage.json.
+              - Sid: ReadHarnessVersions
                 Effect: Allow
                 Action:
                   - bedrock-agentcore:GetHarness
@@ -422,6 +433,10 @@ Resources:
                   - !Sub
                     - ${HarnessArn}/harness-endpoint/*
                     - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
+                  - !ImportValue Factorial-PlannerHarnessArn
+                  - !Sub
+                    - ${HarnessArn}/harness-endpoint/*
+                    - HarnessArn: !ImportValue Factorial-PlannerHarnessArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
@@ -481,6 +496,11 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-prepare
       RetentionInDays: !Ref LogRetentionDays
+  CollectPlanLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-collect-plan
+      RetentionInDays: !Ref LogRetentionDays
   CollectLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -525,6 +545,26 @@ Resources:
               Effect: Allow
               Action: dynamodb:Query
               Resource: !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
+        - !Ref SessionCommandPolicy
+        - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
+
+  CollectPlanFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-collect-plan
+      Description: Read and validate the planner's plan, store it, and set up the builder's session with it.
+      CodeUri: ../packages/orchestration/dist/collect-plan/
+      Handler: index.handler
+      Timeout: 900
+      LoggingConfig:
+        LogGroup: !Ref CollectPlanLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
@@ -612,7 +652,7 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: factorial-session-command
-      Description: Run deterministic commands in the builder harness session.
+      Description: Run deterministic commands in the planner and builder harness sessions.
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -627,6 +667,12 @@ Resources:
                 - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
+              - !ImportValue Factorial-PlannerHarnessArn
+              - !Sub
+                - ${HarnessArn}/harness-endpoint/*
+                - HarnessArn: !ImportValue Factorial-PlannerHarnessArn
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*/runtime-endpoint/*
 
   # Only orchestrator functions, outside the agent sandbox, may read the App
   # key and mint tokens.
@@ -723,6 +769,7 @@ Resources:
                 Action: lambda:InvokeFunction
                 Resource:
                   - !Ref PrepareFunction.Alias
+                  - !Ref CollectPlanFunction.Alias
                   - !Ref CollectFunction.Alias
                   - !Ref DispatchTestsFunction.Alias
                   - !Ref OpenPullRequestFunction.Alias
@@ -799,9 +846,11 @@ Resources:
         Enabled: true
       DefinitionSubstitutions:
         FactorialVersion: !Ref FactorialVersion
+        PlanTimeoutSeconds: !Ref PlanTimeoutSeconds
         BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
         TestTimeoutSeconds: !Ref TestTimeoutSeconds
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
+        CollectPlanFunctionAlias: !Ref CollectPlanFunction.Alias
         CollectFunctionAlias: !Ref CollectFunction.Alias
         DispatchTestsFunctionAlias: !Ref DispatchTestsFunction.Alias
         OpenPullRequestFunctionAlias: !Ref OpenPullRequestFunction.Alias
@@ -810,12 +859,14 @@ Resources:
         TaskDefinitionArn: !Ref InvokerTaskDefinition
         BuilderHarnessArn: !ImportValue Factorial-BuilderHarnessArn
         BuilderHarnessId: !ImportValue Factorial-BuilderHarnessId
+        PlannerHarnessArn: !ImportValue Factorial-PlannerHarnessArn
+        PlannerHarnessId: !ImportValue Factorial-PlannerHarnessId
         SubnetA: !Ref SubnetA
         SubnetB: !Ref SubnetB
         SecurityGroup: !Ref InvokerSecurityGroup
       DefinitionString: |
         {
-          "Comment": "Factorial Stage 0: build -> test -> PR. Deterministic; the agent runs inside Build.",
+          "Comment": "Factorial: plan -> build -> test -> PR. Deterministic; the agents run inside Plan and Build.",
           "QueryLanguage": "JSONata",
           "StartAt": "Start",
           "States": {
@@ -826,7 +877,9 @@ Resources:
                 "ctx": null,
                 "collect": null,
                 "test": null,
-                "failure": null
+                "failure": null,
+                "planAttempt": 1,
+                "plan": null
               },
               "Output": { "workItemId": "{% $states.input.id %}" },
               "Next": "Prepare"
@@ -859,7 +912,82 @@ Resources:
                 { "ErrorEquals": ["DuplicateWorkItem"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "Duplicate" },
                 { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
-              "Next": "Build"
+              "Next": "Plan"
+            },
+            "Plan": {
+              "Type": "Task",
+              "Comment": "The planner reads the repository in its own session and writes plan.md and plan.json. Nothing from its session is pushed.",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Arguments": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${TaskDefinitionArn}",
+                "LaunchType": "FARGATE",
+                "PropagateTags": "TASK_DEFINITION",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${SubnetA}", "${SubnetB}"],
+                    "SecurityGroups": ["${SecurityGroup}"],
+                    "AssignPublicIp": "ENABLED"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [
+                    {
+                      "Name": "invoker",
+                      "Environment": [
+                        { "Name": "ROLE", "Value": "planner" },
+                        { "Name": "HARNESS_ARN", "Value": "${PlannerHarnessArn}" },
+                        { "Name": "HARNESS_ID", "Value": "${PlannerHarnessId}" },
+                        { "Name": "HARNESS_QUALIFIER", "Value": "live" },
+                        { "Name": "PLAN_ATTEMPT", "Value": "{% $string($planAttempt) %}" },
+                        { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
+                        { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },
+                        { "Name": "BRANCH", "Value": "{% $ctx.branch %}" },
+                        { "Name": "BASE_BRANCH", "Value": "{% $ctx.baseBranch %}" },
+                        { "Name": "BASE_COMMIT", "Value": "{% $ctx.baseCommit %}" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "TimeoutSeconds": ${PlanTimeoutSeconds},
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "planAttempt": "{% $planAttempt %}", "taskArn": "{% $states.result.TaskArn %}" },
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "CollectPlan"
+            },
+            "CollectPlan": {
+              "Type": "Task",
+              "Comment": "Validate the plan and store it. A valid plan is seeded into a fresh builder session; the first invalid plan sends the planner round again.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${CollectPlanFunctionAlias}",
+                "Payload": { "ctx": "{% $ctx %}", "planAttempt": "{% $planAttempt %}" }
+              },
+              "Assign": {
+                "plan": "{% $states.result.Payload.valid ? $states.result.Payload.plan : null %}",
+                "planAttempt": "{% $states.result.Payload.valid ? $planAttempt : $planAttempt + 1 %}"
+              },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "planAttempt": "{% $planAttempt %}", "valid": "{% $states.result.Payload.valid %}" },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["InvalidPlan"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportInvalidPlan" },
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "PlanAccepted"
+            },
+            "PlanAccepted": {
+              "Type": "Choice",
+              "Choices": [ { "Condition": "{% $plan != null %}", "Next": "Build" } ],
+              "Default": "Plan"
             },
             "Duplicate": { "Type": "Succeed", "Comment": "This WorkItem was already accepted; nothing to do." },
             "Build": {
@@ -952,7 +1080,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}" }
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}", "plan": "{% $plan %}" }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "prNumber": "{% $states.result.Payload.prNumber %}", "prUrl": "{% $states.result.Payload.prUrl %}" },
               "Catch": [
@@ -983,6 +1111,18 @@ Resources:
               "Next": "TestsFailed"
             },
             "TestsFailed": { "Type": "Fail", "Error": "TestsFailed", "Cause": "The change did not pass the repository's checks." },
+            "ReportInvalidPlan": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ReportFunctionAlias}",
+                "Payload": { "status": "invalid-plan", "ctx": "{% $ctx %}", "error": "{% $failure %}" }
+              },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "invalid-plan" },
+              "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "invalid-plan", "error": "{% $states.errorOutput %}" }, "Next": "InvalidPlan" } ],
+              "Next": "InvalidPlan"
+            },
+            "InvalidPlan": { "Type": "Fail", "Error": "InvalidPlan", "Cause": "The planner did not produce a valid plan; the requester was told." },
             "ReportFailure": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",

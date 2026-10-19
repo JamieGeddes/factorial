@@ -89,3 +89,24 @@ describe('reportArtefact', () => {
     assert.equal(record.savedWork, true);
   });
 });
+
+describe('invalid-plan report', () => {
+  it('says nothing was built and lists the problems from the cause', () => {
+    const cause = JSON.stringify({
+      errorType: 'InvalidPlan',
+      errorMessage: 'The planner did not produce a valid plan in 2 attempts:\n- /workspace/plan.json is missing\n- `x` ghs_abcdefghijklmnopqrstuvwxyz0123456789',
+    });
+    const message = reportMessage({ status: 'invalid-plan', error: { Error: 'InvalidPlan', Cause: cause } });
+    assert.match(message, /did not produce a valid plan after two attempts, so nothing was built/);
+    assert.match(message, /- \/workspace\/plan\.json is missing/);
+    assert.doesNotMatch(message, /ghs_abcdefghijklmnopqrstuvwxyz0123456789/);
+    assert.match(message, /- 'x' ghs_\*\*\*/);
+  });
+
+  it('records the outcome in report.json', () => {
+    assert.deepEqual(reportArtefact({ status: 'invalid-plan' }), {
+      outcome: 'invalid-plan',
+      reason: 'The planner did not produce a valid plan after two attempts.',
+    });
+  });
+});

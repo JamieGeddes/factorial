@@ -9,6 +9,9 @@ export interface HarnessInfo {
   harnessName?: string;
   harnessVersion?: string;
   modelId?: string;
+  /** The version's own limits; the invoker passes none at invoke time. */
+  maxIterations?: number;
+  timeoutSeconds?: number;
 }
 
 /** The model id from whichever provider block the harness configuration uses. */

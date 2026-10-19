@@ -12,7 +12,7 @@ import { attemptRecord, recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
 interface ReportInput {
-  status: 'no-changes' | 'tests-failed' | 'failed';
+  status: 'no-changes' | 'tests-failed' | 'failed' | 'invalid-plan';
   /** Present once Prepare has run. */
   ctx?: WorkContext;
   /** The raw WorkItem, for failures before Prepare completed. */
@@ -46,6 +46,15 @@ export function reportMessage(input: ReportInput): string {
       const runUrl = typeof cause?.runUrl === 'string' ? cause.runUrl : undefined;
       return `Factorial's change did not pass the repository's checks${runUrl ? ` ([run](${runUrl}))` : ''}, so no pull request was opened. The branch \`${input.ctx?.branch ?? ''}\` is left for inspection.`;
     }
+    case 'invalid-plan': {
+      // The problems are the validator's messages about the planner's
+      // files, redacted with the cause, and useful to whoever relabels.
+      const problems = invalidPlanProblems(input.error?.Cause);
+      return [
+        `Factorial's planner did not produce a valid plan after two attempts, so nothing was built. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.`,
+        ...(problems.length > 0 ? ['', '**Problems with the last plan:**', '', ...problems.map((p) => `- ${p}`)] : []),
+      ].join('\n');
+    }
     case 'failed':
       // Deliberately generic: causes can contain command output. Details stay
       // in the execution history and the ledger, both inside the account.
@@ -59,6 +68,7 @@ export function reportArtefact(input: Pick<ReportInput, 'status' | 'error' | 'sa
     'no-changes': 'The agent made no changes.',
     'tests-failed': "The change did not pass the repository's checks.",
     failed: `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
+    'invalid-plan': 'The planner did not produce a valid plan after two attempts.',
   };
   return {
     outcome: input.status,
@@ -94,6 +104,17 @@ async function storeArtefacts(input: ReportInput, workItem: WorkItem, log: Logge
   } catch (error) {
     log.error('artefacts not stored', { error });
   }
+}
+
+/** The listed problems from an InvalidPlan error's cause (a Lambda error object as JSON). */
+export function invalidPlanProblems(cause: string | undefined): string[] {
+  const message = safeJson(cause)?.errorMessage;
+  if (typeof message !== 'string') return [];
+  return message
+    .split('\n')
+    .filter((line) => line.startsWith('- '))
+    .map((line) => redactSecrets(line.slice(2)).replace(/`/g, "'"))
+    .slice(0, 10);
 }
 
 function safeJson(text: string | undefined): Record<string, unknown> | undefined {

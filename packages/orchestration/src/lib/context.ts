@@ -1,5 +1,6 @@
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 
+import type { Attempt } from './resume.ts';
 import { assertGitBranch } from './shell.ts';
 
 /** What the state machine carries from Prepare to every later step. */
@@ -19,6 +20,8 @@ export interface WorkContext {
   attempt: number;
   /** `<workItemId>/<attempt>/` in the artefact store. */
   artefactPrefix: string;
+  /** The earlier attempt this item resumes, if any; the builder's session is seeded with it too. */
+  resumedFrom?: Attempt;
 }
 
 export function branchFor(workItem: WorkItem): string {
