@@ -29,6 +29,8 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 | `title`, `body` | The work, as the requester wrote it. |
 | `requestedBy` | Requester identity in the source system. |
 | `createdAt` | When the adapter created the `WorkItem`. |
+| `group` | Optional. The set of items one trigger produced: `id` (UUID, shared by the set), `size` (at least 1) and `index` (1 to `size`). `size` lets a consumer tell when the set is complete. The validator also checks `index` ≤ `size`, which JSON Schema cannot express. |
+| `parentId` | Optional. The `id` of the `WorkItem` whose Plan stage emitted this one. |
 | `context` | Optional structured context about the work. Optional and additive, so existing items are unaffected. A consumer that ignores it still has `body`. |
 
 ### `context`
@@ -48,7 +50,17 @@ A trigger that applies to several repositories produces one `WorkItem` per repos
 
 `repository` stays a single object. Turning it into a list is a breaking change and is not planned.
 
-Linking the items from one trigger, for example an optional `group` field with an id and size so results can be reported back to the source as a set, is deferred until the first multi-repository use case. Adding it would follow the normal contract change process.
+The items from one trigger are linked by `group`, so results can be reported back to the source as a set.
+
+## Lineage
+
+`group` and `parentId` record where an item came from; neither changes how it is handled.
+
+- **`group`**: the items one trigger produced, for example one per repository. Siblings share `group.id`; `size` and `index` say how many there are and which this is.
+- **`parentId`**: the item whose Plan stage split its work into this one.
+- **Rework** is a different relationship (same branch, same pull request) and stays in `context.previousWorkItemId`.
+
+The ledger copies these onto the item's row as `groupId`, `groupSize`, `groupIndex` and `parentId`, so a group's or a parent's items can be listed.
 
 Coordinated changes that must merge in order across repositories are out of scope. If they are needed, they would be expressed as dependencies between items, not as a multi-repository item.
 
@@ -69,5 +81,7 @@ Changing this schema is a deliberate, human-approved decision, never a side effe
 4. Update the examples and the tests in `packages/workitem` in the same PR.
 
 ## Change log
+
+- **2026-10: added the optional `group` and `parentId` lineage fields.** Additive and backwards-compatible: existing items validate unchanged, and the GitHub issue adapter sets neither. Added while there is one adapter and one consumer, ahead of fan-out across repositories and planner-emitted items. Nothing consumes them yet beyond the ledger. A deliberate contract change: additive, optional, stays in `v1`, and needs a drain before promotion.
 
 - **2026-10: added the optional `context` object (`kind: "rework"`).** Additive and backwards-compatible: existing items validate unchanged. Added so rework requests, which previously had to be flattened into `body`, can carry the pull request, branch and review comments as structured data. Nothing consumes the field yet. This is a deliberate contract change: additive, optional, stays in `v1` per the rules above.

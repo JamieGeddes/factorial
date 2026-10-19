@@ -90,6 +90,34 @@
       "type": "string",
       "format": "date-time"
     },
+    "group": {
+      "description": "Optional. The set of WorkItems one trigger produced, e.g. one per repository. `size` lets a consumer tell when the set is complete. `index` must not exceed `size`; JSON Schema cannot compare two fields, so validators check that separately.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "size", "index"],
+      "properties": {
+        "id": {
+          "description": "Identifier shared by every WorkItem in the set.",
+          "type": "string",
+          "format": "uuid"
+        },
+        "size": {
+          "description": "How many WorkItems the set holds.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "index": {
+          "description": "This WorkItem's position in the set, from 1 to `size`.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "parentId": {
+      "description": "Optional. The id of the WorkItem whose Plan stage emitted this one.",
+      "type": "string",
+      "format": "uuid"
+    },
     "context": {
       "description": "Optional structured context about the work. Only present for items that need it, e.g. rework of a previous WorkItem. A consumer that ignores this field still has `body`, which carries the human-readable instruction.",
       "type": "object",

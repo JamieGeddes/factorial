@@ -77,6 +77,16 @@ export interface ReworkContext {
 /** Discriminated union over `context.kind`. Only rework exists today. */
 export type WorkItemContext = ReworkContext;
 
+/** The set of WorkItems one trigger produced. */
+export interface WorkItemGroup {
+  /** Shared by every WorkItem in the set. */
+  id: string;
+  /** How many WorkItems the set holds. */
+  size: number;
+  /** This WorkItem's position in the set, from 1 to `size`. */
+  index: number;
+}
+
 export interface WorkItem {
   schemaVersion: typeof WORKITEM_SCHEMA_VERSION;
   id: string;
@@ -87,6 +97,10 @@ export interface WorkItem {
   requestedBy: string;
   /** RFC 3339 timestamp. */
   createdAt: string;
+  /** Optional: the set of WorkItems one trigger produced. */
+  group?: WorkItemGroup;
+  /** Optional: the WorkItem whose Plan stage emitted this one. */
+  parentId?: string;
   /** Optional structured context. A consumer that ignores it still has `body`. */
   context?: WorkItemContext;
 }
@@ -118,10 +132,19 @@ function describe(error: ErrorObject): string {
   return `${path} ${error.message ?? error.keyword}`;
 }
 
+/** Rules the schema states but cannot express, because they compare two fields. */
+function crossFieldErrors(item: WorkItem): string[] {
+  if (item.group && item.group.index > item.group.size) {
+    return [`/group/index must not exceed /group/size (${item.group.index} > ${item.group.size})`];
+  }
+  return [];
+}
+
 /** Validate an unknown value against the WorkItem schema without throwing. */
 export function validateWorkItem(input: unknown): WorkItemValidationResult {
   if (validate(input)) {
-    return { ok: true, value: input };
+    const errors = crossFieldErrors(input);
+    return errors.length === 0 ? { ok: true, value: input } : { ok: false, errors };
   }
   const errors = (validate.errors ?? []).map(describe);
   return { ok: false, errors };
