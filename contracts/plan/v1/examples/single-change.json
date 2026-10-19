@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "summary": "Reject orders whose quantity is zero or negative in the create-order handler, returning 400 with a message, so invalid orders never reach the database.",
+  "steps": [
+    {
+      "id": "validate-quantity",
+      "description": "In the create-order handler, check that quantity is a positive integer before writing; otherwise return 400 with the body {\"error\": \"quantity must be a positive integer\"}.",
+      "files": ["src/handlers/create-order.ts"],
+      "verification": "npm test -- create-order passes, including the new cases."
+    },
+    {
+      "id": "handler-tests",
+      "description": "Add tests for quantity 0, -1 and 1.5 (rejected with 400) and 1 (accepted).",
+      "files": ["src/handlers/create-order.test.ts"],
+      "verification": "The four new tests pass and fail when the check is removed."
+    }
+  ],
+  "tests": {
+    "run": ["npm run ci"],
+    "add": ["create-order rejects zero, negative and fractional quantities with 400, and accepts 1."]
+  },
+  "risks": ["Clients that send quantity as a string will now be rejected; the API documentation says it is a number."],
+  "openQuestions": ["The request does not say whether there is an upper bound on quantity; the plan adds none."]
+}

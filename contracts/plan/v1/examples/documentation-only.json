@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "summary": "Correct the spelling of \"receive\" in README.md.",
+  "steps": [
+    {
+      "id": "fix-typo",
+      "description": "Replace \"recieve\" with \"receive\" in README.md.",
+      "files": ["README.md"],
+      "verification": "git grep -n recieve returns nothing."
+    }
+  ],
+  "tests": { "run": [], "add": [] },
+  "risks": [],
+  "openQuestions": []
+}

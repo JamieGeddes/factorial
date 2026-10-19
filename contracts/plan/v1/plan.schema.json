@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:plan:v1",
+  "title": "Plan",
+  "description": "What the planner decided to change for one WorkItem, and how to verify it. Written by the planner as /workspace/plan.json, validated by the orchestrator, and followed by the builder. Internal to Factorial, but changed with the same care as the WorkItem contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "summary", "steps", "tests", "risks", "openQuestions"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "summary": {
+      "description": "The change in a few sentences: what it does and why. Shown in the pull request body.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    },
+    "steps": {
+      "description": "The change, in the order the builder should make it. At most 30. Step ids must be unique; validators check that separately, since JSON Schema cannot compare items by a field.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 30,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "description", "files", "verification"],
+        "properties": {
+          "id": {
+            "description": "Short identifier the builder uses to report on the step, e.g. schema or handler-tests.",
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+          },
+          "description": {
+            "description": "What to change in this step.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "files": {
+            "description": "Repository-relative paths the step creates or changes. May be empty when the step changes no file. At most 50.",
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 500,
+              "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"
+            }
+          },
+          "verification": {
+            "description": "How the builder confirms the step is done, e.g. a command and its expected result.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "tests": {
+      "description": "Checks for the whole change.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run", "add"],
+      "properties": {
+        "run": {
+          "description": "Commands to run once the change is made, e.g. npm run ci. At most 20.",
+          "type": "array",
+          "maxItems": 20,
+          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+        },
+        "add": {
+          "description": "Tests to add or change, one sentence each. At most 30.",
+          "type": "array",
+          "maxItems": 30,
+          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+        }
+      }
+    },
+    "risks": {
+      "description": "What could go wrong, for the builder and the human reviewer. At most 20; may be empty.",
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    },
+    "openQuestions": {
+      "description": "What the request leaves undecided, and the assumption the plan makes for each. At most 20; may be empty.",
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+    }
+  }
+}
