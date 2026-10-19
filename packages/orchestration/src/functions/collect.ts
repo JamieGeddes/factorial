@@ -14,6 +14,7 @@ import { putBinaryArtefact, redactSecrets } from '@factorial/artefacts';
 
 import { type WorkContext, reworkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
+import { logged, runKey, type Logger } from '../lib/log.ts';
 import { cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
 import { exportSessionFiles } from '../lib/session-files.ts';
 import {
@@ -171,20 +172,20 @@ export function cleanRoomPushScript(params: {
  * Store the session's files. The record must not cost the work: a failure
  * here is logged, and the push goes ahead.
  */
-async function storeSessionFiles(target: SessionTarget, ctx: WorkContext): Promise<void> {
+async function storeSessionFiles(target: SessionTarget, ctx: WorkContext, log: Logger): Promise<void> {
   try {
     const summary = await exportSessionFiles(target, ctx.artefactPrefix);
-    console.log(JSON.stringify({ message: 'session files stored', workItemId: ctx.workItem.id, ...summary }));
+    log.info('session files stored', { ...summary });
   } catch (error) {
-    console.log(JSON.stringify({ message: 'session files not stored', workItemId: ctx.workItem.id, error: redactSecrets(String(error)) }));
+    log.error('session files not stored', { error });
   }
 }
 
-async function storeBundle(ctx: WorkContext, bundleBase64: string): Promise<void> {
+async function storeBundle(ctx: WorkContext, bundleBase64: string, log: Logger): Promise<void> {
   try {
     await putBinaryArtefact(ctx.artefactPrefix, 'build/bundle.git', Buffer.from(bundleBase64, 'base64'), 'application/octet-stream');
   } catch (error) {
-    console.log(JSON.stringify({ message: 'bundle not stored', workItemId: ctx.workItem.id, error: redactSecrets(String(error)) }));
+    log.error('bundle not stored', { error });
   }
 }
 
@@ -196,7 +197,7 @@ export interface CollectInput extends WorkContext {
   salvage?: boolean;
 }
 
-export const handler = async (input: CollectInput): Promise<CollectResult> => {
+export const handler = logged('collect', (input: CollectInput) => runKey(input), async (input, log): Promise<CollectResult> => {
   const { salvage = false, ...ctx } = input;
   const agentSession = sessionTarget(ctx.sessionId);
   const inspection = await runCommand(
@@ -208,11 +209,11 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
   const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
-  await storeSessionFiles(agentSession, ctx);
+  await storeSessionFiles(agentSession, ctx, log);
 
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
-    console.log(JSON.stringify({ message: 'agent made no commits', workItemId: ctx.workItem.id }));
+    log.info('agent made no commits');
     return { pushed: false, commitCount, headSha, summary };
   }
 
@@ -221,7 +222,7 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');
   }
-  await storeBundle(ctx, bundleBase64);
+  await storeBundle(ctx, bundleBase64, log);
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
   const identity = await commitIdentity(repo);
@@ -268,15 +269,11 @@ export const handler = async (input: CollectInput): Promise<CollectResult> => {
     summary,
     bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
   });
-  console.log(
-    JSON.stringify({
-      message: salvage ? 'work in progress saved from clean room' : 'branch pushed from clean room',
-      workItemId: ctx.workItem.id,
-      branch: ctx.branch,
-      headSha: pushedSha,
-      agentHeadSha: headSha,
-      commitCount,
-    }),
-  );
+  log.info(salvage ? 'work in progress saved from clean room' : 'branch pushed from clean room', {
+    branch: ctx.branch,
+    headSha: pushedSha,
+    agentHeadSha: headSha,
+    commitCount,
+  });
   return { pushed: true, commitCount, headSha: pushedSha, summary };
-};
+});

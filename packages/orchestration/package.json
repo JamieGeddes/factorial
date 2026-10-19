@@ -17,6 +17,7 @@
     "@aws-sdk/lib-dynamodb": "^3.1152.0",
     "@factorial/artefacts": "^0.1.0",
     "@factorial/github-app": "^0.1.0",
+    "@factorial/log": "^0.1.0",
     "@factorial/workitem": "^0.1.0"
   }
 }

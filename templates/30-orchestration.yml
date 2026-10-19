@@ -795,6 +795,7 @@ Resources:
                 "test": null,
                 "failure": null
               },
+              "Output": { "workItemId": "{% $states.input.id %}" },
               "Next": "Prepare"
             },
             "Prepare": {
@@ -808,6 +809,11 @@ Resources:
                 }
               },
               "Assign": { "ctx": "{% $states.result.Payload %}" },
+              "Output": {
+                "workItemId": "{% $states.result.Payload.workItem.id %}",
+                "attempt": "{% $states.result.Payload.attempt %}",
+                "branch": "{% $states.result.Payload.branch %}"
+              },
               "Retry": [
                 {
                   "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
@@ -817,8 +823,8 @@ Resources:
                 }
               ],
               "Catch": [
-                { "ErrorEquals": ["DuplicateWorkItem"], "Next": "Duplicate" },
-                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+                { "ErrorEquals": ["DuplicateWorkItem"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "Duplicate" },
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "Build"
             },
@@ -854,8 +860,9 @@ Resources:
                 }
               },
               "TimeoutSeconds": ${BuildTimeoutSeconds},
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "taskArn": "{% $states.result.TaskArn %}" },
               "Catch": [
-                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "SaveWork" }
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "SaveWork" }
               ],
               "Next": "Collect"
             },
@@ -865,8 +872,9 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
-                { "ErrorEquals": ["States.ALL"], "Next": "ReportFailure" }
+                { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "ReportFailure"
             },
@@ -875,8 +883,9 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $ctx %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
-                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "HasChanges"
             },
@@ -894,9 +903,10 @@ Resources:
               },
               "TimeoutSeconds": ${TestTimeoutSeconds},
               "Assign": { "test": "{% $states.result %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "test": "{% $states.result %}" },
               "Catch": [
-                { "ErrorEquals": ["TestsFailed"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportTestsFailed" },
-                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+                { "ErrorEquals": ["TestsFailed"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportTestsFailed" },
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "OpenPullRequest"
             },
@@ -907,9 +917,9 @@ Resources:
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
                 "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}" }
               },
-              "Output": "{% $states.result.Payload %}",
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "prNumber": "{% $states.result.Payload.prNumber %}", "prUrl": "{% $states.result.Payload.prUrl %}" },
               "Catch": [
-                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "Done"
             },
@@ -921,6 +931,7 @@ Resources:
                 "FunctionName": "${ReportFunctionAlias}",
                 "Payload": { "status": "no-changes", "ctx": "{% $ctx %}", "summary": "{% $collect.summary %}" }
               },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "no-changes" },
               "Next": "NoChanges"
             },
             "NoChanges": { "Type": "Succeed", "Comment": "The agent made no changes; the requester was told." },
@@ -931,6 +942,7 @@ Resources:
                 "FunctionName": "${ReportFunctionAlias}",
                 "Payload": { "status": "tests-failed", "ctx": "{% $ctx %}", "error": "{% $failure %}" }
               },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "tests-failed" },
               "Next": "TestsFailed"
             },
             "TestsFailed": { "Type": "Fail", "Error": "TestsFailed", "Cause": "The change did not pass the repository's checks." },
@@ -941,7 +953,8 @@ Resources:
                 "FunctionName": "${ReportFunctionAlias}",
                 "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}", "saved": "{% $collect %}" }
               },
-              "Catch": [ { "ErrorEquals": ["States.ALL"], "Next": "Failed" } ],
+              "Output": { "workItemId": "{% $workItemInput.id %}", "attempt": "{% $exists($ctx.attempt) ? $ctx.attempt : null %}", "status": "failed" },
+              "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $workItemInput.id %}", "attempt": "{% $exists($ctx.attempt) ? $ctx.attempt : null %}", "status": "failed", "error": "{% $states.errorOutput %}" }, "Next": "Failed" } ],
               "Next": "Failed"
             },
             "Failed": { "Type": "Fail", "Error": "WorkItemFailed", "Cause": "A step failed; see the execution history and the requester's issue." }

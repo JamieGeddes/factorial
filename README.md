@@ -9,7 +9,7 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 | Path | Contents |
 |---|---|
 | `contracts/` | Language-neutral, versioned contracts. `contracts/workitem/` is Factorial's API. |
-| `packages/` | TypeScript workspaces. `@factorial/workitem` validates the `WorkItem` contract; `@factorial/artefacts` holds the artefact store's key layout, redaction and upload. |
+| `packages/` | TypeScript workspaces. `@factorial/workitem` validates the `WorkItem` contract; `@factorial/artefacts` holds the artefact store's key layout, redaction and upload; `@factorial/log` writes the structured log lines. |
 | `templates/` | CloudFormation templates (`.yml`). |
 | `scripts/` | Repository tooling, in TypeScript, run directly by Node. |
 | `.github/workflows/` | CI and deployment. All deployments run through GitHub Actions. |
@@ -26,4 +26,4 @@ npm ci
 npm run ci        # typecheck, build, tests, the .yml extension check, cfn-lint
 ```
 
-Setting up a new AWS account for Factorial is described in `docs/bootstrap.md`.
+Setting up a new AWS account for Factorial is described in `docs/bootstrap.md`. Finding everything a run produced, from its work item id, is described in `docs/finding-a-run.md`.

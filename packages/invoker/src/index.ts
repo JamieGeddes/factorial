@@ -1,8 +1,9 @@
 /**
  * Harness invoker. Runs as a Fargate task started by Step Functions with
  * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes the builder
- * harness once in the prepared session, streams the transcript to stdout
- * (CloudWatch Logs), records the outcome, and exits. Step Functions resumes
+ * harness once in the prepared session, logs its progress as structured lines
+ * (CloudWatch Logs; text and tool input capped at 4000 characters each),
+ * records the outcome, and exits. Step Functions resumes
  * when the task stops, however long the build took. Nothing inside the agent
  * sandbox can influence this process: it runs under its own task role.
  *
@@ -22,10 +23,12 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts';
+import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
 import { buildPrompt } from './prompt.ts';
 import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
+import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
 import { addCallUsage, emptyRunUsage, type CallUsage } from './usage.ts';
 
@@ -52,9 +55,8 @@ const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshall
 const agentcore = new BedrockAgentCoreClient({ requestHandler: { requestTimeout: (timeoutSeconds + 300) * 1000 } });
 const control = new BedrockAgentCoreControlClient({});
 
-function log(entry: Record<string, unknown>): void {
-  console.log(JSON.stringify({ workItemId, ...entry }));
-}
+/** Every line carries the work item id; the attempt is added once the ledger row is read. */
+let log = createLogger('build', { workItemId });
 
 async function record(status: string, attributes: Record<string, unknown>): Promise<void> {
   const names: Record<string, string> = { '#status': 'status', '#updatedAt': 'updatedAt' };
@@ -82,6 +84,7 @@ async function record(status: string, attributes: Record<string, unknown>): Prom
 /** The run so far, shared with the stop handler so an interrupted build still records it. */
 const run = {
   prefix: undefined as string | undefined,
+  attempt: undefined as number | undefined,
   harness: {} as HarnessInfo,
   startedAt: Date.now(),
   stopReason: undefined as string | undefined,
@@ -106,7 +109,7 @@ async function harnessInfo(): Promise<HarnessInfo> {
       ...(modelId ? { modelId } : {}),
     };
   } catch (error) {
-    log({ message: 'harness version unknown', error: String(error) });
+    log.error('harness version unknown', { error });
     return {};
   }
 }
@@ -115,7 +118,7 @@ async function harnessInfo(): Promise<HarnessInfo> {
 async function storeBuildRecord(): Promise<Record<string, unknown> | undefined> {
   const kept = transcript.close();
   if (!run.prefix) {
-    log({ message: 'no artefact prefix on the ledger row; build record not stored' });
+    log.error('no artefact prefix on the ledger row; build record not stored');
     return undefined;
   }
   try {
@@ -125,7 +128,7 @@ async function storeBuildRecord(): Promise<Record<string, unknown> | undefined> 
       'build/usage.json',
       usageRecord({ ...run, endedAt: Date.now() }),
     );
-    log({ message: 'build record stored', transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
+    log.info('build record stored', { transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
     return {
       transcriptKey: artefactKey(run.prefix, 'build/transcript.jsonl'),
       usageKey: artefactKey(run.prefix, 'build/usage.json'),
@@ -133,7 +136,7 @@ async function storeBuildRecord(): Promise<Record<string, unknown> | undefined> 
       transcriptTruncated: kept.truncated,
     };
   } catch (error) {
-    log({ message: 'build record not stored', error: String(error) });
+    log.error('build record not stored', { error });
     return undefined;
   }
 }
@@ -146,7 +149,7 @@ function finish(status: 'built' | 'build-error'): Promise<void> {
     const build = await storeBuildRecord();
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
-    log({ message: 'harness finished', stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage });
+    log.info('harness finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage });
     await record(status, {
       stopReason,
       toolCalls: run.toolCalls,
@@ -164,7 +167,7 @@ function finish(status: 'built' | 'build-error'): Promise<void> {
 process.once('SIGTERM', () => {
   run.interrupted = true;
   run.error ??= 'interrupted';
-  log({ message: 'invoker interrupted' });
+  log.error('invoker interrupted');
   void finish('build-error').finally(() => process.exit(1));
 });
 
@@ -173,10 +176,12 @@ async function main(): Promise<number> {
   const workItem: unknown = row.Item?.workItem;
   assertWorkItem(workItem);
   run.prefix = typeof row.Item?.artefactPrefix === 'string' ? row.Item.artefactPrefix : undefined;
+  run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
+  log = log.with({ attempt: run.attempt });
 
   const prompt = buildPrompt(workItem, branch, baseBranch);
   run.harness = await harnessInfo();
-  log({ message: 'invoking harness', sessionId, qualifier, maxIterations, timeoutSeconds, ...run.harness });
+  log.info('invoking harness', { sessionId, qualifier, maxIterations, timeoutSeconds, ...run.harness });
   await record('building', { buildStartedAt: new Date().toISOString() });
 
   run.startedAt = Date.now();
@@ -186,6 +191,7 @@ async function main(): Promise<number> {
       harnessArn,
       qualifier,
       runtimeSessionId: sessionId,
+      baggage: traceBaggage(sessionId, workItemId, run.attempt),
       messages: [{ role: 'user', content: [{ text: prompt }] }],
       maxIterations,
       timeoutSeconds,
@@ -193,26 +199,31 @@ async function main(): Promise<number> {
   );
 
   let text = '';
+  let toolInput = '';
   for await (const event of response.stream ?? []) {
     transcript.append(event);
     if (event.messageStart) {
-      log({ message: 'message start', role: event.messageStart.role });
+      log.info('message start', { role: event.messageStart.role });
     } else if (event.contentBlockStart?.start?.toolUse) {
       run.toolCalls += 1;
-      log({ message: 'tool use', tool: event.contentBlockStart.start.toolUse.name });
+      log.info('tool use', { tool: event.contentBlockStart.start.toolUse.name });
     } else if (event.contentBlockDelta?.delta?.text) {
       text += event.contentBlockDelta.delta.text;
     } else if (event.contentBlockDelta?.delta?.toolUse?.input) {
-      // Tool input arrives in deltas; surface it for the transcript.
-      process.stdout.write(event.contentBlockDelta.delta.toolUse.input);
+      // Tool input arrives in deltas; log it whole when the block ends.
+      toolInput += event.contentBlockDelta.delta.toolUse.input;
     } else if (event.contentBlockStop) {
       if (text.trim()) {
-        log({ message: 'assistant text', text: text.slice(-4000) });
+        log.info('assistant text', { text: text.slice(-4000) });
         text = '';
+      }
+      if (toolInput) {
+        log.info('tool input', { input: toolInput.slice(0, 4000), bytes: Buffer.byteLength(toolInput) });
+        toolInput = '';
       }
     } else if (event.messageStop) {
       run.stopReason = event.messageStop.stopReason;
-      log({ message: 'message stop', stopReason: run.stopReason });
+      log.info('message stop', { stopReason: run.stopReason });
     } else if (event.metadata) {
       // One usage record arrives per model call; the run's consumption is their sum.
       const call = event.metadata.usage as CallUsage | undefined;
@@ -221,7 +232,7 @@ async function main(): Promise<number> {
     } else if (event.internalServerException || event.validationException || event.runtimeClientError) {
       const error = event.internalServerException ?? event.validationException ?? event.runtimeClientError;
       run.error = `${error?.name ?? 'StreamError'}: ${error?.message ?? ''}`;
-      log({ message: 'stream error', error: run.error });
+      log.error('stream error', { error: run.error });
     }
   }
 
@@ -236,7 +247,7 @@ main().then(
   (code) => process.exit(code),
   (error: unknown) => {
     run.error = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
-    log({ message: 'invoker failed', error: run.error });
+    log.error('invoker failed', { error: run.error });
     finish('build-error').finally(() => process.exit(1));
   },
 );
