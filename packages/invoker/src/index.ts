@@ -1,7 +1,8 @@
 /**
  * Harness invoker. Runs as a Fargate task started by Step Functions with
- * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes the builder
- * harness once in the prepared session, logs its progress as structured lines
+ * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes one agent
+ * role's harness (the role and harness come in the task input; only the
+ * builder exists today) once in the prepared session, logs its progress as structured lines
  * (CloudWatch Logs; text and tool input capped at 4000 characters each),
  * records the outcome, and exits. Step Functions resumes
  * when the task stops, however long the build took. Nothing inside the agent
@@ -26,7 +27,7 @@ import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts'
 import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { buildPrompt } from './prompt.ts';
+import { harnessTarget, promptFor } from './role.ts';
 import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
@@ -39,9 +40,8 @@ function requireEnv(name: string): string {
 }
 
 const tableName = requireEnv('TABLE_NAME');
-const harnessArn = requireEnv('HARNESS_ARN');
-const harnessId = requireEnv('HARNESS_ID');
-const qualifier = requireEnv('HARNESS_QUALIFIER');
+// The role and its harness arrive in the task input, so one task definition serves every role.
+const { role, harnessArn, harnessId, qualifier } = harnessTarget(process.env);
 const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
 const branch = requireEnv('BRANCH');
@@ -179,13 +179,13 @@ async function main(): Promise<number> {
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
 
-  const prompt = buildPrompt(workItem, branch, baseBranch);
+  const prompt = promptFor(role, workItem, branch, baseBranch);
   run.harness = await harnessInfo();
-  log.info('invoking harness', { sessionId, qualifier, maxIterations, timeoutSeconds, ...run.harness });
-  await record('building', { buildStartedAt: new Date().toISOString() });
+  log.info('invoking harness', { role, sessionId, qualifier, maxIterations, timeoutSeconds, ...run.harness });
+  await record('building', { role, buildStartedAt: new Date().toISOString() });
 
   run.startedAt = Date.now();
-  transcript.append({ request: { prompt, maxIterations, timeoutSeconds, ...run.harness } });
+  transcript.append({ request: { role, prompt, maxIterations, timeoutSeconds, ...run.harness } });
   const response = await agentcore.send(
     new InvokeHarnessCommand({
       harnessArn,
