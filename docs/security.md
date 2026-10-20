@@ -23,7 +23,7 @@ Factorial takes text it does not control, hands it to a model with a shell, and 
 - **Factorial's own code.** An orchestrator bug can leak a token or push the wrong commit; the orchestrator builds shell scripts from values that arrived in webhooks.
 - **A compromised pull request to Factorial.** Factorial builds itself, so a bad change to its own templates, prompts or workflows changes every later run of the development instance. It reaches other repositories only if it is then cut into a release and approved for promotion (3.9).
 
-**What is assumed to hold.** AgentCore's session isolation (one microVM per session), IAM, GitHub's repository rulesets and OIDC, and the integrity of the AWS and GitHub control planes. The design does not try to defend against a failure of those.
+**What is assumed to hold.** AgentCore's session isolation (one microVM per session), IAM, GitHub's organisation rulesets and OIDC, and the integrity of the AWS and GitHub control planes. Factorial's repository and every target repository live in one GitHub organisation whose rulesets protect the default branch and release tags, and repository admins cannot bypass or edit them. The design does not try to defend against a failure of those.
 
 ## 2. Design rules
 
@@ -93,9 +93,11 @@ This is the layer that makes the hostile-session rule real.
 
 ### 3.6 Repository protection
 
-- `main` is protected by a ruleset: changes land only through a pull request with an approving review from a code owner, both CI jobs must pass, and force pushes and deletions are blocked. The App is not a bypass actor, so even its `contents: write` token cannot reach `main`.
+- The default branch of every repository in the organisation, Factorial's own included, is protected by an organisation ruleset: changes land only through a pull request with an approving review from a code owner, the repository's required checks must pass, and force pushes and deletions are blocked. The ruleset is set at organisation level, so a repository admin cannot bypass, weaken or remove it, and a target repository is protected from the day it is created with no per-repository step to forget. The App is not a bypass actor, so even its `contents: write` token cannot reach a default branch.
+- A second organisation ruleset confines the App to its own namespace: on every branch other than `factorial/**`, creations and updates are restricted to people, so the orchestrator's rule of pushing only to `factorial/*` branches is enforced by GitHub rather than by code.
+- Release tags are protected by an organisation ruleset against moves and deletion, which is what the release tier in 3.9 relies on.
 - Every pull request against Factorial's own repository is approved by a human. There is no privileged path for Factorial's changes to itself.
-- The orchestrator pushes only to `factorial/*` branches.
+- The orchestrator pushes only to `factorial/*` branches, and the ruleset above is what makes that a guarantee rather than a convention.
 
 ### 3.7 The record
 
@@ -116,7 +118,7 @@ Factorial builds itself only to speed up its own development. Self-built version
 
 - **Two tiers.** The development instance deploys every merge to `main` and uses the newest version for its next work item against Factorial's own repository. Any other repository is served by a tagged release of Factorial, deployed separately, that has passed verification and an explicit human approval to promote. A self-built version never reaches another repository on its own.
 - **What this bounds.** A bad change that passes review still only changes how Factorial works on Factorial. The blast radius of self-modification is the development instance and this repository, both of which are reversible by moving `live` back or reverting the merge.
-- **What the release path must carry.** The release is the trust transition from development to production use, so it needs the same care as any other: releases are cut from `main` by the deploy role, identified by an immutable reference (a tag protected by a ruleset against moves and deletion, pinned by commit), verified on trusted definitions, and promoted only by a human approval that the system cannot grant itself. Which account or stack runs the release, and how its `live` aliases are moved, is decided when the release path is built; the principle is fixed now.
+- **What the release path must carry.** The release is the trust transition from development to production use, so it needs the same care as any other: releases are cut from `main` by the deploy role, identified by an immutable reference (a tag protected by the organisation ruleset in 3.6 against moves and deletion, pinned by commit), verified on trusted definitions, and promoted only by a human approval that the system cannot grant itself. Which account or stack runs the release, and how its `live` aliases are moved, is decided when the release path is built; the principle is fixed now.
 
 ## 4. How the layers combine
 
@@ -124,7 +126,7 @@ The point of defence in depth is that each likely failure is stopped more than o
 
 | Scenario | Stopped by |
 |---|---|
-| An issue says "push this straight to main" and the model tries | No token in the session (3.2). The push happens only from the clean room, only to `factorial/*` (3.4). The ruleset refuses the App on `main` regardless (3.6). |
+| An issue says "push this straight to main" and the model tries | No token in the session (3.2). The push happens only from the clean room, only to `factorial/*` (3.4). The organisation ruleset refuses the App on every default branch regardless (3.6). |
 | The builder installs a package whose postinstall script reads the environment | Nothing in the environment is worth reading (3.2, 3.3). The session's IAM role cannot reach any account resource (3.3). |
 | The builder plants a git hook or edits a tool so the push or the tests do something else | Hooks are disabled and the clone is fresh in the clean room; commits are re-created from trees and messages only (3.4). Tests run from the definition on `main`, in a job with no credentials (3.5). |
 | The change edits the test workflow to exfiltrate secrets | The dispatched workflow is `main`'s, not the change's (3.5). The only secrets are role ARNs, and both OIDC trusts are bound to `main`. |
@@ -147,7 +149,7 @@ If Factorial were rebuilt, these would be in the first version, in this order, b
 
 1. The two permissions boundaries and the name-scoped CloudFormation role, before any other stack exists.
 2. OIDC-only deployment bound to `main` and a deployment environment; no access keys anywhere.
-3. A GitHub App with per-step, per-repository tokens, and a ruleset on `main` that the App cannot bypass.
+3. A GitHub App with per-step, per-repository tokens, inside an organisation whose rulesets protect every default branch and release tag, confine the App to `factorial/**`, and admit no bypass for the App or for repository admins.
 4. The clean-room push and the bundle hand-over, so no agent session ever holds a write token.
 5. Tests dispatched from the trusted branch with the work commit as data.
 6. One harness per role with the model and tools fixed on the version, so the first prompt written never has to be split later.
@@ -162,7 +164,7 @@ These are the gaps between this design and what is deployed. Each is a candidate
 - **Session egress is unrestricted, for the proof of concept only.** Both harnesses use `NetworkMode: PUBLIC`. This is a deliberate shortcut: VPC mode needs private subnets with a NAT gateway for outbound access, which was not worth setting up for the proof of concept. VPC mode is the target. In a real environment the harnesses run in private subnets behind a NAT gateway, with security groups and an egress allow-list (GitHub, the model endpoint, package registries) limiting what injected instructions can reach. The session holds nothing to exfiltrate today, but this is the first of the gaps to close.
 - **The planner's read-only role is enforced by prompt.** The planner has the same built-in shell and file tools as the builder and is told not to write. The design calls for the harness version to withhold write tools from read-only roles once the harness supports that distinction.
 - **A change that edits `.github/workflows/` is pushed with `workflows: write`**, and CI then runs the edited workflow on the pull request with the repository's secrets available. The secrets are role ARNs only and both OIDC trusts are bound to `main`, which limits the exposure; keep it that way and review workflow changes with care.
-- **Branches other than `main` are unprotected**, so a `contents: write` token could push to them. The orchestrator pushes only to `factorial/*`, but nothing on the GitHub side enforces that for the App.
+- **The organisation rulesets are not yet in place.** The repository is under a personal account with a single repository ruleset on `main` that the admin role can bypass, and no ruleset confines the App to `factorial/**` or protects tags. Moving the repository into the organisation and applying the rulesets in 3.6 closes this; until then the App's `contents: write` token could push to any branch other than `main`, and the `factorial/*` restriction is enforced by the orchestrator alone.
 - **Traces are not yet exported**, so the correlation key does not yet reach AgentCore traces.
 
 ## 8. Root in the session (accepted decision)
