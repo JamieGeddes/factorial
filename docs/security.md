@@ -144,20 +144,20 @@ If Factorial were rebuilt, these would be in the first version, in this order, b
 5. Tests dispatched from the trusted branch with the work commit as data.
 6. One harness per role with the model and tools fixed on the version, so the first prompt written never has to be split later.
 7. The write-once, redacted artefact store and the correlation key, so every run from the first one is reconstructable.
-8. A non-root user in the agent image and an egress allow-list on the session network.
+8. An egress allow-list on the session network, and a recorded decision on the container user (section 8.5).
 
 ## 7. Where today's implementation falls short
 
-These are the gaps between this design and what is deployed. Each is a candidate work item.
+These are the gaps between this design and what is deployed. Each is a candidate work item, except where a decision to accept the divergence is recorded.
 
-- **Sessions run as root.** The image sets no `USER`, so the model's shell runs as root inside the microVM. Section 8 explains how the user is applied and what changing it involves.
+- **Sessions run as root, by decision.** The image sets no `USER`, so the model's shell runs as root inside the microVM. This is an accepted divergence, not a work item: section 8 explains how the user is applied, what changing it would involve, and why it was decided against for now.
 - **Session egress is unrestricted.** Both harnesses use `NetworkMode: PUBLIC`. The session holds nothing to exfiltrate, but an allow-list (GitHub, the model endpoint, package registries) would limit what injected instructions can reach and is the stronger default.
 - **The planner's read-only role is enforced by prompt.** The planner has the same built-in shell and file tools as the builder and is told not to write. The design calls for the harness version to withhold write tools from read-only roles once the harness supports that distinction.
 - **A change that edits `.github/workflows/` is pushed with `workflows: write`**, and CI then runs the edited workflow on the pull request with the repository's secrets available. The secrets are role ARNs only and both OIDC trusts are bound to `main`, which limits the exposure; keep it that way and review workflow changes with care.
 - **Branches other than `main` are unprotected**, so a `contents: write` token could push to them. The orchestrator pushes only to `factorial/*`, but nothing on the GitHub side enforces that for the App.
 - **Traces are not yet exported**, so the correlation key does not yet reach AgentCore traces.
 
-## 8. Root in the session
+## 8. Root in the session (accepted decision)
 
 ### 8.1 How the user is applied
 
@@ -193,3 +193,14 @@ All of the changes are small and in code that is already under test.
 5. **Tests and documentation.** The script-text assertions in the orchestration tests, the Dockerfile comment, and the **Agent environment** convention in `CLAUDE.md`.
 
 One thing must be confirmed by direct invocation before the change ships: that the managed harness loop runs correctly as a non-root user. The documentation says `USER` applies to it, but does not list any paths it needs to write.
+
+### 8.5 Decision: accept root for now
+
+**Decided 2026-10-20.** Sessions keep running as root. The change above is sound and remains documented here so it can be made later, but it is not scheduled. The reasons:
+
+- **The boundary is where AWS puts it.** The microVM and the IAM execution role are the isolation. AWS's own guidance is that in-VM privilege is not the access gate, and the clean room already treats everything that leaves a session as untrusted. What a non-root user would protect is the integrity of the stored logs and summary, which this design already treats as the model's claim rather than evidence.
+- **The managed loop is not pinned to the image.** AgentCore mounts its loop into the container at session start. If a future loop version, or a feature such as skills or memory, needs to write to a path a non-root user cannot, the break appears between Factorial's deploys, not at one, and there is no version to pin. Root is the default environment, the path every AWS example uses, and the one AWS tests. Non-root is supported but less travelled.
+- **It removes `apt-get` from the builder.** Factorial's own repository never needs it, but the end goal is maintaining other software. A target repository that needs `make`, `python3` or a system library would then need its own image or a pre-installed toolchain, a functional cost for a marginal gain.
+- **Other gaps are worth more.** An egress allow-list limits what injected instructions can reach at all, and withholding write tools from the planner at the harness level replaces a prompt-enforced restriction with an enforced one. Both rank above this change.
+
+**Revisit when** any of the following happens: a target repository's build output or logs become an input to a trusted decision; AWS documents a non-root user as the recommended default for harnesses; or the harness gains a way to pin the managed loop so the change can be validated against a fixed version.
