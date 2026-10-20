@@ -10,7 +10,7 @@ Factorial takes text it does not control, hands it to a model with a shell, and 
 
 | Asset | Why it matters |
 |---|---|
-| The default branch of every target repository, including Factorial's own | A change that lands there is deployed or shipped. For Factorial itself it changes the system that runs the next work item. |
+| The default branch of every target repository, including Factorial's own | A change that lands there is deployed or shipped. For Factorial itself it changes the development instance that runs the next work item against this repository (see 3.9). |
 | The AWS account | Holds Factorial's own infrastructure, the model credentials and the record of every run. |
 | The GitHub App private key and the model provider keys | Either one lets an attacker act as Factorial. |
 | The run record (transcripts, plans, bundles, test results) | The evidence a reviewer uses to judge a change and the audit trail after an incident. |
@@ -21,7 +21,7 @@ Factorial takes text it does not control, hands it to a model with a shell, and 
 - **Model output.** A model can produce wrong or malicious code, commits, scripts and tool calls without any attacker at all.
 - **Supply chain inside the session.** The builder installs packages and runs their build scripts. Those scripts run with whatever the session can reach.
 - **Factorial's own code.** An orchestrator bug can leak a token or push the wrong commit; the orchestrator builds shell scripts from values that arrived in webhooks.
-- **A compromised pull request to Factorial.** Factorial builds itself, so a bad change to its own templates, prompts or workflows changes every later run.
+- **A compromised pull request to Factorial.** Factorial builds itself, so a bad change to its own templates, prompts or workflows changes every later run of the development instance. It reaches other repositories only if it is then cut into a release and approved for promotion (3.9).
 
 **What is assumed to hold.** AgentCore's session isolation (one microVM per session), IAM, GitHub's repository rulesets and OIDC, and the integrity of the AWS and GitHub control planes. The design does not try to defend against a failure of those.
 
@@ -48,7 +48,7 @@ Each layer is independent: it stops a class of attack on its own, and it does no
 - The foundation stack is deployed once by a human. It creates the GitHub OIDC provider, the deploy role, the CloudFormation execution role and both permissions boundaries, and nothing else can change them.
 - The deploy role trusts only GitHub Actions jobs from this repository, on `main`, in the `production` environment. A job without that environment presents a different OIDC subject and is refused. The repository and owner are identified by immutable id, not by name.
 - The CloudFormation execution role can only create resources named `factorial-*`, and refuses to create or modify any IAM role that does not carry one of the two boundaries. A template cannot create an unbounded role by mistake.
-- Only the deploy role may move a `live` alias. Every version is immutable, so promotion and rollback are both a pointer move, and in-flight work finishes on the version it started with.
+- Only the deploy role may move a `live` alias. Every version is immutable, so promotion and rollback are both a pointer move, and in-flight work finishes on the version it started with. This is the promotion inside one instance; promotion between the development instance and a release is a separate, human-approved step (3.9).
 
 ### 3.2 Identity and credentials
 
@@ -110,6 +110,14 @@ This is the layer that makes the hostile-session rule real.
 - Logs from failed checks are fetched outside the sandbox with a short-lived `actions: read` token, truncated to the last 200 lines and redacted before they are written into the rework session.
 - Model output is never executed by the orchestrator. The orchestrator reads files with fixed names and size caps, validates structured output against a schema, and acts only on fields the schema defines.
 
+### 3.9 Self-building and releases
+
+Factorial builds itself only to speed up its own development. Self-built versions serve one purpose: running the next work item against this repository.
+
+- **Two tiers.** The development instance deploys every merge to `main` and uses the newest version for its next work item against Factorial's own repository. Any other repository is served by a tagged release of Factorial, deployed separately, that has passed verification and an explicit human approval to promote. A self-built version never reaches another repository on its own.
+- **What this bounds.** A bad change that passes review still only changes how Factorial works on Factorial. The blast radius of self-modification is the development instance and this repository, both of which are reversible by moving `live` back or reverting the merge.
+- **What the release path must carry.** The release is the trust transition from development to production use, so it needs the same care as any other: releases are cut from `main` by the deploy role, identified by an immutable reference (a tag protected by a ruleset against moves and deletion, pinned by commit), verified on trusted definitions, and promoted only by a human approval that the system cannot grant itself. Which account or stack runs the release, and how its `live` aliases are moved, is decided when the release path is built; the principle is fixed now.
+
 ## 4. How the layers combine
 
 The point of defence in depth is that each likely failure is stopped more than once.
@@ -122,7 +130,7 @@ The point of defence in depth is that each likely failure is stopped more than o
 | The change edits the test workflow to exfiltrate secrets | The dispatched workflow is `main`'s, not the change's (3.5). The only secrets are role ARNs, and both OIDC trusts are bound to `main`. |
 | The model tries to deploy Factorial or move a `live` alias | The agent boundary has no such permission (3.3). The CloudFormation role refuses unbounded roles and foreign names (3.1). Only the deploy role may promote (3.1). |
 | An orchestrator Lambda is compromised or buggy | Its role sits under the runtime boundary; its tokens are per step and per repository; its artefact access is write-only (3.2, 3.7). Its pushes still go through the ruleset (3.6). |
-| A bad change to Factorial is merged | A human approved it (3.6). The previous version is immutable and `live` can be moved back (3.1). |
+| A bad change to Factorial is merged | A human approved it (3.6). The previous version is immutable and `live` can be moved back (3.1). It affects only the development instance until a human cuts and approves a release (3.9). |
 | Someone tries to alter or remove the record of a run | Deletes are denied to every principal and the bucket is versioned (3.7). |
 
 ## 5. Recommended practice this follows
