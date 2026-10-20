@@ -26,4 +26,4 @@ npm ci
 npm run ci        # typecheck, build, tests, the .yml extension check, cfn-lint
 ```
 
-Setting up a new AWS account for Factorial is described in `docs/bootstrap.md`. Finding everything a run produced, from its work item id, is described in `docs/finding-a-run.md`.
+Setting up a new AWS account for Factorial is described in `docs/bootstrap.md`. Finding everything a run produced, from its work item id, is described in `docs/finding-a-run.md`. The threat model and security design are in `docs/security.md`.
