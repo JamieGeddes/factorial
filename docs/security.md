@@ -12,7 +12,7 @@ Factorial takes text it does not control, hands it to a model with a shell, and 
 |---|---|
 | The default branch of every target repository, including Factorial's own | A change that lands there is deployed or shipped. For Factorial itself it changes the development instance that runs the next work item against this repository (see 3.9). |
 | The AWS account | Holds Factorial's own infrastructure, the model credentials and the record of every run. |
-| The GitHub App private key and the model provider keys | Either one lets an attacker act as Factorial. |
+| The GitHub App private key, and in the proof of concept the third-party model provider key | Either one lets an attacker act as Factorial. In production there is no model key: models are reached through Bedrock by IAM (3.2). |
 | The run record (transcripts, plans, bundles, test results) | The evidence a reviewer uses to judge a change and the audit trail after an incident. |
 
 **Where attacks come from**
@@ -30,7 +30,7 @@ Factorial takes text it does not control, hands it to a model with a shell, and 
 Nine rules follow from the threat model. Each is enforced by infrastructure, not by instruction to the model.
 
 1. **A model session is untrusted from the first token.** The session is set up by deterministic code, the model runs, and from then on everything in that session (files, git state, shell environment, installed tools) is treated as attacker-controlled. Output leaves as data and is checked before anything acts on it.
-2. **No credential ever enters the sandbox.** Tokens are minted outside, used for one command as a header, and never written to the session. The only key the agent's role can resolve is the model key, and only through the service, never from the shell.
+2. **No credential ever enters the sandbox.** Tokens are minted outside, used for one command as a header, and never written to the session. In production the agent's role reaches models through Bedrock by IAM and holds no key at all. In the proof of concept, where a third-party provider is used, the only key the role can resolve is that model key, and only through the service, never from the shell.
 3. **Capability is granted by infrastructure, never by prompt.** What a role may do is fixed by IAM, a permissions boundary, the harness's tool allow-list and the harness version. The prompt explains the job; it is not a control.
 4. **Every trust transition is an artefact.** Where work moves from one role to another, or from an agent to the orchestrator, it moves as a file the orchestrator reads, validates and stores. There is no shared mutable state between stages.
 5. **Verification runs on trusted definitions.** Tests run from the workflow on the default branch, on a checkout of the work commit held as data, with no credentials. The pull request head is the commit that passed.
@@ -63,8 +63,9 @@ Each layer is independent: it stops a class of attack on its own, and it does no
   | Report | `issues: write` |
 
 - A token is sent as an HTTP header on the single git command that needs it and is never written to disk or to the session's environment.
-- Model provider keys live in AgentCore Identity's token vault. The agent's role may resolve them only with the `aws:ViaAWSService` condition, so the managed harness loop can fetch the key to call the model, but a shell command in the same session cannot read the secret.
-- The GitHub App private key and the model keys are created by a human and referenced by name. They never pass through templates, parameters, the repository or logs.
+- **Model access in production is IAM, not a key.** The target is Bedrock: the agent execution role is allowed `bedrock:InvokeModel` on the approved model or inference profile ARNs and nothing more, so there is no model credential to hold, rotate, leak or vault. The agent boundary already carries the Bedrock statement; scoping its resource from `*` to the approved models is part of making the switch.
+- **The third-party key is a proof-of-concept artefact.** The proof of concept uses a third-party provider (Z.ai) because the chosen model is not on Bedrock, so a provider key exists. It lives in AgentCore Identity's token vault, and the agent's role may resolve it only with the `aws:ViaAWSService` condition: the managed harness loop can fetch the key to call the model, but a shell command in the same session cannot read the secret. When the model moves to Bedrock, the credential provider, the vault entry and the `ModelCredentials` and `SecretsViaServiceOnly` statements in the agent boundary are removed.
+- The GitHub App private key, and the provider key while it exists, are created by a human and referenced by name. They never pass through templates, parameters, the repository or logs.
 
 ### 3.3 The agent sandbox
 
@@ -162,6 +163,7 @@ These are the gaps between this design and what is deployed. Each is a candidate
 
 - **Sessions run as root, by decision.** The image sets no `USER`, so the model's shell runs as root inside the microVM. This is an accepted divergence, not a work item: section 8 explains how the user is applied, what changing it would involve, and why it was decided against for now.
 - **Session egress is unrestricted, for the proof of concept only.** Both harnesses use `NetworkMode: PUBLIC`. This is a deliberate shortcut: VPC mode needs private subnets with a NAT gateway for outbound access, which was not worth setting up for the proof of concept. VPC mode is the target. In a real environment the harnesses run in private subnets behind a NAT gateway, with security groups and an egress allow-list (GitHub, the model endpoint, package registries) limiting what injected instructions can reach. The session holds nothing to exfiltrate today, but this is the first of the gaps to close.
+- **A third-party model key exists, for the proof of concept only.** The model is reached through Z.ai with a provider key in the token vault, and the agent boundary allows `bedrock:InvokeModel` on every model. Production uses Bedrock by IAM, with no key and the Bedrock statement scoped to the approved model ARNs; the credential provider and the vault entry go when the model moves.
 - **The planner's read-only role is enforced by prompt.** The planner has the same built-in shell and file tools as the builder and is told not to write. The design calls for the harness version to withhold write tools from read-only roles once the harness supports that distinction.
 - **A change that edits `.github/workflows/` is pushed with `workflows: write`**, and CI then runs the edited workflow on the pull request with the repository's secrets available. The secrets are role ARNs only and both OIDC trusts are bound to `main`, which limits the exposure; keep it that way and review workflow changes with care.
 - **The organisation rulesets are not yet in place.** The repository is under a personal account with a single repository ruleset on `main` that the admin role can bypass, and no ruleset confines the App to `factorial/**` or protects tags. Moving the repository into the organisation and applying the rulesets in 3.6 closes this; until then the App's `contents: write` token could push to any branch other than `main`, and the `factorial/*` restriction is enforced by the orchestrator alone.
