@@ -150,9 +150,46 @@ If Factorial were rebuilt, these would be in the first version, in this order, b
 
 These are the gaps between this design and what is deployed. Each is a candidate work item.
 
-- **Sessions run as root.** The image runs as root inside the microVM, and the orchestrator's pre-invocation commands also run as root; the comment in `agent-environment/Dockerfile` records that a non-root user would create ownership mismatches with those commands. The microVM and the IAM role are the real boundary, but a non-root user is conventional practice and removes a class of mistakes, so it belongs in the design and should be done by running the orchestrator's commands as the same user.
+- **Sessions run as root.** The image sets no `USER`, so the model's shell runs as root inside the microVM. Section 8 explains how the user is applied and what changing it involves.
 - **Session egress is unrestricted.** Both harnesses use `NetworkMode: PUBLIC`. The session holds nothing to exfiltrate, but an allow-list (GitHub, the model endpoint, package registries) would limit what injected instructions can reach and is the stronger default.
 - **The planner's read-only role is enforced by prompt.** The planner has the same built-in shell and file tools as the builder and is told not to write. The design calls for the harness version to withhold write tools from read-only roles once the harness supports that distinction.
 - **A change that edits `.github/workflows/` is pushed with `workflows: write`**, and CI then runs the edited workflow on the pull request with the repository's secrets available. The secrets are role ARNs only and both OIDC trusts are bound to `main`, which limits the exposure; keep it that way and review workflow changes with care.
 - **Branches other than `main` are unprotected**, so a `contents: write` token could push to them. The orchestrator pushes only to `factorial/*`, but nothing on the GitHub side enforces that for the App.
 - **Traces are not yet exported**, so the correlation key does not yet reach AgentCore traces.
+
+## 8. Root in the session
+
+### 8.1 How the user is applied
+
+AgentCore Harness does not require root, but it only half supports anything else.
+
+- A `USER` directive in the Dockerfile applies to the agent process only: the managed loop and the model's shell and file tools run as that user.
+- Commands sent through `InvokeAgentRuntimeCommand` always run as root (uid 0) in the microVM. This is not configurable. AWS's stated position is that the IAM permission to send a command is the access gate, and the in-VM privilege level is not a boundary, in the same way that `docker exec` defaults to root even when the container runs as a non-root user.
+- The harness overrides the image's `ENTRYPOINT` and `CMD`, so the user cannot be dropped by a startup script; it has to come from `USER`.
+
+For Factorial this means every orchestrator command (clone, seed files, bundle, read logs, the clean-room push) runs as root whatever the image says, and only the planner's and builder's own tool calls would run as the user. That is still the part worth constraining, because it is the part a prompt injection drives.
+
+Today the image sets no `USER`, so the model's shell runs as root. The Dockerfile records the reason: the orchestrator's pre-invocation commands run as root, so a non-root agent user would own nothing they create.
+
+### 8.2 What a non-root user buys
+
+A root shell lets a prompt-injected builder replace `git`, `node`, `quiet` or `base64` under `/usr`, edit `/etc`, or change the system git config. Collect's root commands in the same session then run the replaced tools. The clean room means a forged bundle cannot push anything the model could not have committed anyway, so this is not an open hole. What a non-root user closes is the model's ability to tamper with the environment the orchestrator's later commands rely on, and with the tools that produce the stored logs and summary. It also removes `apt-get` and writes under `/opt/factorial`, which nothing legitimate needs: the builder's prompt already forbids global installs and the planner is told to install nothing.
+
+### 8.3 What breaks if only `USER` is added
+
+Every run fails at the first edit:
+
+- Prepare and CollectPlan run as root, so `/workspace/repo`, `notes.md`, `workitem.json` and the plan files are root-owned. The agent cannot write to them, commit, or create `/workspace/logs` for `quiet`.
+- Git refuses to operate in a repository owned by another user ("dubious ownership"), so even the agent's reads fail, and once the agent owns the files, Collect's root-run `git status`, `rev-parse` and `bundle create` fail the other way round.
+
+### 8.4 How to implement it
+
+All of the changes are small and in code that is already under test.
+
+1. **Dockerfile.** The Node base image ships a `node` user (uid 1000) with a home directory. Give it `/workspace` (`chown node:node /workspace`), set `HOME=/home/node`, and add `USER node` as the last instruction. Replace the comment that explains the root decision.
+2. **Prepare and CollectPlan.** Run the clone and checkout as the user, through `runuser -u node --` (or `setpriv`), so everything under `/workspace` is created with the right owner. The token remains a command-line header either way. The alternative, finishing the setup script with `chown -R node:node /workspace`, also works but leaves the clone itself running as root.
+3. **Collect and SaveWork.** The session-side commands (the leftover commit, `rev-list`, `rev-parse`, `diff`, `bundle create`) run as the user through `runuser` as well. This is preferable to keeping root and passing `-c safe.directory=/workspace/repo` (which git honours, because the command line is a protected configuration scope), because it stops root running git inside a repository the model controls. Reading the session's files for the artefact store needs no change: root reads anything.
+4. **The clean room.** Untouched. It is root throughout, and no model runs in it.
+5. **Tests and documentation.** The script-text assertions in the orchestration tests, the Dockerfile comment, and the **Agent environment** convention in `CLAUDE.md`.
+
+One thing must be confirmed by direct invocation before the change ships: that the managed harness loop runs correctly as a non-root user. The documentation says `USER` applies to it, but does not list any paths it needs to write.
