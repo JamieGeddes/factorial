@@ -64,8 +64,8 @@ export const RULE_REQUIRED_CHECKS = 'required checks still exist';
 export interface Violation {
   rule: string;
   file: string;
-  job?: string;
-  step?: string;
+  job?: string | undefined;
+  step?: string | undefined;
   message: string;
 }
 
