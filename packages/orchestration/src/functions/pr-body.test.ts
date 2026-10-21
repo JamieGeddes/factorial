@@ -88,6 +88,17 @@ describe('plan in the pull request body', () => {
     assert.match(section, /_The builder did not report on the plan's steps\._/);
   });
 
+  it('matches the builder\u0027s reported lines to the plan steps by id', () => {
+    const section = planSection(plan, '- validate-quantity: done\n- `handler-tests`: changed, reason');
+    assert.match(section, /1\. `validate-quantity`: Check quantity is a positive integer\.\n   - validate-quantity: done/);
+    assert.match(section, /2\. `handler-tests`: Add tests\.\n   - `handler-tests`: changed, reason/);
+  });
+
+  it('lists reported lines that match no plan step id', () => {
+    const section = planSection(plan, '- validate-quantity: done\n- mystery-step: done');
+    assert.match(section, /not in the plan: - mystery-step: done/);
+  });
+
   it('puts the plan after the summary and before the evidence table', () => {
     const body = pullRequestBody(ctx, '# Done\n\n## Plan steps\n\n- validate-quantity: done', {}, 'f'.repeat(40), plan);
     assert.ok(body.indexOf('# Done') < body.indexOf('## Plan'));

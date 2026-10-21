@@ -42,18 +42,50 @@ export function splitPlanSteps(summary: string): { rest: string; steps?: string 
   return { rest, ...(steps ? { steps } : {}) };
 }
 
-/** The plan the builder followed, and the builder's account of each step. */
+/** Find the builder's reported line for a plan step id: an optional bullet and optional backticks, then the id, then ':' or whitespace. */
+export function stepLineFor(steps: string, id: string): string | undefined {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^(?:[-*] |)?(?:\`${escaped}\`|${escaped})(?=[\\s:]|$)`);
+  for (const line of steps.split('\n')) {
+    if (pattern.test(line.trim())) return line.trim();
+  }
+  return undefined;
+}
+
+/** The plan the builder followed, and the builder's account of each step, matched by plan step id. */
 export function planSection(plan: PlanDigest, builderSteps: string | undefined): string {
+  if (!builderSteps) {
+    return [
+      '## Plan',
+      '',
+      plan.summary.trim(),
+      '',
+      ...plan.steps.map((step, i) => `${i + 1}. \`${step.id}\`: ${step.description}`),
+      '',
+      '### How the builder followed it',
+      '',
+      '_The builder did not report on the plan\'s steps._',
+    ].join('\n');
+  }
+  const reported = [...builderSteps.split('\n').map((line) => line.trim()).filter(Boolean)];
+  const matched = new Set(
+    plan.steps.map((step) => stepLineFor(builderSteps, step.id)).filter((line): line is string => line !== undefined),
+  );
+  const unmatched = reported.filter((line) => !matched.has(line));
   return [
     '## Plan',
     '',
     plan.summary.trim(),
     '',
-    ...plan.steps.map((step, i) => `${i + 1}. \`${step.id}\`: ${step.description}`),
+    ...plan.steps.map((step, i) => {
+      const line = stepLineFor(builderSteps, step.id)?.replace(/^(?:[-*] )?/, '- ');
+      return [`${i + 1}. \`${step.id}\`: ${step.description}`, ...(line ? [`   ${line}`] : [])].join('\n');
+    }),
+    ...(unmatched.length ? ['', `Steps the builder reported that are not in the plan: ${unmatched.join('; ')}`] : []),
     '',
     '### How the builder followed it',
     '',
-    builderSteps ?? '_The builder did not report on the plan\'s steps._',
+    builderSteps,
   ].join('\n');
 }
 
