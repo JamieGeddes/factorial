@@ -593,15 +593,15 @@ Resources:
                 Condition:
                   Bool:
                     aws:ViaAWSService: 'true'
-              # A gateway's, harness's or runtime's ARN embeds an ID assigned
-              # at creation, so tagging on create is authorised against
-              # gateway/*, harness/* or runtime/*, not the factorial name
-              # (harnesses: CreateHarness for factorial_planner was refused on
-              # 2026-10-19; runtimes are created with their harness). Only the stack tag, and the aws:cloudformation:*
+              # A gateway's or harness's ARN embeds an ID assigned at
+              # creation, so tagging on create is authorised against
+              # gateway/* or harness/*, not the factorial name (harnesses:
+              # CreateHarness for factorial_planner was refused on
+              # 2026-10-19). Only the stack tag, and the aws:cloudformation:*
               # tags CloudFormation adds to every create (seen in CloudTrail
               # on 2026-10-18), may be applied, from a factorial- stack. This
-              # also lets the role add Project=Factorial to any gateway,
-              # harness or runtime in the account, so never grant AgentCore access by
+              # also lets the role add Project=Factorial to any gateway or
+              # harness in the account, so never grant AgentCore access by
               # aws:ResourceTag/Project.
               - Sid: AgentCoreTagOnCreate
                 Effect: Allow
@@ -609,7 +609,6 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*
                 Condition:
                   StringEquals:
                     aws:RequestTag/Project: Factorial
@@ -621,6 +620,24 @@ Resources:
                       - aws:cloudformation:stack-name
                       - aws:cloudformation:stack-id
                       - aws:cloudformation:logical-id
+              # The runtime AgentCore creates with a harness is tagged with
+              # the stack tag only: CloudFormation's aws:cloudformation:* tags
+              # stay on the harness (CreateAgentRuntime for
+              # harness_factorial_planner carried only Project=Factorial and
+              # was refused on 2026-10-21). Its ARN is runtime/* for the same
+              # reason as the endpoint above. As with harnesses, this lets the
+              # role add Project=Factorial to any runtime, which grants
+              # nothing.
+              - Sid: AgentCoreRuntimeTagOnCreate
+                Effect: Allow
+                Action: bedrock-agentcore:TagResource
+                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/*
+                Condition:
+                  StringEquals:
+                    aws:RequestTag/Project: Factorial
+                  ForAllValues:StringEquals:
+                    aws:TagKeys:
+                      - Project
               - Sid: ContainerRegistry
                 Effect: Allow
                 Action: ecr:*
