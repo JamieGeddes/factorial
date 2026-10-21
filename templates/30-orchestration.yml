@@ -447,8 +447,17 @@ Resources:
         - Key: Project
           Value: Factorial
 
+  # Every change registers a new revision, and the state machine version
+  # names the revision it was published with. An execution in flight during
+  # a deploy stays on its version, so the old revision must stay registered:
+  # CloudFormation deregisters a replaced revision by default, and on
+  # 2026-10-21 a run that started during a deploy failed at Build with
+  # "TaskDefinition is inactive". Retained revisions cost nothing; the image
+  # they name is kept by the repository's lifecycle rule (the last 20).
   InvokerTaskDefinition:
     Type: AWS::ECS::TaskDefinition
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
     Properties:
       Family: factorial-invoker
       RequiresCompatibilities:
