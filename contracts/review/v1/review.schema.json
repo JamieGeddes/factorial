@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:review:v1",
+  "title": "Review",
+  "description": "The reviewer's judgement of one WorkItem's change against its request and plan. Written by the reviewer as /workspace/review.json, validated by the orchestrator, and shown in the pull request body. Advisory: it never blocks a pull request. Internal to Factorial, but changed with the same care as the WorkItem contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "verdict", "scores", "findings", "summary"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "verdict": {
+      "description": "approve: ready for a human to merge. request-changes: something must change first. comment: neither, with points worth reading.",
+      "enum": ["approve", "request-changes", "comment"]
+    },
+    "scores": {
+      "description": "Each from 1 (poor) to 5 (excellent).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctness", "completeness", "tests", "safety"],
+      "properties": {
+        "correctness": {
+          "description": "Does the change do what it claims, without bugs?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "completeness": {
+          "description": "Does it cover everything the request and the plan asked for?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "tests": {
+          "description": "Do the tests exercise the change, including its failure cases?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "safety": {
+          "description": "Is it free of security problems, data loss and weakened safety limits?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
+    },
+    "findings": {
+      "description": "Specific points, most important first. At most 50; may be empty.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "severity", "body"],
+        "properties": {
+          "path": {
+            "description": "Repository-relative path the finding is about.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+$"
+          },
+          "line": {
+            "description": "Line in the file at the branch head, when the finding is about one place.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "severity": {
+            "description": "high: must be addressed before merging. medium: should be addressed. low: worth knowing.",
+            "enum": ["high", "medium", "low"]
+          },
+          "body": {
+            "description": "What is wrong and what to do about it.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 2000
+          }
+        }
+      }
+    },
+    "summary": {
+      "description": "The judgement in a few sentences. Shown in the pull request body.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2000
+    }
+  }
+}
