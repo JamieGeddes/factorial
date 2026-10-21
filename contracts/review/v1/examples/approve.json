@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "verdict": "approve",
+  "scores": { "correctness": 5, "completeness": 4, "tests": 4, "safety": 5 },
+  "findings": [
+    {
+      "path": "src/handlers/create-order.test.ts",
+      "line": 42,
+      "severity": "low",
+      "body": "The fractional case uses 1.5 only; a value such as 2.0000001 would also show the integer check works on near-integers."
+    }
+  ],
+  "summary": "The handler now rejects zero, negative and fractional quantities with 400, as the request and the plan asked, and the new tests fail without the check. One low-severity suggestion on test coverage."
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "verdict": "request-changes",
+  "scores": { "correctness": 2, "completeness": 3, "tests": 2, "safety": 4 },
+  "findings": [
+    {
+      "path": "src/handlers/create-order.ts",
+      "line": 18,
+      "severity": "high",
+      "body": "The check runs after the database write, so an invalid order is stored before the 400 is returned. Move the check above the write."
+    },
+    {
+      "path": "src/handlers/create-order.test.ts",
+      "severity": "medium",
+      "body": "The tests assert the status code only; they would still pass with the write-before-check bug above. Assert that nothing is written for a rejected order."
+    }
+  ],
+  "summary": "The validation is in place but runs after the write, so the change does not do what the request asks. The tests do not catch this."
+}
