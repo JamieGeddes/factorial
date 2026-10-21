@@ -47,7 +47,7 @@ flowchart TB
     subgraph agent["Stack 20: factorial-agent"]
         direction TB
         modelkey["AgentCore Identity:<br/>factorial-model-api-key<br/>reads human-created secret"]
-        harness["AgentCore Harness:<br/>factorial_builder<br/>GLM 5.3 via Z.ai API,<br/>immutable versions"]
+        harness["AgentCore Harness:<br/>factorial_builder<br/>GLM 5.3 Flash via Z.ai API,<br/>immutable versions"]
         liveendpoint["Harness endpoint 'live'<br/>(promoted by deploy workflow)"]
         agentrole["factorial-agent role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents)"]
         harness --- agentrole
