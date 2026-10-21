@@ -99,7 +99,7 @@ export function initialNotes(
   const planSection =
     options.role === 'planner'
       ? '_Your plan goes in /workspace/plan.md and /workspace/plan.json, not here. Keep working notes under # Notes._'
-      : "_The planner's plan is in /workspace/plan.md. Follow it; note here any step you change or skip, and why._";
+      : "_The planner's plan is in /workspace/plan.json: follow its steps in order by `id`. /workspace/plan.md is the planner's explanation, for context. Note here any step you change or skip, and why._";
   return [
     '# Task',
     '',
