@@ -37,6 +37,7 @@ describe('seedReviewScript', () => {
     assert.match(script, /> \/workspace\/summary\.md/);
     assert.match(script, /git diff --no-color --no-ext-diff 'origin\/main\.\.\.HEAD' > \/workspace\/diff\.patch/);
     assert.match(script, /-G '\[Pp\]ermissions-\?\[Bb\]oundary'/);
+    assert.equal(script.match(/--name-only --no-renames/g)?.length, 2);
     assert.match(script, /GIT_CONFIG_GLOBAL=\/dev\/null/);
   });
 
@@ -69,13 +70,14 @@ describe('parseReviewSeed', () => {
 describe('sensitiveChanges', () => {
   it('flags workflows, the foundation template and boundary changes, and nothing else', () => {
     const changes = sensitiveChanges({
-      changedPaths: ['src/a.ts', '.github/workflows/ci.yml', 'templates/00-foundation.yml', 'templates/20-agent.yml', '.github/CODEOWNERS'],
+      changedPaths: ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify-changes/action.yml', 'templates/00-foundation.yml', 'templates/20-agent.yml', '.github/CODEOWNERS'],
       boundaryPaths: ['templates/20-agent.yml'],
     });
-    assert.deepEqual(changes.map((c) => c.path), ['.github/workflows/ci.yml', 'templates/00-foundation.yml', 'templates/20-agent.yml']);
-    assert.match(changes[0]!.reason, /workflow/);
-    assert.match(changes[1]!.reason, /foundation/);
-    assert.match(changes[2]!.reason, /permissions boundary/);
+    assert.deepEqual(changes.map((c) => c.path), ['.github/workflows/ci.yml', '.github/actions/classify-changes/action.yml', 'templates/00-foundation.yml', 'templates/20-agent.yml']);
+    assert.match(changes[0]!.reason, /GitHub Actions/);
+    assert.match(changes[1]!.reason, /GitHub Actions/);
+    assert.match(changes[2]!.reason, /foundation/);
+    assert.match(changes[3]!.reason, /permissions boundary/);
   });
 
   it('ignores a boundary path that is not among the changed paths', () => {
@@ -155,16 +157,12 @@ describe('withGuardFindings', () => {
     assert.equal(guarded.findings.length, 4);
   });
 
-  it('does not repeat a path the reviewer already flagged at high severity', () => {
-    const flagged = { ...review, findings: [{ path: '.github/workflows/ci.yml', severity: 'high' as const, body: 'Gives the job write access.' }] };
+  it('adds its finding even when the reviewer wrote its own for the same path', () => {
+    const flagged = { ...review, findings: [{ path: '.github/workflows/ci.yml', severity: 'high' as const, body: 'Reviewed: nothing to worry about.' }] };
     const { review: guarded, added } = withGuardFindings(flagged, changes);
-    assert.equal(added, 1);
-    assert.deepEqual(guarded.findings.map((f) => f.path), ['templates/00-foundation.yml', '.github/workflows/ci.yml']);
-  });
-
-  it('still adds one when the reviewer flagged the path at lower severity', () => {
-    const low = { ...review, findings: [{ path: '.github/workflows/ci.yml', severity: 'low' as const, body: 'Fine.' }] };
-    assert.equal(withGuardFindings(low, changes.slice(0, 1)).added, 1);
+    assert.equal(added, 2);
+    assert.deepEqual(guarded.findings.map((f) => f.path), ['.github/workflows/ci.yml', 'templates/00-foundation.yml', '.github/workflows/ci.yml']);
+    assert.match(guarded.findings[0]!.body, /^Added by the orchestrator/);
   });
 
   it('keeps within the contract limit of 50 findings', () => {

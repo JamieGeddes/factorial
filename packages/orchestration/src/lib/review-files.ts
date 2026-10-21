@@ -29,6 +29,8 @@ const encode = (text: string): string => shellQuote(Buffer.from(text, 'utf8').to
  * NUL-separated and base64-encoded so no path can break the parse. The diff
  * is three-dot, against the merge base, so it shows what the pull request
  * would change even when the branch started from an earlier attempt.
+ * Rename detection is off, so a file moved out of a sensitive directory is
+ * listed under its old path as well as its new one.
  */
 export function seedReviewScript(params: { baseBranch: string; planJson: string; planMarkdown: string; summary: string }): string {
   const range = shellQuote(`origin/${assertGitBranch(params.baseBranch, 'base branch')}...HEAD`);
@@ -40,9 +42,9 @@ export function seedReviewScript(params: { baseBranch: string; planJson: string;
     `printf '%s' ${encode(params.summary)} | base64 -d > /workspace/summary.md`,
     'cd /workspace/repo',
     `git diff --no-color --no-ext-diff ${range} > /workspace/diff.patch`,
-    `git diff -z --name-only --no-ext-diff ${range} | base64 -w0`,
+    `git diff -z --name-only --no-renames --no-ext-diff ${range} | base64 -w0`,
     `printf '%s' ${shellQuote(SECTION)}`,
-    `git diff -z --name-only --no-ext-diff -G '[Pp]ermissions-?[Bb]oundary' ${range} | base64 -w0`,
+    `git diff -z --name-only --no-renames --no-ext-diff -G '[Pp]ermissions-?[Bb]oundary' ${range} | base64 -w0`,
   ].join('\n');
 }
 
@@ -70,8 +72,10 @@ export interface SensitiveChange {
 }
 
 /**
- * Changes to what deploys Factorial or limits it: Actions workflows, the
- * foundation stack and permissions boundaries. The foundation and boundary
+ * Changes to what deploys Factorial or limits it: Actions workflows and the
+ * composite actions they run, the foundation stack and permissions
+ * boundaries. Boundaries are matched on added or removed lines, so removing
+ * or swapping a role's boundary is caught as well as editing one. The foundation and boundary
  * rules name Factorial's own files, so in another repository only workflows
  * are likely to match, which deserve the same care there.
  */
@@ -79,8 +83,8 @@ export function sensitiveChanges(seed: ReviewSeed): SensitiveChange[] {
   const boundary = new Set(seed.boundaryPaths);
   const changes: SensitiveChange[] = [];
   for (const path of seed.changedPaths) {
-    if (path.startsWith('.github/workflows/')) {
-      changes.push({ path, reason: 'changes a GitHub Actions workflow, which runs with the repository secrets and can deploy' });
+    if (path.startsWith('.github/workflows/') || path.startsWith('.github/actions/')) {
+      changes.push({ path, reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' });
     } else if (path === 'templates/00-foundation.yml') {
       changes.push({ path, reason: 'changes the foundation stack, which holds the deploy role, the CloudFormation execution role and the permissions boundaries' });
     } else if (boundary.has(path)) {
@@ -128,17 +132,15 @@ export function checkReviewFile(file: { text: string; size: number } | undefined
 }
 
 /**
- * Add a high-severity finding for each sensitive change the reviewer did not
- * already flag at high severity, ahead of its own findings. This is a
- * reminder for the human reviewer, not a gate: the verdict is unchanged. It
- * is added here, from paths computed before the reviewer ran, because a
- * reviewer can be talked out of it by the text it reviews.
+ * Add a high-severity finding for every sensitive change, ahead of the
+ * reviewer's own findings. This is a reminder for the human reviewer, not a
+ * gate: the verdict is unchanged. It is added here, from paths computed
+ * before the reviewer ran, because a reviewer can be talked out of it by the
+ * text it reviews. It is added whatever the reviewer wrote about the same
+ * path: a finding of its own, however worded, must never stand in for this.
  */
 export function withGuardFindings(review: Review, changes: readonly SensitiveChange[]): { review: Review; added: number } {
-  const flagged = new Set(review.findings.filter((f) => f.severity === 'high').map((f) => f.path));
-  const guard: ReviewFinding[] = changes
-    .filter((change) => !flagged.has(change.path))
-    .map((change) => ({
+  const guard: ReviewFinding[] = changes.map((change) => ({
       path: change.path,
       severity: 'high',
       body: `Added by the orchestrator: this ${change.reason}. Review it with particular care; the automated review cannot clear it.`,
