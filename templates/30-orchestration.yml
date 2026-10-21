@@ -648,11 +648,14 @@ Resources:
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
 
+  # Covers the planner's sessions as well as the builder's. The description
+  # still names only the builder: changing a managed policy's description
+  # replaces it, and the replacement collides with the fixed name.
   SessionCommandPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: factorial-session-command
-      Description: Run deterministic commands in the planner and builder harness sessions.
+      Description: Run deterministic commands in the builder harness session.
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
