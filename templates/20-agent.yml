@@ -328,8 +328,9 @@ Resources:
           # work, which the verification invocation confirms.
           # Fixed here, not a parameter: `cloudformation deploy` keeps a
           # parameter's previous value, so a changed default never reaches an
-          # existing stack.
-          ModelId: zai/glm-5.3
+          # existing stack. GLM 5.3 Flash again since 2026-10-21, after GLM
+          # 5.3 from 2026-10-17 (dce8389); both are reached the same way.
+          ModelId: zai/glm-5.3-flash
           ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
           # Set explicitly: the LiteLLM docs do not state the provider's
           # default base, and Factorial's key is for the general endpoint.
@@ -563,7 +564,7 @@ Resources:
         # the extra reasoning pays. Constants, not parameters, for the same
         # reason as the builder's (see its ModelId).
         LiteLlmModelConfig:
-          ModelId: zai/glm-5.3
+          ModelId: zai/glm-5.3-flash
           ApiKeyArn: !GetAtt ModelApiKey.CredentialProviderArn
           ApiBase: !Ref ModelApiBase
           # Below the builder's 32768: a planner writes two short files, not
