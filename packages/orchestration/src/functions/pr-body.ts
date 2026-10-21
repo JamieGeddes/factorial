@@ -52,40 +52,32 @@ export function stepLineFor(steps: string, id: string): string | undefined {
   return undefined;
 }
 
-/** The plan the builder followed, and the builder's account of each step, matched by plan step id. */
+/**
+ * The plan the builder followed, with the builder's account of each step
+ * under it, matched by plan step id. When no reported line matches a step,
+ * the builder's report is shown as it was written, so nothing is lost.
+ */
 export function planSection(plan: PlanDigest, builderSteps: string | undefined): string {
-  if (!builderSteps) {
-    return [
-      '## Plan',
-      '',
-      plan.summary.trim(),
-      '',
-      ...plan.steps.map((step, i) => `${i + 1}. \`${step.id}\`: ${step.description}`),
-      '',
-      '### How the builder followed it',
-      '',
-      '_The builder did not report on the plan\'s steps._',
-    ].join('\n');
-  }
-  const reported = [...builderSteps.split('\n').map((line) => line.trim()).filter(Boolean)];
-  const matched = new Set(
-    plan.steps.map((step) => stepLineFor(builderSteps, step.id)).filter((line): line is string => line !== undefined),
-  );
-  const unmatched = reported.filter((line) => !matched.has(line));
+  const lines = plan.steps.map((step) => (builderSteps ? stepLineFor(builderSteps, step.id) : undefined));
+  const reported = builderSteps?.split('\n').map((line) => line.trim()).filter(Boolean) ?? [];
+  const unmatched = reported.filter((line) => !lines.includes(line));
+  const report = !builderSteps
+    ? ['', '_The builder did not report on the plan\'s steps._']
+    : lines.every((line) => line === undefined)
+      ? ['', '### How the builder followed it', '', builderSteps]
+      : unmatched.length
+        ? ['', `Steps the builder reported that are not in the plan: ${unmatched.join('; ')}`]
+        : [];
   return [
     '## Plan',
     '',
     plan.summary.trim(),
     '',
     ...plan.steps.map((step, i) => {
-      const line = stepLineFor(builderSteps, step.id)?.replace(/^(?:[-*] )?/, '- ');
+      const line = lines[i]?.replace(/^(?:[-*] )?/, '- ');
       return [`${i + 1}. \`${step.id}\`: ${step.description}`, ...(line ? [`   ${line}`] : [])].join('\n');
     }),
-    ...(unmatched.length ? ['', `Steps the builder reported that are not in the plan: ${unmatched.join('; ')}`] : []),
-    '',
-    '### How the builder followed it',
-    '',
-    builderSteps,
+    ...report,
   ].join('\n');
 }
 

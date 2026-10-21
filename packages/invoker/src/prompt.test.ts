@@ -35,7 +35,7 @@ describe('buildPrompt', () => {
 
   it("points at the planner's plan before any code, and asks for a report on each step", () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
-    assert.match(prompt, /its plan is \/workspace\/plan\.json .* follow its `steps` in order, by `id`/);
+    assert.match(prompt, /its plan is \/workspace\/plan\.json\. Follow its `steps` in order, by `id`/);
     assert.match(prompt, /plan\.md is the planner.s explanation, read for context/);
     assert.match(prompt, /where the two disagree, plan\.json wins/);
     assert.match(prompt, /re-read the Task section before each commit and before writing the summary/);

@@ -99,11 +99,23 @@ describe('plan in the pull request body', () => {
     assert.match(section, /not in the plan: - mystery-step: done/);
   });
 
+  it('shows each reported line once', () => {
+    const section = planSection(plan, '- validate-quantity: done\n- handler-tests: done');
+    assert.equal(section.match(/validate-quantity: done/g)?.length, 1);
+    assert.doesNotMatch(section, /How the builder followed it|not in the plan/);
+  });
+
+  it("shows the builder's report as written when no line matches a step", () => {
+    const section = planSection(plan, 'Steps 1 and 2 done.');
+    assert.match(section, /### How the builder followed it\n\nSteps 1 and 2 done\./);
+    assert.doesNotMatch(section, /not in the plan/);
+  });
+
   it('puts the plan after the summary and before the evidence table', () => {
     const body = pullRequestBody(ctx, '# Done\n\n## Plan steps\n\n- validate-quantity: done', {}, 'f'.repeat(40), plan);
     assert.ok(body.indexOf('# Done') < body.indexOf('## Plan'));
     assert.ok(body.indexOf('## Plan') < body.indexOf('| Work item |'));
-    assert.match(body, /### How the builder followed it\n\n- validate-quantity: done/);
+    assert.match(body, /1\. `validate-quantity`: Check quantity is a positive integer\.\n   - validate-quantity: done/);
     assert.equal(body.match(/## Plan steps/g), null);
   });
 
