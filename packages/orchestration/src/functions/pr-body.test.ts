@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { closingReference, planSection, pullRequestBody, splitPlanSteps } from './pr-body.ts';
+import { closingReference, planSection, pullRequestBody, reviewSection, splitPlanSteps } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -121,5 +121,58 @@ describe('plan in the pull request body', () => {
 
   it('has no plan section without a plan', () => {
     assert.doesNotMatch(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40)), /## Plan/);
+  });
+});
+
+describe('review in the pull request body', () => {
+  const digest = {
+    verdict: 'request-changes' as const,
+    scores: { correctness: 2, completeness: 3, tests: 2, safety: 4 },
+    summary: 'The check runs after the write.',
+    findings: [
+      { path: '.github/workflows/ci.yml', severity: 'high' as const, body: 'Added by the orchestrator: this changes a workflow.' },
+      { path: 'src/a.ts', line: 18, severity: 'high' as const, body: 'Move the check\nabove the write.' },
+      { path: 'src/a.test.ts', severity: 'medium' as const, body: 'Assert nothing is written.' },
+    ],
+    totalFindings: 3,
+  };
+
+  it('shows the verdict and scores on one line, then the summary', () => {
+    const section = reviewSection({ ok: true, review: digest });
+    assert.match(section, /^## Automated review\n\n\*\*Request changes\*\* · correctness 2\/5 · completeness 3\/5 · tests 2\/5 · safety 4\/5\n\nThe check runs after the write\./);
+    assert.match(section, /_Advisory: the review does not block this pull request\._$/);
+  });
+
+  it('lists high-severity findings in the open, on one line each, and collapses the rest', () => {
+    const section = reviewSection({ ok: true, review: digest });
+    assert.match(section, /\*\*High severity\*\*\n\n- `\.github\/workflows\/ci\.yml`: Added by the orchestrator/);
+    assert.match(section, /- `src\/a\.ts:18`: Move the check above the write\./);
+    assert.match(section, /<details>\n<summary>1 other finding<\/summary>\n\n- \*\*medium\*\* `src\/a\.test\.ts`: Assert nothing is written\.\n\n<\/details>/);
+  });
+
+  it('says how many findings were left out of the digest', () => {
+    assert.match(reviewSection({ ok: true, review: { ...digest, totalFindings: 25 } }), /_22 more findings in `review\/review\.json` in the artefacts\._/);
+  });
+
+  it('has no findings lists when there are none', () => {
+    const section = reviewSection({ ok: true, review: { ...digest, verdict: 'approve', findings: [], totalFindings: 0 } });
+    assert.match(section, /\*\*Approve\*\*/);
+    assert.doesNotMatch(section, /High severity|<details>|more finding/);
+  });
+
+  it('says the review did not complete, without quoting its errors', () => {
+    for (const outcome of [null, { ok: false as const, errors: ['review.json /x has unexpected property "@everyone"'] }]) {
+      const section = reviewSection(outcome);
+      assert.match(section, /_The automated review did not complete\. It is advisory, so the pull request was opened anyway/);
+      assert.doesNotMatch(section, /everyone/);
+    }
+  });
+
+  it('puts the review after the plan, and leaves it out for runs before the Review stage', () => {
+    const body = pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40), undefined, { ok: true, review: digest });
+    assert.ok(body.indexOf('# Done') < body.indexOf('## Automated review'));
+    assert.ok(body.indexOf('## Automated review') < body.indexOf('| Work item |'));
+    assert.doesNotMatch(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40)), /Automated review/);
+    assert.match(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40), undefined, null), /did not complete/);
   });
 });

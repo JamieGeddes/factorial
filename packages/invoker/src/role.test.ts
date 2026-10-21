@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ROLE_STAGES, harnessTarget, outcomeAttributes } from './role.ts';
+import { ROLE_STAGES, harnessTarget, outcomeAttributes, parseSensitivePaths } from './role.ts';
 
 const env = {
   ROLE: 'builder',
@@ -26,7 +26,7 @@ test('requires every value', () => {
 });
 
 test('rejects a role it cannot start', () => {
-  assert.throws(() => harnessTarget({ ...env, ROLE: 'reviewer' }), /Unknown agent role "reviewer"/);
+  assert.throws(() => harnessTarget({ ...env, ROLE: 'explorer' }), /Unknown agent role "explorer"/);
 });
 
 test("rejects another role's harness", () => {
@@ -75,4 +75,31 @@ test("another role's outcome sits under its stage and leaves the builder's field
     plan: { stopReason: 'end_turn', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', usageKey: 'p' },
   });
   assert.deepEqual(ROLE_STAGES.planner, { stage: 'plan', running: 'planning', done: 'planned', failed: 'plan-error' });
+});
+
+test('reads the reviewer role and its harness', () => {
+  const target = harnessTarget({
+    ...env,
+    ROLE: 'reviewer',
+    HARNESS_ID: 'factorial_reviewer-3i2nElr1PZ',
+    HARNESS_ARN: 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_reviewer-3i2nElr1PZ',
+  });
+  assert.equal(target.role, 'reviewer');
+  assert.deepEqual(ROLE_STAGES.reviewer, { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' });
+});
+
+test('reads the sensitive paths for the reviewer', () => {
+  assert.deepEqual(parseSensitivePaths(undefined), []);
+  assert.deepEqual(parseSensitivePaths('[]'), []);
+  assert.deepEqual(parseSensitivePaths('[".github/workflows/ci.yml","templates/00-foundation.yml"]'), [
+    '.github/workflows/ci.yml',
+    'templates/00-foundation.yml',
+  ]);
+});
+
+test('refuses sensitive paths that are not repository paths', () => {
+  for (const value of ['{}', '[1]', '["/etc/passwd"]', '["../x"]', '["a\\nb"]', '["a`b"]', JSON.stringify(Array.from({ length: 21 }, (_, i) => `f${i}`))]) {
+    assert.throws(() => parseSensitivePaths(value), /SENSITIVE_PATHS/, value);
+  }
+  assert.throws(() => parseSensitivePaths('not json'));
 });

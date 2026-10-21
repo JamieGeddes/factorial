@@ -28,7 +28,7 @@ import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts'
 import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { ROLE_STAGES, harnessTarget, outcomeAttributes, promptFor } from './role.ts';
+import { ROLE_STAGES, harnessTarget, outcomeAttributes, parseSensitivePaths, promptFor } from './role.ts';
 import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
@@ -52,6 +52,8 @@ if (!/^[0-9a-f]{40}$/.test(baseCommit)) throw new Error('BASE_COMMIT is not a co
 // Which run of the planner this is: 2 when the first plan was rejected.
 const planAttempt = Number(process.env.PLAN_ATTEMPT ?? '1');
 if (!Number.isInteger(planAttempt) || planAttempt < 1) throw new Error('PLAN_ATTEMPT is not a positive integer');
+// The changes PrepareReview found to deployment and safety files, for the reviewer's prompt.
+const sensitivePaths = parseSensitivePaths(process.env.SENSITIVE_PATHS);
 const { stage, running, done, failed } = ROLE_STAGES[role];
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
@@ -179,7 +181,7 @@ async function main(): Promise<number> {
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
 
-  const prompt = promptFor(role, workItem, branch, baseBranch, planAttempt);
+  const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths });
   run.harness = await harnessInfo();
   log.info('invoking harness', { role, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...run.harness });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });

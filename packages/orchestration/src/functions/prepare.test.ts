@@ -96,9 +96,13 @@ describe('cloneScript pinned to a commit', () => {
     assert.match(cloneScript(params), new RegExp(`git checkout --quiet -b 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' '${'a'.repeat(40)}'`));
   });
 
-  it('fails if an existing branch has moved since planning', () => {
+  it('fails if an existing branch is not at the expected commit', () => {
     const script = cloneScript({ ...params, mode: 'checkout' });
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${'a'.repeat(40)}' \\|\\| \\{ echo 'branch factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c has moved since planning' >&2; exit 1; \\}`));
+    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${'a'.repeat(40)}' \\|\\| \\{ echo 'branch factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c is not at the expected commit ${'a'.repeat(40)}' >&2; exit 1; \\}`));
+  });
+
+  it('clears any earlier diff and review when a session is set up', () => {
+    assert.match(cloneScript({ ...params, mode: 'checkout' }), /rm -rf [^\n]* \/workspace\/diff\.patch \/workspace\/review\.json/);
   });
 
   it('rejects a start point that is not a commit', () => {
@@ -155,6 +159,13 @@ describe('initialNotes', () => {
     assert.match(initialNotes(workItem), /The planner's plan is in \/workspace\/plan\.json: follow its steps in order by `id`/);
     assert.match(initialNotes(workItem), /plan\.md is the planner's explanation, for context/);
     assert.match(initialNotes(workItem, { role: 'planner' }), /Your plan goes in \/workspace\/plan\.md and \/workspace\/plan\.json/);
+  });
+
+  it('tells the reviewer where the plan is and that its review goes elsewhere', () => {
+    const notes = initialNotes(workItem, { role: 'reviewer' });
+    assert.match(notes, /The plan the builder was given is \/workspace\/plan\.json/);
+    assert.match(notes, /Your review goes in \/workspace\/review\.json, not here/);
+    assert.doesNotMatch(notes, /follow its steps/);
   });
 });
 

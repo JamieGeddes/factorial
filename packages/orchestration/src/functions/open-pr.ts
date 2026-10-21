@@ -13,7 +13,7 @@ import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
-import { pullRequestBody, type TestResult } from './pr-body.ts';
+import { pullRequestBody, type ReviewOutcome, type TestResult } from './pr-body.ts';
 
 interface OpenPrInput {
   ctx: WorkContext;
@@ -21,6 +21,8 @@ interface OpenPrInput {
   test: TestResult & { sha?: string };
   /** The plan the builder followed; absent for runs started before the Plan stage. */
   plan?: PlanDigest | null;
+  /** The Review stage's outcome: null when it failed outright, absent for runs started before the stage. */
+  review?: ReviewOutcome;
 }
 
 export class UntestedHeadError extends Error {
@@ -50,7 +52,7 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
 
   const pr = await client.createPullRequest(repo, {
     title: ctx.workItem.title,
-    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, input.plan ?? undefined),
+    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, input.plan ?? undefined, input.review),
     head: ctx.branch,
     base: ctx.baseBranch,
   });

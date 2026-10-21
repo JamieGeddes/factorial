@@ -4,8 +4,11 @@
  * deletes, so a retried stage overwrites its key and the earlier version stays.
  * Text is redacted before it leaves the account's own services. Shared by the
  * orchestrator Lambdas and the invoker, the only writers.
+ *
+ * Reading back is the exception: a role may read only the keys its policy
+ * names, and `getTextArtefact` caps what it returns.
  */
-import { PutObjectCommand, S3Client, type PutObjectCommandInput } from '@aws-sdk/client-s3';
+import { GetObjectCommand, NoSuchKey, PutObjectCommand, S3Client, type PutObjectCommandInput } from '@aws-sdk/client-s3';
 
 import { redactSecrets } from './redact.ts';
 
@@ -81,4 +84,26 @@ export async function putBinaryArtefact(prefix: string, path: string, body: Uint
   await s3.send(
     new PutObjectCommand({ Bucket: artefactBucket(), Key: artefactKey(prefix, path), Body: body, ContentType: contentType }),
   );
+}
+
+/**
+ * Read one text artefact back, at most `maxBytes` of it; undefined when it
+ * does not exist. `truncated` says the object was longer than the cap.
+ */
+export async function getTextArtefact(
+  prefix: string,
+  path: string,
+  maxBytes: number,
+): Promise<{ text: string; truncated: boolean } | undefined> {
+  try {
+    const response = await s3.send(
+      new GetObjectCommand({ Bucket: artefactBucket(), Key: artefactKey(prefix, path), Range: `bytes=0-${maxBytes}` }),
+    );
+    const bytes = (await response.Body?.transformToByteArray()) ?? new Uint8Array();
+    const truncated = bytes.length > maxBytes;
+    return { text: Buffer.from(bytes.subarray(0, maxBytes)).toString('utf8'), truncated };
+  } catch (error) {
+    if (error instanceof NoSuchKey) return undefined;
+    throw error;
+  }
 }
