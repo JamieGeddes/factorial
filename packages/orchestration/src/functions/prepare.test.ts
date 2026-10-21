@@ -152,7 +152,8 @@ describe('initialNotes', () => {
   });
 
   it("points the builder at the planner's plan, and the planner at its plan files", () => {
-    assert.match(initialNotes(workItem), /The planner's plan is in \/workspace\/plan\.md\. Follow it/);
+    assert.match(initialNotes(workItem), /The planner's plan is in \/workspace\/plan\.json: follow its steps in order by `id`/);
+    assert.match(initialNotes(workItem), /plan\.md is the planner's explanation, for context/);
     assert.match(initialNotes(workItem, { role: 'planner' }), /Your plan goes in \/workspace\/plan\.md and \/workspace\/plan\.json/);
   });
 });

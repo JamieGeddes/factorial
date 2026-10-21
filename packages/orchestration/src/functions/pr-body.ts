@@ -42,18 +42,42 @@ export function splitPlanSteps(summary: string): { rest: string; steps?: string 
   return { rest, ...(steps ? { steps } : {}) };
 }
 
-/** The plan the builder followed, and the builder's account of each step. */
+/** Find the builder's reported line for a plan step id: an optional bullet and optional backticks, then the id, then ':' or whitespace. */
+export function stepLineFor(steps: string, id: string): string | undefined {
+  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^(?:[-*] |)?(?:\`${escaped}\`|${escaped})(?=[\\s:]|$)`);
+  for (const line of steps.split('\n')) {
+    if (pattern.test(line.trim())) return line.trim();
+  }
+  return undefined;
+}
+
+/**
+ * The plan the builder followed, with the builder's account of each step
+ * under it, matched by plan step id. When no reported line matches a step,
+ * the builder's report is shown as it was written, so nothing is lost.
+ */
 export function planSection(plan: PlanDigest, builderSteps: string | undefined): string {
+  const lines = plan.steps.map((step) => (builderSteps ? stepLineFor(builderSteps, step.id) : undefined));
+  const reported = builderSteps?.split('\n').map((line) => line.trim()).filter(Boolean) ?? [];
+  const unmatched = reported.filter((line) => !lines.includes(line));
+  const report = !builderSteps
+    ? ['', '_The builder did not report on the plan\'s steps._']
+    : lines.every((line) => line === undefined)
+      ? ['', '### How the builder followed it', '', builderSteps]
+      : unmatched.length
+        ? ['', `Steps the builder reported that are not in the plan: ${unmatched.join('; ')}`]
+        : [];
   return [
     '## Plan',
     '',
     plan.summary.trim(),
     '',
-    ...plan.steps.map((step, i) => `${i + 1}. \`${step.id}\`: ${step.description}`),
-    '',
-    '### How the builder followed it',
-    '',
-    builderSteps ?? '_The builder did not report on the plan\'s steps._',
+    ...plan.steps.map((step, i) => {
+      const line = lines[i]?.replace(/^(?:[-*] )?/, '- ');
+      return [`${i + 1}. \`${step.id}\`: ${step.description}`, ...(line ? [`   ${line}`] : [])].join('\n');
+    }),
+    ...report,
   ].join('\n');
 }
 

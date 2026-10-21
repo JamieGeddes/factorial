@@ -31,8 +31,8 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
     'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json.',
     'Commit on this branch as you go, after each coherent step: if the session ends early, only committed work is kept.',
     `Older messages, including this one, are condensed into a summary as the session grows, and detail can be lost. /workspace/notes.md already starts with this request under "# Task": keep that section, add your notes below it, and re-read it${isRework ? ' and /workspace/rework.md' : ''} rather than relying on memory.`,
-    'The planner has already decided what to change: its plan is /workspace/plan.md (and /workspace/plan.json). Read it before changing any code and follow it step by step. Where a step turns out to be wrong or unnecessary, change or skip it, and note why under "# Plan" in /workspace/notes.md. Re-read the Task section before each commit and before writing the summary, and check the work against it.',
-    `When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions, including a "## Plan steps" section: one line per plan step id, saying done, skipped or changed, and why for any not done as planned.`,
+    'The planner has already decided what to change: its plan is /workspace/plan.json. Follow its `steps` in order, by `id`. /workspace/plan.md is the planner\'s explanation, read for context; where the two disagree, plan.json wins, and note the disagreement under "# Plan" in /workspace/notes.md. Read the plan before changing any code, and re-read the Task section before each commit and before writing the summary, checking the work against it.',
+    'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions, including a "## Plan steps" section: one line per plan step, each starting with the step\'s `id` from plan.json, then done, skipped or changed, and why for any not done as planned.',
   ].join('\n');
 }
 
@@ -58,5 +58,6 @@ export function planPrompt(workItem: WorkItem, branch: string, baseBranch: strin
       ? [`Your previous plan was rejected. The problems are under "# Plan rejected (attempt ${planAttempt - 1})" in /workspace/notes.md: fix each one and write both files again.`]
       : []),
     'Write /workspace/plan.md and /workspace/plan.json as described in your instructions, and check plan.json with jq before you finish.',
+    '/workspace/plan.json is the plan the builder follows: every step, file and verification must be in it. /workspace/plan.md explains it for humans and must not add steps that are missing from plan.json.',
   ].join('\n');
 }
