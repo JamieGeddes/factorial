@@ -138,6 +138,45 @@ Claude Platform on AWS removes the third-party key the way Bedrock Managed Agent
 
 **Spike:** the builder only, on a Runtime in `eu-west-1`, with Claude Platform on AWS. Run a #87-sized item on Haiku 5.5 and on Sonnet 5.5 against GLM 5.3 Flash on the Harness, and compare rounds, calls, tokens, cost and outcome. The planner and reviewer stay on Harness for the spike.
 
+## If building from scratch
+
+Asked on 2026-10-22: with Claude models allowed in production (GLM was chosen to keep the proof of concept cheap), would a different agent layer be the better choice from the start? Yes. The Harness would not be the first choice; the spine would be built exactly as it is, with the Claude Agent SDK on an AgentCore Runtime inside it, and Claude Managed Agents weighed as the alternative.
+
+**What stays the same in every version.** Triggers on EventBridge, the Step Functions stage graph, orchestrator Lambdas holding the GitHub App tokens, the clean-room push, the trusted test workflow, the artefact store, the ledger and the permissions boundaries. That half of Factorial is what makes it safe and reconstructable, and it does not depend on the agent layer.
+
+**The three agent layers, with Claude**
+
+| | AgentCore Harness (today) | Agent SDK on AgentCore Runtime | Claude Managed Agents via Claude Platform on AWS |
+|---|---|---|---|
+| Loop | AWS-managed Strands, configuration only | Claude Code's harness as a library, in a container Factorial owns | Anthropic-hosted, configuration only |
+| Compaction, subagents | No | Yes | Yes, plus outcomes (a rubric-graded iterate loop) and dynamic workflows |
+| Versioning | Harness versions, `live` endpoint | Runtime versions, `live` endpoint | Versioned agent objects; sessions pin to a version |
+| Model credential | Vault key read under the execution role | None: SigV4 from the execution role | None |
+| GitHub access | Orchestrator only, clean-room push | Orchestrator only, clean-room push | Repository attached at session start; a git proxy injects the token so it never enters the sandbox |
+| Spend cap | Iteration and time limits | `maxBudgetUsd` | Hard dollar budget per session, priced at list |
+| Completion signal | Fargate invoker holds the stream | Fargate invoker holds the stream | Webhook on session state; Step Functions waits on a task token, no invoker |
+| Where data goes | Model calls only | Model calls only | The loop and every tool output on Anthropic's control plane; sandbox cloud or self-hosted |
+| Status | GA | GA | Beta on Claude Platform on AWS; sessions run autonomously for at most 6 hours |
+| Code Factorial owns | Templates and invoker | Templates, a thin Runtime container, invoker | Agent files synced with `ant apply`, a webhook Lambda |
+
+**Why the Agent SDK would be the default.** It closes both gaps in this record, it is generally available in `eu-west-1`, it is TypeScript, and everything but the model calls stays in the AWS account. The session command API still does the deterministic steps, so Prepare and Collect are unchanged. The container is an HTTP entrypoint around `query()` that streams the transcript out.
+
+**Why Managed Agents is worth weighing.** It removes the most code: the invoker (webhooks replace it), the plan and review hand-overs (outcomes, and a reviewer thread in a roster), per-item budgets, and the git plumbing. Versioned agent objects map onto the `live` alias rule exactly. Against it today: it is beta; the loop and every tool output leave AWS for Anthropic's control plane; and its git proxy lets the agent push, so the token would be scoped read-only to keep the orchestrator as the only push path. The self-hosted sandbox keeps files in the account but loses the egress-substituted credentials.
+
+**What would be simpler.** On the agent half, a great deal, partly because of the model rather than the harness:
+
+- One harness block per role, with the LiteLLM configuration, the credential provider, the web search gateway and its tool-naming rules.
+- Rounds, the notes file as memory, the summarisation settings and the single-session assumption. Compaction covers them.
+- The plan hand-over across sessions. A plan subagent writes `plan.json` in the builder's session; the orchestrator still validates and stores it.
+- Most of the prompt work of the first week (exploration budgets, install bans, read rules), which was written for Flash.
+- The explorer stage. Subagents do that inside the session.
+
+What would still be built: the reviewer as a separate session, because judged output must never run where it was produced, and the orchestrator's own sensitive-path findings.
+
+**Cost.** At first-party list prices Haiku 5.5 costs no more than GLM 5.3 Flash. Sonnet 5.5 on a #87-sized item at the same token volume would be about ten times Flash, in the range of the flagship GLM 5.3, and would not need the same volume. The number to measure is cost per accepted pull request, which is where a stronger model wins back the per-token difference.
+
+**Order for a rebuild.** Spine first, as now. Then the Agent SDK Runtime for the builder with Sonnet 5.5 on Claude Platform on AWS, the reviewer as a second Runtime with read-only tools, and the planner folded into the builder as a subagent once its plan artefact is proven. Managed Agents stays on the revisit list for when it leaves beta.
+
 ## Revisit when
 
 - After items 1 to 4, a six-step plan still needs more than two rounds, or rounds lose work between sessions.
@@ -145,6 +184,7 @@ Claude Platform on AWS removes the third-party key the way Bedrock Managed Agent
 - AWS adds a threshold to Harness truncation (removing the gap), or documents subagents for the Harness (removing the second trigger).
 - The model moves to one whose vendor SDK brings its own harness, and running that harness on Runtime is cheaper than reproducing it in configuration.
 - Bedrock Managed Agents passes its gates above, which would make it the managed alternative to the Agent SDK spike.
+- Claude Managed Agents leaves beta on Claude Platform on AWS, which makes it the managed alternative with the least code to own (see **If building from scratch**).
 
 If revisited, the order is: the Claude Agent SDK on a Runtime (available now, closes both gaps, TypeScript); then Bedrock Managed Agents if its gates are met (managed, no loop code); then Strands on Runtime as the last resort. Each is kept to the builder, with the planner and reviewer staying on Harness so that the roles that judge the builder's output never run its code.
 
@@ -171,3 +211,5 @@ If revisited, the order is: the Claude Agent SDK on a Runtime (available now, cl
 - Claude Code on Claude Platform on AWS: https://code.claude.com/docs/en/claude-platform-on-aws
 - Claude Platform on AWS: https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws
 - Z.ai Claude Code integration: https://docs.z.ai/scenario-example/develop-tools/claude
+- Claude Managed Agents: https://platform.claude.com/docs/en/managed-agents/overview
+- Claude Managed Agents self-hosted sandboxes: https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes
