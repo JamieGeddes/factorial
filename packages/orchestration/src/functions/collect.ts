@@ -14,6 +14,7 @@ import { putBinaryArtefact, redactSecrets } from '@factorial/artefacts';
 
 import { type WorkContext, reworkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
+import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
 import { cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
 import { exportSessionFiles } from '../lib/session-files.ts';
@@ -33,6 +34,8 @@ export interface CollectResult {
   commitCount: number;
   headSha: string;
   summary: string;
+  /** True when the build stopped at the builder's limit rather than failing: the state machine may start another round. */
+  incomplete: boolean;
 }
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
@@ -195,11 +198,16 @@ export interface CollectInput extends WorkContext {
    * not lost. Uncommitted changes are committed with a message that says so.
    */
   salvage?: boolean;
+  /** The builder's session for this round; the work item id when absent (round 1). */
+  builderSessionId?: string;
+  /** The Build state's failure, when salvaging: says whether the builder merely ran out. */
+  failure?: StepFailure | null;
 }
 
 export const handler = logged('collect', (input: CollectInput) => runKey(input), async (input, log): Promise<CollectResult> => {
-  const { salvage = false, ...ctx } = input;
-  const agentSession = sessionTarget(ctx.sessionId);
+  const { salvage = false, builderSessionId, failure, ...ctx } = input;
+  const incomplete = salvage && builderIncomplete(failure);
+  const agentSession = sessionTarget(builderSessionId ?? ctx.sessionId);
   const inspection = await runCommand(
     agentSession,
     inspectScript(ctx.baseCommit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE),
@@ -213,8 +221,8 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
 
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
-    log.info('agent made no commits');
-    return { pushed: false, commitCount, headSha, summary };
+    log.info('agent made no commits', { incomplete });
+    return { pushed: false, commitCount, headSha, summary, incomplete };
   }
 
   const bundle = await mustRun(agentSession, bundleScript(ctx.baseCommit, headSha), 300);
@@ -275,5 +283,5 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     agentHeadSha: headSha,
     commitCount,
   });
-  return { pushed: true, commitCount, headSha: pushedSha, summary };
+  return { pushed: true, commitCount, headSha: pushedSha, summary, incomplete };
 });

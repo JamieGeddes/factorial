@@ -231,12 +231,14 @@ export async function seedSession(params: {
   at?: string;
   /** Check out the branch as it is on the remote, even for a new item: the reviewer's case, after the push. */
   existing?: boolean;
+  /** The session to seed; the work item id unless the build is in a later round. */
+  sessionId?: string;
 }): Promise<{ baseCommit: string; baseBranch: string }> {
   const { workItem, branch, resumedFrom } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const rework = reworkContext(workItem);
   const token = await repositoryToken(repo, { contents: 'read' });
-  const target = sessionTarget(workItem.id, params.role);
+  const target = sessionTarget(params.sessionId ?? workItem.id, params.role);
   const result = await mustRun(
     target,
     cloneScript({

@@ -43,6 +43,16 @@ describe('parseInspection', () => {
   });
 });
 
+describe('a round that stopped at the builder\'s limit', () => {
+  it('is told apart from a failure by the invoker exit code in the task failure', async () => {
+    const { builderIncomplete } = await import('../lib/incomplete.ts');
+    const cause = (exitCode: number) => JSON.stringify({ Containers: [{ Name: 'invoker', ExitCode: exitCode }] });
+    assert.equal(builderIncomplete({ Error: 'States.TaskFailed', Cause: cause(3) }), true);
+    assert.equal(builderIncomplete({ Error: 'States.TaskFailed', Cause: cause(1) }), false);
+    assert.equal(builderIncomplete(null), false);
+  });
+});
+
 describe('touchesWorkflows', () => {
   it('is true only for files under .github/workflows/', () => {
     assert.equal(touchesWorkflows(['.github/workflows/ci.yml', 'README.md']), true);
