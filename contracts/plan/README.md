@@ -15,6 +15,7 @@ The plan is internal to Factorial, not part of the `WorkItem` API, but the orche
 | `tests.add` | Tests to add or change, one sentence each. |
 | `risks` | What could go wrong. May be empty. |
 | `openQuestions` | What the request leaves undecided, and the assumption the plan makes for each. May be empty. |
+| `followUp` | Optional. Work the request mentions that belongs in a separate work item (another repository, a decision the requester must make first, a change mentioned but not asked for), one sentence each. Not a way to shorten a plan. Shown in the pull request body; a human raises the items until fan-out (#55) does. |
 
 Lengths and counts are capped in the schema. The validator also checks that step ids are unique, which JSON Schema cannot express. `additionalProperties` is `false` at every level.
 
@@ -30,4 +31,4 @@ Fan-out (#55) adds an optional `children[]`: child work items the plan splits th
 
 ## Change log
 
-- **2026-10: v1.** Summary, steps, tests, risks and open questions.
+- **2026-10: v1.** Summary, steps, tests, risks and open questions. Optional `followUp` added for work that belongs in a separate item.

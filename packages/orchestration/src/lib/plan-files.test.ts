@@ -135,5 +135,19 @@ describe('planDigest', () => {
     assert.equal(digest.summary, plan.summary);
     assert.equal(digest.steps[0]?.description.length, 201);
     assert.equal(digest.steps[1]?.id, 'handler-tests');
+    assert.equal(digest.followUp?.length, 1);
+  });
+
+  it('omits followUp when the plan has none', () => {
+    const { followUp: _followUp, ...plan } = JSON.parse(validJson);
+    assert.equal(planDigest(plan).followUp, undefined);
+  });
+
+  it('carries the follow-up items, cut like the steps', () => {
+    const plan = JSON.parse(validJson);
+    plan.followUp = ['Later.', 'y'.repeat(250)];
+    const digest = planDigest(plan);
+    assert.equal(digest.followUp?.[0], 'Later.');
+    assert.equal(digest.followUp?.[1]?.length, 201);
   });
 });

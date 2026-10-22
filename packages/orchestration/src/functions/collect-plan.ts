@@ -13,6 +13,7 @@ import { putArtefact, putJsonArtefact } from '@factorial/artefacts';
 
 import type { WorkContext } from '../lib/context.ts';
 import { logged, runKey } from '../lib/log.ts';
+import { planSize } from '../lib/plan-size.ts';
 import { checkPlanFiles, parsePlanRead, planDigest, readPlanScript, rejectionNotesScript, seedPlanScript, type PlanDigest } from '../lib/plan-files.ts';
 import { mustRun, sessionTarget } from '../lib/session.ts';
 import { recordProgress } from '../lib/table.ts';
@@ -51,6 +52,8 @@ export const handler = logged('collect-plan', (input: CollectPlanInput) => runKe
   const planner = sessionTarget(ctx.sessionId, 'planner');
   const read = await mustRun(planner, readPlanScript(), 120);
   const checked = checkPlanFiles(parsePlanRead(read.stdout));
+  // Recorded beside the builder's usage, so a plan's size can be set against what it cost.
+  const size = checked.ok ? planSize(checked.plan) : undefined;
 
   // Stored whether or not the plan is valid, so a rejected plan can be read;
   // a retry overwrites the keys and versioning keeps the first attempt.
@@ -59,7 +62,7 @@ export const handler = logged('collect-plan', (input: CollectPlanInput) => runKe
   await putJsonArtefact(ctx.artefactPrefix, 'plan/validation.json', {
     planAttempt,
     valid: checked.ok,
-    ...(checked.ok ? { steps: checked.plan.steps.length } : { errors: checked.errors }),
+    ...(checked.ok ? { size } : { errors: checked.errors }),
   });
 
   if (!checked.ok) {
@@ -81,7 +84,7 @@ export const handler = logged('collect-plan', (input: CollectPlanInput) => runKe
   });
   await mustRun(sessionTarget(ctx.sessionId, 'builder'), seedPlanScript(checked.markdown, checked.json), 60);
 
-  await recordProgress(ctx.workItem.id, 'plan-accepted', { planAttempts: planAttempt, planSteps: checked.plan.steps.length });
-  log.info('plan accepted', { planAttempt, steps: checked.plan.steps.length });
+  await recordProgress(ctx.workItem.id, 'plan-accepted', { planAttempts: planAttempt, planSteps: checked.plan.steps.length, planSize: size });
+  log.info('plan accepted', { planAttempt, size });
   return { valid: true, plan: planDigest(checked.plan) };
 });

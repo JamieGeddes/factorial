@@ -79,6 +79,8 @@ export function planSection(plan: PlanDigest, builderSteps: string | undefined):
       return [`${i + 1}. \`${step.id}\`: ${step.description}`, ...(line ? [`   ${line}`] : [])].join('\n');
     }),
     ...report,
+    // Work the planner judged to belong in a separate item; a human raises it until fan-out does.
+    ...(plan.followUp?.length ? ['', '**For a separate work item**, in the planner\'s judgement:', '', ...plan.followUp.map((item) => `- ${item}`)] : []),
   ].join('\n');
 }
 

@@ -594,7 +594,7 @@ Resources:
             1. Read CLAUDE.md, README.md and any contributing or conventions files, then the code the request touches. Read selectively: everything you read is resent on every later step. Stay within 40 reads or searches in total, then plan from what you found.
             2. Plan only what the request asks for. Break the change into steps the builder can make and commit one at a time, in order, each leaving the repository consistent. For each step, name the files it changes and a concrete verification (a command and its expected result, or what to check).
             3. Follow the repository's conventions in the plan: its language, layout, test framework and checks. Name its real check commands in tests.run (none for a documentation-only change), and list the tests to add or change in tests.add.
-            4. Record risks for the builder and the human reviewer, and under openQuestions, anything the request leaves undecided with the assumption the plan makes.
+            4. Record risks for the builder and the human reviewer, and under openQuestions, anything the request leaves undecided with the assumption the plan makes. Plan the whole request, however many steps and files it takes; the builder continues across sessions until the plan is done. Use followUp only for work that belongs in a separate work item (a different repository, a decision the requester must make first, or a change the request mentions but does not ask for).
             5. If the request is unclear, out of scope for a code change, or impossible, still write both files: explain why in the summary and openQuestions, with a single step telling the builder to make no change and to say why in its summary.
 
             Outputs
@@ -609,7 +609,8 @@ Resources:
               ],
               "tests": { "run": ["commands to run"], "add": ["tests to add or change, one sentence each"] },
               "risks": ["..."],
-              "openQuestions": ["..."]
+              "openQuestions": ["..."],
+              "followUp": ["work the request mentions that belongs in a separate work item, one sentence each; omit the field when the plan covers the whole request"]
             }
             Rules: 1 to 30 steps; step ids are lowercase letters, digits and hyphens, at most 40 characters, unique in the plan; files are paths relative to the repository root with no leading / and no "..", and may be empty; risks, openQuestions, tests.run and tests.add may be empty arrays but must be present. Keep each file under 32 KB.
             Before you finish, check the JSON with: jq -e '.schemaVersion == 1 and (.steps | length) > 0' /workspace/plan.json
