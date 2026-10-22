@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { REVIEW_SCHEMA_VERSION, ReviewValidationError, assertReview, parseReviewJson, validateReview, type Review } from './index.ts';
+import { REVIEW_SCHEMA_VERSION, ReviewValidationError, SENSITIVE_PATHS_FILE, assertReview, parseReviewJson, parseSensitivePathsJson, validateReview, type Review } from './index.ts';
 
 const examplesDir = fileURLToPath(new URL('../../../contracts/review/v1/examples/', import.meta.url));
 
@@ -118,5 +118,40 @@ describe('Review schema', () => {
   it('parseReviewJson accepts valid text', async () => {
     const text = await readFile(path.join(examplesDir, 'approve.json'), 'utf8');
     assert.equal(parseReviewJson(text).ok, true);
+  });
+});
+
+describe('Sensitive-path rules', () => {
+  const ok = (value: unknown) => parseSensitivePathsJson(JSON.stringify(value)).ok;
+
+  it("accepts this repository's own rules", async () => {
+    const text = await readFile(fileURLToPath(new URL(`../../../${SENSITIVE_PATHS_FILE}`, import.meta.url)), 'utf8');
+    const result = parseSensitivePathsJson(text);
+    assert.ok(result.ok, result.ok ? '' : result.errors.join('; '));
+  });
+
+  it('accepts each kind of rule and no rules', () => {
+    assert.equal(ok({ schemaVersion: 1, rules: [] }), true);
+    for (const match of [{ path: 'infra/iam.yml' }, { prefix: 'infra/' }, { contentPattern: 'iam:PassRole' }]) {
+      assert.equal(ok({ schemaVersion: 1, rules: [{ ...match, reason: 'changes IAM' }] }), true, JSON.stringify(match));
+    }
+  });
+
+  it('rejects a rule with no match, two matches or no reason', () => {
+    assert.equal(ok({ schemaVersion: 1, rules: [{ reason: 'changes IAM' }] }), false);
+    assert.equal(ok({ schemaVersion: 1, rules: [{ path: 'a', prefix: 'b', reason: 'changes IAM' }] }), false);
+    assert.equal(ok({ schemaVersion: 1, rules: [{ path: 'a' }] }), false);
+  });
+
+  it('rejects paths outside the repository, multi-line values and more than 20 rules', () => {
+    for (const prefix of ['/etc/', '../x', 'a/../../b']) assert.equal(ok({ schemaVersion: 1, rules: [{ prefix, reason: 'r' }] }), false, prefix);
+    assert.equal(ok({ schemaVersion: 1, rules: [{ contentPattern: 'a\nb', reason: 'r' }] }), false);
+    assert.equal(ok({ schemaVersion: 1, rules: [{ path: 'a', reason: 'r\nr' }] }), false);
+    assert.equal(ok({ schemaVersion: 1, rules: Array.from({ length: 21 }, () => ({ path: 'a', reason: 'r' })) }), false);
+  });
+
+  it('reports a syntax error as a validation error', () => {
+    const result = parseSensitivePathsJson('{');
+    assert.ok(!result.ok && result.errors[0]?.startsWith('(root) is not valid JSON'));
   });
 });

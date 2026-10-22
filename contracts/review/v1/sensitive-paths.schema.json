@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:review:v1:sensitive-paths",
+  "title": "SensitivePaths",
+  "description": "A target repository's own rules for which changes need particular care, kept at .factorial/sensitive-paths.json. Read from the base branch, never from the branch under review. Each changed file a rule matches gets a high-severity finding from the orchestrator in the review, whatever the reviewer concludes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "rules"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "rules": {
+      "description": "Checked in order after the built-in rules; the first rule a file matches gives its reason.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason"],
+        "minProperties": 2,
+        "maxProperties": 2,
+        "properties": {
+          "path": {
+            "description": "A repository-relative file path, matched exactly.",
+            "$ref": "#/$defs/repositoryPath"
+          },
+          "prefix": {
+            "description": "A repository-relative path prefix, such as a directory ending in /.",
+            "$ref": "#/$defs/repositoryPath"
+          },
+          "contentPattern": {
+            "description": "A POSIX extended regular expression, matched against the added and removed lines of each changed file (git diff -G).",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\n\\r\\u0000]+$"
+          },
+          "reason": {
+            "description": "Completes the sentence \"This change ...\", for example \"changes the IAM roles the service deploys with\".",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^[^\\n\\r]+$"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))[^\\n\\r\\u0000]+$"
+    }
+  }
+}

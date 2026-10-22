@@ -91,14 +91,28 @@ test('reads the reviewer role and its harness', () => {
 test('reads the sensitive paths for the reviewer', () => {
   assert.deepEqual(parseSensitivePaths(undefined), []);
   assert.deepEqual(parseSensitivePaths('[]'), []);
-  assert.deepEqual(parseSensitivePaths('[".github/workflows/ci.yml","templates/00-foundation.yml"]'), [
-    '.github/workflows/ci.yml',
-    'templates/00-foundation.yml',
-  ]);
+  const paths = [
+    { path: '.github/workflows/ci.yml', reason: 'changes GitHub Actions' },
+    { path: 'infra/iam.yml', reason: 'changes IAM' },
+  ];
+  assert.deepEqual(parseSensitivePaths(JSON.stringify(paths)), paths);
 });
 
 test('refuses sensitive paths that are not repository paths', () => {
-  for (const value of ['{}', '[1]', '["/etc/passwd"]', '["../x"]', '["a\\nb"]', '["a`b"]', JSON.stringify(Array.from({ length: 21 }, (_, i) => `f${i}`))]) {
+  const entry = (path: string, reason = 'changes IAM') => JSON.stringify([{ path, reason }]);
+  for (const value of [
+    '{}',
+    '[1]',
+    '["a.ts"]',
+    entry('/etc/passwd'),
+    entry('../x'),
+    entry('a\nb'),
+    entry('a`b'),
+    entry('a.ts', ''),
+    entry('a.ts', 'two\nlines'),
+    entry('a.ts', 'x'.repeat(201)),
+    JSON.stringify(Array.from({ length: 21 }, (_, i) => ({ path: `f${i}`, reason: 'r' }))),
+  ]) {
     assert.throws(() => parseSensitivePaths(value), /SENSITIVE_PATHS/, value);
   }
   assert.throws(() => parseSensitivePaths('not json'));

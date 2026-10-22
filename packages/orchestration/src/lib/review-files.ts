@@ -7,7 +7,16 @@
  * read itself, redacted and validated against the review contract.
  */
 import { redactSecrets } from '@factorial/artefacts';
-import { parseReviewJson, type Review, type ReviewFinding, type ReviewScores, type ReviewVerdict } from '@factorial/review';
+import {
+  SENSITIVE_PATHS_FILE,
+  parseReviewJson,
+  parseSensitivePathsJson,
+  type Review,
+  type ReviewFinding,
+  type ReviewScores,
+  type ReviewVerdict,
+  type SensitivePathRule,
+} from '@factorial/review';
 
 import { HARDENED_GIT_ENV, assertGitBranch, shellQuote } from './shell.ts';
 
@@ -23,17 +32,24 @@ const MAX_SENSITIVE = 20;
 
 const encode = (text: string): string => shellQuote(Buffer.from(text, 'utf8').toString('base64'));
 
+/** The rules file is read at most this large. */
+export const MAX_RULES_FILE_BYTES = 64 * 1024;
+
 /**
  * Write what the reviewer reads into its fresh session, then print the
- * changed paths and the paths whose diff touches a permissions boundary,
- * NUL-separated and base64-encoded so no path can break the parse. The diff
- * is three-dot, against the merge base, so it shows what the pull request
- * would change even when the branch started from an earlier attempt.
- * Rename detection is off, so a file moved out of a sensitive directory is
- * listed under its old path as well as its new one.
+ * changed paths and the repository's sensitive-path rules as they are on the
+ * base branch, never as the branch under review has them, so a change cannot
+ * loosen the rules that judge it. The paths are NUL-separated and
+ * base64-encoded so no path can break the parse. The diff is three-dot,
+ * against the merge base, so it shows what the pull request would change
+ * even when the branch started from an earlier attempt. Rename detection is
+ * off, so a file moved out of a sensitive directory is listed under its old
+ * path as well as its new one.
  */
 export function seedReviewScript(params: { baseBranch: string; planJson: string; planMarkdown: string; summary: string }): string {
-  const range = shellQuote(`origin/${assertGitBranch(params.baseBranch, 'base branch')}...HEAD`);
+  const base = `origin/${assertGitBranch(params.baseBranch, 'base branch')}`;
+  const range = shellQuote(`${base}...HEAD`);
+  const rules = shellQuote(`${base}:${SENSITIVE_PATHS_FILE}`);
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
@@ -44,26 +60,94 @@ export function seedReviewScript(params: { baseBranch: string; planJson: string;
     `git diff --no-color --no-ext-diff ${range} > /workspace/diff.patch`,
     `git diff -z --name-only --no-renames --no-ext-diff ${range} | base64 -w0`,
     `printf '%s' ${shellQuote(SECTION)}`,
-    `git diff -z --name-only --no-renames --no-ext-diff -G '[Pp]ermissions-?[Bb]oundary' ${range} | base64 -w0`,
+    `if git cat-file -e ${rules} 2>/dev/null; then printf 'ok:'; git show ${rules} | head -c ${MAX_RULES_FILE_BYTES + 1} | base64 -w0; else printf 'missing:'; fi`,
   ].join('\n');
 }
 
 export interface ReviewSeed {
   changedPaths: string[];
-  /** Changed files whose added or removed lines mention a permissions boundary. */
-  boundaryPaths: string[];
+  /** The base branch's rules file, if it has one. */
+  rulesText?: string | undefined;
 }
+
+const decodePaths = (base64: string): string[] => {
+  if (!/^[A-Za-z0-9+/=]*$/.test(base64)) throw new Error('review session did not produce base64 output');
+  return Buffer.from(base64, 'base64').toString('utf8').split('\0').filter(Boolean);
+};
 
 export function parseReviewSeed(stdout: string): ReviewSeed {
   // Split before trimming: an empty first list leaves the marker's leading newline at the very start.
   const sections = stdout.split(SECTION);
-  if (sections.length !== 2) throw new Error(`expected 2 path lists from the review session, got ${sections.length}`);
-  const [changedPaths, boundaryPaths] = sections.map((section) => {
-    const base64 = section.trim();
-    if (!/^[A-Za-z0-9+/=]*$/.test(base64)) throw new Error('review seed did not produce base64 output');
-    return Buffer.from(base64, 'base64').toString('utf8').split('\0').filter(Boolean);
-  });
-  return { changedPaths: changedPaths ?? [], boundaryPaths: boundaryPaths ?? [] };
+  if (sections.length !== 2) throw new Error(`expected 2 sections from the review session, got ${sections.length}`);
+  const changedPaths = decodePaths(sections[0]!.trim());
+  const rules = sections[1]!.trim();
+  if (rules === 'missing:') return { changedPaths };
+  const match = /^ok:([A-Za-z0-9+/=]*)$/.exec(rules);
+  if (!match) throw new Error('review session did not produce the rules file as base64');
+  return { changedPaths, rulesText: Buffer.from(match[1]!, 'base64').toString('utf8') };
+}
+
+/**
+ * Rules that hold in any repository on GitHub: Actions run with the
+ * repository's secrets and can deploy, CODEOWNERS decides who must approve,
+ * and .factorial/ holds these rules themselves.
+ */
+export const BUILT_IN_RULES: readonly SensitivePathRule[] = [
+  { prefix: '.github/workflows/', reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' },
+  { prefix: '.github/actions/', reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' },
+  { path: 'CODEOWNERS', reason: 'changes who must approve changes' },
+  { path: '.github/CODEOWNERS', reason: 'changes who must approve changes' },
+  { path: 'docs/CODEOWNERS', reason: 'changes who must approve changes' },
+  { prefix: '.factorial/', reason: 'changes how Factorial treats this repository, including which changes are flagged for care' },
+];
+
+export interface SensitiveRules {
+  rules: SensitivePathRule[];
+  /** Why the repository's own rules were not used, if they were not. */
+  problems: string[];
+}
+
+/**
+ * The built-in rules, then the repository's own. A rules file that is too
+ * large or invalid is reported and ignored; the built-in rules still apply.
+ */
+export function sensitiveRules(rulesText: string | undefined): SensitiveRules {
+  if (rulesText === undefined) return { rules: [...BUILT_IN_RULES], problems: [] };
+  if (Buffer.byteLength(rulesText, 'utf8') > MAX_RULES_FILE_BYTES) {
+    return { rules: [...BUILT_IN_RULES], problems: [`${SENSITIVE_PATHS_FILE} is over the ${MAX_RULES_FILE_BYTES}-byte limit`] };
+  }
+  const parsed = parseSensitivePathsJson(rulesText);
+  if (!parsed.ok) return { rules: [...BUILT_IN_RULES], problems: cut(parsed.errors.map((e) => `${SENSITIVE_PATHS_FILE} ${e}`)) };
+  return { rules: [...BUILT_IN_RULES, ...parsed.value.rules], problems: [] };
+}
+
+/** The content patterns among the rules, in order. */
+export const contentPatterns = (rules: readonly SensitivePathRule[]): string[] =>
+  rules.flatMap((rule) => (rule.contentPattern === undefined ? [] : [rule.contentPattern]));
+
+/**
+ * For each content pattern, print the changed files whose added or removed
+ * lines match it, in the same encoding as the seed, one section per pattern.
+ * Run in the same fresh session as the seed, before the reviewer.
+ */
+export function contentMatchScript(params: { baseBranch: string; patterns: readonly string[] }): string {
+  const range = shellQuote(`origin/${assertGitBranch(params.baseBranch, 'base branch')}...HEAD`);
+  return [
+    'set -euo pipefail',
+    HARDENED_GIT_ENV,
+    'cd /workspace/repo',
+    ...params.patterns.flatMap((pattern) => [
+      `git diff -z --name-only --no-renames --no-ext-diff -G ${shellQuote(pattern)} ${range} | base64 -w0`,
+      `printf '%s' ${shellQuote(SECTION)}`,
+    ]),
+  ].join('\n');
+}
+
+export function parseContentMatches(stdout: string, patterns: number): string[][] {
+  const sections = stdout.split(SECTION);
+  // Each pattern's list is followed by a marker, so the last section is what came after the final one.
+  if (sections.length !== patterns + 1) throw new Error(`expected ${patterns} content match lists from the review session, got ${sections.length - 1}`);
+  return sections.slice(0, patterns).map((section) => decodePaths(section.trim()));
 }
 
 export interface SensitiveChange {
@@ -72,26 +156,42 @@ export interface SensitiveChange {
 }
 
 /**
- * Changes to what deploys Factorial or limits it: Actions workflows and the
- * composite actions they run, the foundation stack and permissions
- * boundaries. Boundaries are matched on added or removed lines, so removing
- * or swapping a role's boundary is caught as well as editing one. The foundation and boundary
- * rules name Factorial's own files, so in another repository only workflows
- * are likely to match, which deserve the same care there.
+ * The changed files a rule matches, each with the first matching rule's
+ * reason. contentMatches holds, for each content pattern in rule order, the
+ * files whose added or removed lines match it, so removing or swapping a
+ * line is caught as well as editing one.
  */
-export function sensitiveChanges(seed: ReviewSeed): SensitiveChange[] {
-  const boundary = new Set(seed.boundaryPaths);
+export function sensitiveChanges(changedPaths: readonly string[], rules: readonly SensitivePathRule[], contentMatches: readonly string[][] = []): SensitiveChange[] {
+  let next = 0;
+  const matchers = rules.map((rule): ((path: string) => boolean) => {
+    if (rule.path !== undefined) return (path) => path === rule.path;
+    if (rule.prefix !== undefined) return (path) => path.startsWith(rule.prefix!);
+    const matched = new Set(contentMatches[next++] ?? []);
+    return (path) => matched.has(path);
+  });
   const changes: SensitiveChange[] = [];
-  for (const path of seed.changedPaths) {
-    if (path.startsWith('.github/workflows/') || path.startsWith('.github/actions/')) {
-      changes.push({ path, reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' });
-    } else if (path === 'templates/00-foundation.yml') {
-      changes.push({ path, reason: 'changes the foundation stack, which holds the deploy role, the CloudFormation execution role and the permissions boundaries' });
-    } else if (boundary.has(path)) {
-      changes.push({ path, reason: 'changes a permissions boundary or what carries one' });
-    }
+  for (const path of changedPaths) {
+    const index = matchers.findIndex((matches) => matches(path));
+    if (index >= 0) changes.push({ path, reason: rules[index]!.reason });
   }
   return changes.slice(0, MAX_SENSITIVE);
+}
+
+/** ECS caps a task's overrides at 8 KiB, so the list for the reviewer's prompt stays well inside it. */
+export const MAX_SENSITIVE_JSON_CHARS = 4096;
+
+/**
+ * The sensitive changes as JSON for the invoker's SENSITIVE_PATHS, as many as
+ * fit the budget, in order. Any left out still get the orchestrator's finding
+ * in CollectReview, which takes the full list from the state.
+ */
+export function sensitivePathsJson(changes: readonly SensitiveChange[]): string {
+  const kept: SensitiveChange[] = [];
+  for (const { path, reason } of changes) {
+    if (JSON.stringify([...kept, { path, reason }]).length > MAX_SENSITIVE_JSON_CHARS) break;
+    kept.push({ path, reason });
+  }
+  return JSON.stringify(kept);
 }
 
 /** Print review.json as `ok:<size>:<base64>` (the first MAX + 1 bytes, so an oversized file is detectable), or `missing:`. */

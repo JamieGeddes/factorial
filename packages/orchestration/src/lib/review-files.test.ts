@@ -4,16 +4,25 @@ import { describe, it } from 'node:test';
 import type { Review } from '@factorial/review';
 
 import {
+  BUILT_IN_RULES,
   MAX_REVIEW_FILE_BYTES,
+  MAX_RULES_FILE_BYTES,
+  MAX_SENSITIVE_JSON_CHARS,
   checkReviewFile,
+  contentMatchScript,
+  contentPatterns,
+  parseContentMatches,
   parseReviewRead,
   parseReviewSeed,
   readReviewScript,
   reviewDigest,
   seedReviewScript,
   sensitiveChanges,
+  sensitivePathsJson,
+  sensitiveRules,
   withGuardFindings,
 } from './review-files.ts';
+import { shellQuote } from './shell.ts';
 
 const SECTION = '\n===FACTORIAL-REVIEW===\n';
 const nulList = (paths: string[]): string => Buffer.from(paths.map((p) => `${p}\0`).join(''), 'utf8').toString('base64');
@@ -36,9 +45,15 @@ describe('seedReviewScript', () => {
     assert.match(script, /> \/workspace\/plan\.md/);
     assert.match(script, /> \/workspace\/summary\.md/);
     assert.match(script, /git diff --no-color --no-ext-diff 'origin\/main\.\.\.HEAD' > \/workspace\/diff\.patch/);
-    assert.match(script, /-G '\[Pp\]ermissions-\?\[Bb\]oundary'/);
-    assert.equal(script.match(/--name-only --no-renames/g)?.length, 2);
+    assert.match(script, /--name-only --no-renames/);
     assert.match(script, /GIT_CONFIG_GLOBAL=\/dev\/null/);
+  });
+
+  it('reads the rules from the base branch, not the branch under review', () => {
+    const script = seedReviewScript({ baseBranch: 'main', planJson: '{}', planMarkdown: '', summary: '' });
+    assert.match(script, /git cat-file -e 'origin\/main:\.factorial\/sensitive-paths\.json'/);
+    assert.match(script, /git show 'origin\/main:\.factorial\/sensitive-paths\.json' \| head -c 65537/);
+    assert.doesNotMatch(script, /HEAD:\.factorial|cat [^|]*\.factorial/);
   });
 
   it('refuses a base branch that is not a branch name', () => {
@@ -52,41 +67,125 @@ describe('seedReviewScript', () => {
 });
 
 describe('parseReviewSeed', () => {
-  it('reads both NUL-separated path lists', () => {
-    const seed = parseReviewSeed(`${nulList(['a.ts', 'dir/with space.ts', 'new\nline.ts'])}${SECTION}${nulList(['templates/20-agent.yml'])}\n`);
-    assert.deepEqual(seed, { changedPaths: ['a.ts', 'dir/with space.ts', 'new\nline.ts'], boundaryPaths: ['templates/20-agent.yml'] });
+  const rules = Buffer.from('{"schemaVersion":1,"rules":[]}', 'utf8').toString('base64');
+
+  it('reads the NUL-separated paths and the rules file', () => {
+    const seed = parseReviewSeed(`${nulList(['a.ts', 'dir/with space.ts', 'new\nline.ts'])}${SECTION}ok:${rules}\n`);
+    assert.deepEqual(seed, { changedPaths: ['a.ts', 'dir/with space.ts', 'new\nline.ts'], rulesText: '{"schemaVersion":1,"rules":[]}' });
   });
 
-  it('reads empty lists', () => {
-    assert.deepEqual(parseReviewSeed(`${SECTION}`), { changedPaths: [], boundaryPaths: [] });
+  it('reads an empty list and a missing rules file', () => {
+    assert.deepEqual(parseReviewSeed(`${SECTION}missing:`), { changedPaths: [] });
   });
 
   it('refuses output that is not two base64 sections', () => {
-    assert.throws(() => parseReviewSeed('abc'), /expected 2 path lists/);
-    assert.throws(() => parseReviewSeed(`not base64!${SECTION}`), /base64/);
+    assert.throws(() => parseReviewSeed('abc'), /expected 2 sections/);
+    assert.throws(() => parseReviewSeed(`not base64!${SECTION}missing:`), /base64/);
+    assert.throws(() => parseReviewSeed(`${SECTION}ok:not base64!`), /rules file/);
+  });
+});
+
+describe('sensitiveRules', () => {
+  it('uses only the built-in rules when the repository has none', () => {
+    assert.deepEqual(sensitiveRules(undefined), { rules: [...BUILT_IN_RULES], problems: [] });
+  });
+
+  it("adds the repository's rules after the built-in ones", () => {
+    const own = { path: 'infra/iam.yml', reason: 'changes IAM' };
+    const { rules, problems } = sensitiveRules(JSON.stringify({ schemaVersion: 1, rules: [own] }));
+    assert.deepEqual(rules, [...BUILT_IN_RULES, own]);
+    assert.deepEqual(problems, []);
+  });
+
+  it('reports and ignores invalid or oversized rules, keeping the built-in ones', () => {
+    for (const text of ['{', JSON.stringify({ schemaVersion: 1, rules: [{ reason: 'r' }] }), 'x'.repeat(MAX_RULES_FILE_BYTES + 1)]) {
+      const { rules, problems } = sensitiveRules(text);
+      assert.deepEqual(rules, [...BUILT_IN_RULES]);
+      assert.ok(problems.length > 0 && problems.every((p) => p.startsWith('.factorial/sensitive-paths.json')));
+    }
+  });
+});
+
+describe('content patterns', () => {
+  it('quotes each pattern and diffs against the base branch without renames', () => {
+    const hostile = "'; touch /x; '";
+    const script = contentMatchScript({ baseBranch: 'main', patterns: ['iam:PassRole', hostile] });
+    assert.match(script, /git diff -z --name-only --no-renames --no-ext-diff -G 'iam:PassRole' 'origin\/main\.\.\.HEAD'/);
+    assert.ok(script.includes(`-G ${shellQuote(hostile)} `));
+    assert.equal(script.match(/===FACTORIAL-REVIEW===/g)?.length, 2);
+  });
+
+  it('reads one list per pattern', () => {
+    assert.deepEqual(parseContentMatches(`${nulList(['a.yml'])}${SECTION}${SECTION}`, 2), [['a.yml'], []]);
+    assert.throws(() => parseContentMatches(`${nulList(['a.yml'])}${SECTION}`, 2), /expected 2/);
+  });
+
+  it('lists the content patterns in rule order', () => {
+    assert.deepEqual(contentPatterns([{ path: 'a', reason: 'r' }, { contentPattern: 'x', reason: 'r' }, { contentPattern: 'y', reason: 'r' }]), ['x', 'y']);
   });
 });
 
 describe('sensitiveChanges', () => {
-  it('flags workflows, the foundation template and boundary changes, and nothing else', () => {
-    const changes = sensitiveChanges({
-      changedPaths: ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify-changes/action.yml', 'templates/00-foundation.yml', 'templates/20-agent.yml', '.github/CODEOWNERS'],
-      boundaryPaths: ['templates/20-agent.yml'],
-    });
-    assert.deepEqual(changes.map((c) => c.path), ['.github/workflows/ci.yml', '.github/actions/classify-changes/action.yml', 'templates/00-foundation.yml', 'templates/20-agent.yml']);
+  const rules = [
+    ...BUILT_IN_RULES,
+    { path: 'templates/00-foundation.yml', reason: 'changes the foundation stack' },
+    { prefix: 'infra/', reason: 'changes infrastructure' },
+    { contentPattern: '[Pp]ermissions-?[Bb]oundary', reason: 'changes a permissions boundary or what carries one' },
+  ];
+
+  it('flags what the built-in and repository rules match, and nothing else', () => {
+    const changes = sensitiveChanges(
+      ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify/action.yml', '.github/CODEOWNERS', '.factorial/sensitive-paths.json', 'templates/00-foundation.yml', 'infra/db.yml', 'templates/20-agent.yml', 'docs/a.md'],
+      rules,
+      [['templates/20-agent.yml']],
+    );
+    assert.deepEqual(changes.map((c) => c.path), [
+      '.github/workflows/ci.yml',
+      '.github/actions/classify/action.yml',
+      '.github/CODEOWNERS',
+      '.factorial/sensitive-paths.json',
+      'templates/00-foundation.yml',
+      'infra/db.yml',
+      'templates/20-agent.yml',
+    ]);
     assert.match(changes[0]!.reason, /GitHub Actions/);
-    assert.match(changes[1]!.reason, /GitHub Actions/);
-    assert.match(changes[2]!.reason, /foundation/);
-    assert.match(changes[3]!.reason, /permissions boundary/);
+    assert.match(changes[2]!.reason, /approve/);
+    assert.match(changes[3]!.reason, /flagged for care/);
+    assert.match(changes[6]!.reason, /permissions boundary/);
   });
 
-  it('ignores a boundary path that is not among the changed paths', () => {
-    assert.deepEqual(sensitiveChanges({ changedPaths: ['src/a.ts'], boundaryPaths: ['templates/x.yml'] }), []);
+  it('flags only Actions, ownership and Factorial configuration by default, whatever the repository', () => {
+    assert.deepEqual(sensitiveChanges(['templates/00-foundation.yml', 'src/a.ts'], BUILT_IN_RULES), []);
+  });
+
+  it("gives the first matching rule's reason", () => {
+    const changes = sensitiveChanges(['infra/x.yml'], [...rules, { path: 'infra/x.yml', reason: 'later' }]);
+    assert.equal(changes[0]!.reason, 'changes infrastructure');
+  });
+
+  it('ignores a content match that is not among the changed paths', () => {
+    assert.deepEqual(sensitiveChanges(['src/a.ts'], rules, [['templates/x.yml']]), []);
   });
 
   it('keeps at most 20', () => {
     const changedPaths = Array.from({ length: 30 }, (_, i) => `.github/workflows/w${i}.yml`);
-    assert.equal(sensitiveChanges({ changedPaths, boundaryPaths: [] }).length, 20);
+    assert.equal(sensitiveChanges(changedPaths, BUILT_IN_RULES).length, 20);
+  });
+});
+
+describe('sensitivePathsJson', () => {
+  it('passes paths with their reasons', () => {
+    const changes = [{ path: '.github/workflows/ci.yml', reason: 'changes GitHub Actions' }];
+    assert.deepEqual(JSON.parse(sensitivePathsJson(changes)), changes);
+  });
+
+  it('keeps the list within its budget, in order', () => {
+    const changes = Array.from({ length: 20 }, (_, i) => ({ path: `${'d/'.repeat(100)}f${i}`, reason: 'r'.repeat(200) }));
+    const json = sensitivePathsJson(changes);
+    assert.ok(json.length <= MAX_SENSITIVE_JSON_CHARS);
+    const kept = JSON.parse(json) as typeof changes;
+    assert.ok(kept.length > 0 && kept.length < 20);
+    assert.deepEqual(kept, changes.slice(0, kept.length));
   });
 });
 

@@ -98,10 +98,16 @@ export function harnessTarget(env: Record<string, string | undefined>): HarnessT
   return { role, harnessArn, harnessId, qualifier };
 }
 
+/** A changed file the orchestrator flagged for care, and why. */
+export interface SensitivePath {
+  path: string;
+  reason: string;
+}
+
 /** What a role's prompt needs beyond the work item: the planner's attempt, the reviewer's sensitive paths. */
 export interface PromptOptions {
   planAttempt?: number;
-  sensitivePaths?: string[];
+  sensitivePaths?: SensitivePath[];
 }
 
 /** The user message that starts a session for the role. */
@@ -118,17 +124,20 @@ export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBr
 
 /**
  * The sensitive paths PrepareReview found, passed as a JSON array of
- * repository-relative paths. Anything else is refused rather than put into
- * the prompt.
+ * `{ path, reason }`: repository-relative paths, and single-line reasons from
+ * the built-in rules or the base branch's rules file. Anything else is
+ * refused rather than put into the prompt.
  */
-export function parseSensitivePaths(value: string | undefined): string[] {
+export function parseSensitivePaths(value: string | undefined): SensitivePath[] {
   if (value === undefined || value === '') return [];
   const parsed: unknown = JSON.parse(value);
   if (!Array.isArray(parsed) || parsed.length > 20) throw new Error('SENSITIVE_PATHS is not a list of at most 20 paths');
-  return parsed.map((path) => {
+  return parsed.map((entry: unknown) => {
+    const { path, reason } = (entry ?? {}) as { path?: unknown; reason?: unknown };
     if (typeof path !== 'string' || !/^(?!\/)(?!.*(^|\/)\.\.(\/|$))[^\0\n`]{1,500}$/.test(path)) {
       throw new Error('SENSITIVE_PATHS holds a value that is not a repository path');
     }
-    return path;
+    if (typeof reason !== 'string' || !/^[^\0\r\n`]{1,200}$/.test(reason)) throw new Error('SENSITIVE_PATHS holds a reason that is not one short line');
+    return { path, reason };
   });
 }
