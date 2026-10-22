@@ -2,7 +2,7 @@
 
 Factorial is a software factory: an agentic AI system that builds and refines software codebases, built on AWS AgentCore and associated AWS services. It builds itself incrementally.
 
-`CLAUDE.md` is the authoritative description of requirements, target architecture, current stage and conventions. Start there.
+`CLAUDE.md` holds what is agreed and binding: the requirements, the target architecture, what is fixed from day one, the shape of the current stage and the conventions. `docs/current-stage.md` describes how the deployed system works, stage by stage. Start with the first, read the second for detail.
 
 ## Layout
 
@@ -14,7 +14,7 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 | `scripts/` | Repository tooling, in TypeScript, run directly by Node. |
 | `.factorial/` | How Factorial treats this repository as a target, like any other: `sensitive-paths.json` lists the changes its reviews flag for care. |
 | `.github/workflows/` | CI and deployment. All deployments run through GitHub Actions. |
-| `docs/` | Background material, including the original design conversation. |
+| `docs/` | `current-stage.md` (how the deployed system works), `finding-a-run.md`, `security.md`, `architecture-principles.md`, the bootstrap and GitHub App guides, and background material including the original design conversation. |
 
 ## Running the checks locally
 
