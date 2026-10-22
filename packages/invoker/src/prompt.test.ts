@@ -28,9 +28,9 @@ describe('buildPrompt', () => {
     assert.match(buildPrompt(workItem, 'b', 'main'), /Commit on this branch as you go/);
   });
 
-  it('points to the work item file and the notes file, since older messages are condensed', () => {
+  it('points to the work item file and the notes file, since a later session starts from them', () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
-    assert.match(prompt, /\/workspace\/notes\.md already starts with this request/);
+    assert.match(prompt, /That file already starts with this request/);
   });
 
   it("points at the planner's plan before any code, and asks for a report on each step", () => {
@@ -86,6 +86,17 @@ describe('buildPrompt for rework', () => {
     const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
     assert.doesNotMatch(prompt, /Add a test\./);
     assert.doesNotMatch(prompt, /@JamieGeddes/);
+  });
+});
+
+describe('buildPrompt rounds', () => {
+  it('says the session may be one of several and, after round 1, to read the continuing section first', () => {
+    const first = buildPrompt(workItem, 'factorial/x', 'main');
+    assert.match(first, /This session may be one of several/);
+    assert.doesNotMatch(first, /This is round/);
+    assert.doesNotMatch(first, /condensed into a summary/);
+    const third = buildPrompt(workItem, 'factorial/x', 'main', 3);
+    assert.match(third, /This is round 3: an earlier session did part of the work\. Read the "# Continuing \(round 3\)" section/);
   });
 });
 

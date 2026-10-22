@@ -6,6 +6,7 @@ import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artef
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
 import { issueNumber, type WorkContext } from '../lib/context.ts';
+import { builderIncomplete } from '../lib/incomplete.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { logged, runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { attemptRecord, recordProgress } from '../lib/table.ts';
@@ -22,19 +23,8 @@ interface ReportInput {
   sessionIdHint?: string | undefined;
   /** What Collect pushed, if it ran: after a failed build, the saved work in progress. */
   saved?: { pushed?: boolean; commitCount?: number } | null;
-}
-
-/** The invoker's exit code for a builder that stopped before finishing (`INCOMPLETE_EXIT_CODE` in packages/invoker). */
-const INCOMPLETE_EXIT_CODE = 3;
-
-/** Whether the failure is the builder's task exiting as incomplete: its iteration or time limit, not an error. */
-export function builderIncomplete(error: ReportInput['error']): boolean {
-  if (error?.Error !== 'States.TaskFailed') return false;
-  const containers = safeJson(error.Cause)?.Containers;
-  return Array.isArray(containers) && containers.some((c: unknown) => {
-    const container = c as { Name?: unknown; ExitCode?: unknown } | null;
-    return container?.Name === 'invoker' && container.ExitCode === INCOMPLETE_EXIT_CODE;
-  });
+  /** The build round that failed, when the build ran in rounds. */
+  buildRound?: number | null;
 }
 
 /** A sentence pointing at the pushed branch, when there is one. */
@@ -70,7 +60,8 @@ export function reportMessage(input: ReportInput): string {
     }
     case 'failed':
       if (builderIncomplete(input.error)) {
-        return `Factorial's builder reached its iteration or time limit before finishing, so the change was not tested and no pull request was opened. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.${savedWorkNote(input)}`;
+        const rounds = typeof input.buildRound === 'number' && input.buildRound > 1 ? ` in ${input.buildRound} sessions` : '';
+        return `Factorial's builder reached its iteration or time limit${rounds} before finishing, so the change was not tested and no pull request was opened. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.${savedWorkNote(input)}`;
       }
       // Deliberately generic: causes can contain command output. Details stay
       // in the execution history and the ledger, both inside the account.

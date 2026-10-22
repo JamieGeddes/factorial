@@ -8,7 +8,7 @@ All paths are in the AWS console, region **Europe (Ireland) eu-west-1**. Replace
 
 **DynamoDB** → left nav **Tables** → **Explore items** → table **factorial-work-items** → **Query**, partition key `workItemId` = `<id>` → **Run**.
 
-Note `attempt`, `artefactPrefix`, `status` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way).
+Note `attempt`, `artefactPrefix`, `status` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way). A build that ran in more than one session has `buildRounds` and `buildSessionId`: round 1's builder session is the work item id, round *n*'s is `<id>-r<n>`.
 
 ## 2. The execution
 
@@ -47,11 +47,11 @@ Add `| filter level = "error"` to see only failures. The invoker's own stream is
 
 **S3** → **Buckets** → `factorial-work-artefacts-<account id>` → open the folder `<id>/` → `<attempt>/` (the ledger's `artefactPrefix`).
 
-It holds `workitem.json`, `prepare/`, `plan/` (the plan as markdown and JSON, its validation result, and the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
+It holds `workitem.json`, `prepare/`, `plan/` (the plan as markdown and JSON, its validation result, and the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
 
 ## 5. The AgentCore trace
 
-The invoker sends the session id, which is the work item id, as `session.id` in the `baggage` header of the harness invocation, with `factorial.workItemId` and `factorial.attempt`.
+The invoker sends the session id, which is the work item id (with `-r<n>` for a later build round), as `session.id` in the `baggage` header of the harness invocation, with `factorial.workItemId` and `factorial.attempt`.
 
 **CloudWatch** → left nav **GenAI Observability** → **Bedrock AgentCore** → **Agents** tab → `factorial_builder` → **Sessions** tab → find session `<id>` → open a trace.
 

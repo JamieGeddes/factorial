@@ -43,6 +43,21 @@ export function emptyRunUsage(): RunUsage {
 
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
 
+/** Add one round's total to another: the item's usage across build rounds. */
+export function addRunUsage(a: RunUsage, b: RunUsage): RunUsage {
+  return {
+    modelCalls: a.modelCalls + b.modelCalls,
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    totalTokens: a.totalTokens + b.totalTokens,
+    cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
+    cacheWriteInputTokens: a.cacheWriteInputTokens + b.cacheWriteInputTokens,
+    uncachedInputTokens: a.uncachedInputTokens + b.uncachedInputTokens,
+    maxCallInputTokens: Math.max(a.maxCallInputTokens, b.maxCallInputTokens),
+    lastCallInputTokens: b.lastCallInputTokens,
+  };
+}
+
 /** Add one model call's usage record to the running total. */
 export function addCallUsage(run: RunUsage, call: CallUsage | undefined): RunUsage {
   if (!call) return run;
