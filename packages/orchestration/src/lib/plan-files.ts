@@ -116,6 +116,8 @@ export function seedPlanScript(markdown: string, json: string): string {
 export interface PlanDigest {
   summary: string;
   steps: Array<{ id: string; description: string }>;
+  /** Work the planner left for a later item, each cut to 200 characters. */
+  followUp?: string[];
 }
 
 export function planDigest(plan: Plan): PlanDigest {
@@ -123,5 +125,9 @@ export function planDigest(plan: Plan): PlanDigest {
     const line = text.trim().split('\n')[0] ?? '';
     return line.length > 200 ? `${line.slice(0, 200)}…` : line;
   };
-  return { summary: plan.summary, steps: plan.steps.map((step) => ({ id: step.id, description: firstLine(step.description) })) };
+  return {
+    summary: plan.summary,
+    steps: plan.steps.map((step) => ({ id: step.id, description: firstLine(step.description) })),
+    ...(plan.followUp?.length ? { followUp: plan.followUp.map(firstLine) } : {}),
+  };
 }

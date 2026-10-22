@@ -5,7 +5,14 @@
   "description": "What the planner decided to change for one WorkItem, and how to verify it. Written by the planner as /workspace/plan.json, validated by the orchestrator, and followed by the builder. Internal to Factorial, but changed with the same care as the WorkItem contract.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "summary", "steps", "tests", "risks", "openQuestions"],
+  "required": [
+    "schemaVersion",
+    "summary",
+    "steps",
+    "tests",
+    "risks",
+    "openQuestions"
+  ],
   "properties": {
     "schemaVersion": {
       "description": "Version of this contract. Incremented only for breaking changes.",
@@ -25,7 +32,12 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "description", "files", "verification"],
+        "required": [
+          "id",
+          "description",
+          "files",
+          "verification"
+        ],
         "properties": {
           "id": {
             "description": "Short identifier the builder uses to report on the step, e.g. schema or handler-tests.",
@@ -62,19 +74,30 @@
       "description": "Checks for the whole change.",
       "type": "object",
       "additionalProperties": false,
-      "required": ["run", "add"],
+      "required": [
+        "run",
+        "add"
+      ],
       "properties": {
         "run": {
           "description": "Commands to run once the change is made, e.g. npm run ci. At most 20.",
           "type": "array",
           "maxItems": 20,
-          "items": { "type": "string", "minLength": 1, "maxLength": 500 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
         },
         "add": {
           "description": "Tests to add or change, one sentence each. At most 30.",
           "type": "array",
           "maxItems": 30,
-          "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
         }
       }
     },
@@ -82,13 +105,31 @@
       "description": "What could go wrong, for the builder and the human reviewer. At most 20; may be empty.",
       "type": "array",
       "maxItems": 20,
-      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
     },
     "openQuestions": {
       "description": "What the request leaves undecided, and the assumption the plan makes for each. At most 20; may be empty.",
       "type": "array",
       "maxItems": 20,
-      "items": { "type": "string", "minLength": 1, "maxLength": 1000 }
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    },
+    "followUp": {
+      "description": "Work the request mentions that belongs in a separate work item (another repository, a decision the requester must make first, or a change mentioned but not asked for), one sentence each. Not a way to shorten a plan: the builder continues until the plan is done. Shown in the pull request body. At most 20; optional.",
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
     }
   }
 }

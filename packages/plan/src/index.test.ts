@@ -59,6 +59,15 @@ describe('Plan schema', () => {
     assert.equal(validatePlan({ ...plan, steps: many }).ok, false);
   });
 
+  it('accepts a plan with or without followUp, and rejects more than 20 items', async () => {
+    const plan = await loadExample('single-change.json');
+    assert.equal(plan.followUp?.length, 1);
+    const { followUp: _followUp, ...without } = plan;
+    assert.equal(validatePlan(without).ok, true);
+    assert.equal(validatePlan({ ...plan, followUp: Array.from({ length: 21 }, () => 'Later.') }).ok, false);
+    assert.equal(validatePlan({ ...plan, followUp: [''] }).ok, false);
+  });
+
   it('rejects duplicate step ids', async () => {
     const plan = await loadExample('single-change.json');
     const result = validatePlan({ ...plan, steps: [plan.steps[0]!, { ...plan.steps[1]!, id: plan.steps[0]!.id }] });

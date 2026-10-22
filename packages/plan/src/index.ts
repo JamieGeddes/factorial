@@ -42,6 +42,8 @@ export interface Plan {
   risks: string[];
   /** What the request leaves undecided, and the assumption made for each. */
   openQuestions: string[];
+  /** Work the request asks for that the plan leaves for a later item, so one builder run can finish it. */
+  followUp?: string[];
 }
 
 export type PlanValidationResult = { ok: true; value: Plan } | { ok: false; errors: string[] };

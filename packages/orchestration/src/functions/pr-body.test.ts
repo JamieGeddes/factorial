@@ -119,6 +119,12 @@ describe('plan in the pull request body', () => {
     assert.equal(body.match(/## Plan steps/g), null);
   });
 
+  it('lists what the planner judged to belong in a separate item, and nothing when there is none', () => {
+    const section = planSection({ ...plan, followUp: ['Validate the update handler too.'] }, '- validate-quantity: done\n- handler-tests: done');
+    assert.match(section, /\*\*For a separate work item\*\*.*\n\n- Validate the update handler too\./);
+    assert.doesNotMatch(planSection(plan, undefined), /For a separate work item/);
+  });
+
   it('has no plan section without a plan', () => {
     assert.doesNotMatch(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40)), /## Plan/);
   });
