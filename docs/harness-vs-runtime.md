@@ -53,10 +53,11 @@ Checked against the AWS documentation on 2026-10-22.
 2. **Move the builder to Runtime** with a loop Factorial owns (TypeScript, or Strands on Runtime): threshold compaction, tool-output elision, subagents sharing the session filesystem, prompt-cache control.
 3. **Move every role to Runtime.** Option 2 for the planner and reviewer as well.
 4. **Move the builder to Bedrock Managed Agents.** OpenAI's Codex harness as a managed service, with the builder's commands running in an AgentCore Runtime. See the section below.
+5. **Move the builder to the Claude Agent SDK on an AgentCore Runtime.** Claude Code's harness as a TypeScript library inside a Runtime container Factorial owns. See the section below.
 
 ## The decision
 
-Option 1. The problems seen so far are plumbing, model discipline and read volume. None needs a different loop, and the one Harness limitation that matters, compaction below the model window, already has a substitute. Option 4 is the preferred path if that gap is still open at re-evaluation, but it is in preview in US regions only and cannot be adopted today.
+Option 1. The problems seen so far are plumbing, model discipline and read volume. None needs a different loop, and the one Harness limitation that matters, compaction below the model window, already has a substitute. If that gap is still open at re-evaluation, option 5 is the first to spike: it is generally available in `eu-west-1` today, and option 4 is in preview in US regions only.
 
 Why not Runtime now:
 
@@ -102,15 +103,50 @@ Evaluated on 2026-10-22 as a further option. Amazon Bedrock Managed Agents (BMA)
 
 **Gates before a spike:** availability in `eu-west-1`, or a decision to accept a US region for the builder; a published price for the model; and an API stable enough to pin. A throwaway spike in `us-east-1`, outside Factorial's stacks, would answer the command-API and turn-length questions in a day.
 
+## Claude Agent SDK on AgentCore Runtime
+
+Evaluated on 2026-10-22 as a fifth option. The Claude Agent SDK is Claude Code as a library (`@anthropic-ai/claude-agent-sdk`): `query(prompt, options)` spawns the bundled `claude` binary as a subprocess that owns the shell, the working directory and the transcript. It ships the built-in tools, automatic compaction as the context nears the window, subagents with isolated context and per-agent tools and model, hooks that run in the host process, permission rules, `maxTurns` and `maxBudgetUsd`, and a result message carrying cost and usage. There is no official AWS guide for it on AgentCore Runtime, but Runtime is a plain ARM64 container behind an HTTP contract, and the SDK's hosting guide covers that shape (one subprocess per session, about 1 GiB RAM, state on local disk).
+
+**What it would give Factorial**
+
+- Compaction below the model window and subagents in the builder's own session, sharing its working tree: both gaps in this record, closed by a harness someone else maintains.
+- TypeScript, so the one-language convention holds. The loop Factorial owns is the thin layer around `query()` (seeding, streaming the transcript out, limits), not an agent loop.
+- Hooks in Factorial's own process, outside the model's reach. A `PreToolUse` hook is a real guard, unlike Harness hooks, which run under the agent's role.
+- Cost and usage per run in the result, and `maxBudgetUsd` as a hard per-item cap, which is most of #63.
+- Everything else unchanged. A Runtime has the same microVM, session command API, versions and `live` endpoints as a harness's runtime, so Prepare, Collect, the clean-room push, Test and Review keep working as they are.
+
+**The model becomes a choice.** The SDK reads the same provider variables as Claude Code:
+
+| Route | Model | Key in the sandbox? | Status |
+|---|---|---|---|
+| Claude Platform on AWS (`CLAUDE_CODE_USE_ANTHROPIC_AWS`) | Claude, first-party API parity | No: SigV4 from the execution role, IAM-controlled | GA in all AWS commercial regions; AWS Marketplace billing in consumption units; no Bedrock model-access approval |
+| Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK`) | Claude | No | Needs the Bedrock model access declined for the proof of concept |
+| Z.ai's Anthropic-compatible endpoint (`ANTHROPIC_BASE_URL`) | GLM | Yes, unless injected by a proxy outside the sandbox | Documented by Z.ai for GLM 4.7 with Claude Code; GLM 5.3 Flash unverified |
+
+Claude Platform on AWS removes the third-party key the way Bedrock Managed Agents does, and is available in `eu-west-1` now. At first-party list prices Haiku 5.5 costs no more than GLM 5.3 Flash, and Sonnet 5.5 is the tier at which the step-count pattern seen on Flash goes away. The harness is tuned for Claude; a GLM model behind the Anthropic-compatible endpoint would get the loop but not the model it was built around.
+
+**Costs and risks**
+
+- Factorial owns the Runtime container and the layer around the SDK. Smaller than a Strands loop, but code in the security surface and in every pull request Factorial raises against itself.
+- The agent definition (prompt, tools, model) lives in that code and is versioned by the Runtime version rather than a harness version. The `live` alias rule holds unchanged; "model fixed on the version" is enforced by the image and by IAM on the execution role, which needs a deliberate decision and a note in `docs/security.md`.
+- With a Z.ai key, `ANTHROPIC_AUTH_TOKEN` sits in the subprocess environment, readable from the shell. The SDK's own guidance is a credential-injecting proxy outside the sandbox. Claude Platform on AWS avoids the problem.
+- The SDK is licensed under Anthropic's Commercial Terms of Service, not an open-source licence. The dependency convention requires stating that before it is added.
+- `bypassPermissions` cannot run as root, and Runtime command sessions run as root. The SDK would run as a non-root user in the container, which `docs/security.md` already lists as a change to make.
+- Subagent fan-out needs the depth, concurrency and budget caps set, or one run can grow into a tree of agents.
+
+**Is it a better design than Factorial's?** It is a better agent layer than the Harness for the builder, provided the model is Claude. It is not a replacement for the design: triggers, the state machine, the orchestrator Lambdas, the GitHub App tokens, the clean-room push, the trusted test workflow, the artefact store and the ledger are what make Factorial safe and reconstructable, and none of them depends on which harness runs inside the Build state. What it would simplify is the agent stack: the per-role harness template and its gotchas, the invoker's stream handling, and later the rounds mechanism (compaction replaces it) and the plan hand-over (a plan subagent can write `plan.json` in the same session, still validated and stored by the orchestrator). The reviewer stays a separate session on whichever harness, because judged output must never run in the session that produced it.
+
+**Spike:** the builder only, on a Runtime in `eu-west-1`, with Claude Platform on AWS. Run a #87-sized item on Haiku 5.5 and on Sonnet 5.5 against GLM 5.3 Flash on the Harness, and compare rounds, calls, tokens, cost and outcome. The planner and reviewer stay on Harness for the spike.
+
 ## Revisit when
 
 - After items 1 to 4, a six-step plan still needs more than two rounds, or rounds lose work between sessions.
 - A role needs delegation inside its own session: a subagent that must see the builder's uncommitted working tree.
 - AWS adds a threshold to Harness truncation (removing the gap), or documents subagents for the Harness (removing the second trigger).
 - The model moves to one whose vendor SDK brings its own harness, and running that harness on Runtime is cheaper than reproducing it in configuration.
-- Bedrock Managed Agents passes its gates above. It then becomes the first option to spike, ahead of a Factorial-owned loop on Runtime.
+- Bedrock Managed Agents passes its gates above, which would make it the managed alternative to the Agent SDK spike.
 
-If revisited, the spike is Bedrock Managed Agents for the builder if its gates are met, otherwise Strands on Runtime with its conversation manager and agents-as-tools. Either way it is kept to the builder, with the planner and reviewer staying on Harness so that the roles that judge the builder's output never run its code.
+If revisited, the order is: the Claude Agent SDK on a Runtime (available now, closes both gaps, TypeScript); then Bedrock Managed Agents if its gates are met (managed, no loop code); then Strands on Runtime as the last resort. Each is kept to the builder, with the planner and reviewer staying on Harness so that the roles that judge the builder's output never run its code.
 
 ## Sources
 
@@ -127,3 +163,11 @@ If revisited, the spike is Bedrock Managed Agents for the builder if its gates a
 - Bedrock Managed Agents preview limitations: https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-managed-agents-openai-quotas-limitations.html
 - Bedrock Managed Agents security and roles: https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-managed-agents-openai-security.html
 - Bedrock Managed Agents sessions and events: https://docs.aws.amazon.com/bedrock/latest/userguide/bedrock-managed-agents-openai-sessions.html
+- Claude Agent SDK overview: https://code.claude.com/docs/en/agent-sdk/overview
+- Hosting the Agent SDK: https://code.claude.com/docs/en/agent-sdk/hosting
+- Agent SDK subagents: https://code.claude.com/docs/en/agent-sdk/subagents
+- Agent SDK agent loop and compaction: https://code.claude.com/docs/en/agent-sdk/agent-loop
+- Agent SDK secure deployment: https://code.claude.com/docs/en/agent-sdk/secure-deployment
+- Claude Code on Claude Platform on AWS: https://code.claude.com/docs/en/claude-platform-on-aws
+- Claude Platform on AWS: https://platform.claude.com/docs/en/build-with-claude/claude-platform-on-aws
+- Z.ai Claude Code integration: https://docs.z.ai/scenario-example/develop-tools/claude
