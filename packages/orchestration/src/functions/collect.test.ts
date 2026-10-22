@@ -6,10 +6,12 @@ import {
   SALVAGE_COMMIT_MESSAGE,
   bundleScript,
   cleanRoomPushScript,
+  dependencyScript,
   inspectScript,
   parseInspection,
   touchesWorkflows,
 } from './collect.ts';
+import { DEPENDENCY_SECTION } from '../lib/dependency-changes.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 
@@ -25,6 +27,7 @@ describe('parseInspection', () => {
       headSha: sha,
       changedPaths: ['README.md', '.github/workflows/ci.yml'],
       summary: '# Summary\n\nDid the thing.',
+      dependencies: { added: [], removed: [] },
     });
   });
 
@@ -34,12 +37,44 @@ describe('parseInspection', () => {
       headSha: sha,
       changedPaths: [],
       summary: '',
+      dependencies: { added: [], removed: [] },
     });
   });
 
   it('rejects malformed output', () => {
     assert.throws(() => parseInspection('garbage'), /Could not parse/);
     assert.throws(() => parseInspection(`x${SECTION}${sha}${SECTION}`), /Could not parse/);
+  });
+
+  it('parses the dependency section and tolerates it being missing or malformed', () => {
+    const deps = Buffer.from(JSON.stringify({ old: { a: '1' }, new: { a: '1', b: '2' }, licences: { b: 'ISC' } })).toString('base64');
+    const out = `1\n${SECTION}${sha}\n${SECTION}package.json\n${SECTION}# Summary\n\nDone.\n${SECTION}${DEPENDENCY_SECTION}${deps}`;
+    const parsed = parseInspection(out);
+    assert.deepEqual(parsed.dependencies, { added: [{ name: 'b', licence: 'ISC' }], removed: [] });
+    const noDeps = parseInspection(`1\n${SECTION}${sha}\n${SECTION}\n${SECTION}`);
+    assert.deepEqual(noDeps.dependencies, { added: [], removed: [] });
+    const bad = parseInspection(`1\n${SECTION}${sha}\n${SECTION}\n${SECTION}${SECTION}${DEPENDENCY_SECTION}!!!`);
+    assert.deepEqual(bad.dependencies, { added: [], removed: [] });
+  });
+
+  it('returns empty dependency changes when the section is not base64 JSON', () => {
+    const parsed = parseInspection(`1\n${SECTION}${sha}\n${SECTION}\n${SECTION}${SECTION}${DEPENDENCY_SECTION}${Buffer.from('[1,2]').toString('base64')}`);
+    assert.deepEqual(parsed.dependencies, { added: [], removed: [] });
+  });
+});
+
+describe('dependencyScript', () => {
+  it('appends a section marker after the summary and reads both package.json files and the lockfile licences', () => {
+    const script = inspectScript(base);
+    assert.ok(script.includes(dependencyScript(base)));
+    assert.ok(script.indexOf(dependencyScript(base)) > script.indexOf('summary.md'));
+    assert.match(script, /HEAD:package\.json/);
+    assert.match(script, /package-lock\.json/);
+    assert.match(script, /node_modules\\\//);
+  });
+
+  it('is self-contained and never carries credentials', () => {
+    assert.doesNotMatch(dependencyScript(base), /AUTHORIZATION|x-access-token|ghs_/);
   });
 });
 

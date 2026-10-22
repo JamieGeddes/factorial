@@ -13,6 +13,7 @@
 import { putBinaryArtefact, redactSecrets } from '@factorial/artefacts';
 
 import { type WorkContext, reworkContext } from '../lib/context.ts';
+import { DEPENDENCY_SECTION, parseDependencyChanges, type DependencyChanges } from '../lib/dependency-changes.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
 import { cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
@@ -33,9 +34,41 @@ export interface CollectResult {
   commitCount: number;
   headSha: string;
   summary: string;
+  /** Paths changed between the base branch and the pushed head, capped at 200. */
+  changedPaths: string[];
+  /** Dependency changes between the base commit and HEAD, computed in the session. */
+  dependencies: DependencyChanges;
 }
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
+/** At most this many changed paths travel in the state. */
+const MAX_CHANGED_PATHS = 200;
+/** The dependency section is read at most this large; anything longer is treated as malformed. */
+const MAX_DEPENDENCY_OUTPUT_CHARS = 1_000_000;
+
+/**
+ * The dependency diff, appended to the inspection: one base64 JSON section
+ * after DEPENDENCY_SECTION with the package.json dependency maps at the base
+ * commit and HEAD, and the lockfile's `packages` licence map. A missing
+ * lockfile is tolerated with an empty licence map.
+ */
+export function dependencyScript(baseCommit: string): string {
+  return [
+    `printf '%s' ${shellQuote(DEPENDENCY_SECTION)}`,
+    'node -e ' +
+      shellQuote(
+        `const {execFileSync}=require('child_process');` +
+          `const read=(f)=>{try{return execFileSync('git',['show',f],{encoding:'utf8',maxBuffer:1e7})}catch{return null}};` +
+          `const deps=(p)=>{const t=read(p);if(t===null)return{};try{const j=JSON.parse(t);` +
+          `return{...j.dependencies,...j.devDependencies}}catch{return{}}};` +
+          `const licences={};try{const l=JSON.parse(read('package-lock.json')||'{}');` +
+          `for(const[k,v]of Object.entries(l.packages||{})){const n=k.replace(/^node_modules\\//,'');` +
+          `if(v&&typeof v.license==='string')licences[n]=v.license}}catch{}` +
+          `const base='${baseCommit}';` +
+          `process.stdout.write(Buffer.from(JSON.stringify({old:deps(base+':package.json'),new:deps('HEAD:package.json'),licences})).toString('base64'))`,
+      ),
+  ].join('\n');
+}
 /** Bundles beyond this are almost certainly a mistake (vendored dependencies, binaries). */
 const MAX_BUNDLE_BYTES = 8_000_000;
 
@@ -56,6 +89,7 @@ export function inspectScript(baseCommit: string, leftoverMessage: string = LEFT
     `git diff --name-only ${base} HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
     'if [ -f /workspace/summary.md ]; then head -c 60000 /workspace/summary.md; fi',
+    dependencyScript(baseCommit),
   ].join('\n');
 }
 
@@ -65,10 +99,11 @@ export interface Inspection {
   /** Paths changed between the base branch and the agent's head. */
   changedPaths: string[];
   summary: string;
+  dependencies: DependencyChanges;
 }
 
 export function parseInspection(stdout: string): Inspection {
-  const [count = '', sha = '', paths = '', summary = ''] = stdout.split(SECTION);
+  const [count = '', sha = '', paths = '', summary = '', deps = ''] = stdout.split(SECTION);
   const commitCount = Number.parseInt(count.trim(), 10);
   if (!Number.isInteger(commitCount) || !/^[0-9a-f]{40}$/.test(sha.trim())) {
     throw new Error(`Could not parse session inspection output: ${redactSecrets(stdout.slice(0, 500))}`);
@@ -77,7 +112,12 @@ export function parseInspection(stdout: string): Inspection {
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  return { commitCount, headSha: sha.trim(), changedPaths, summary: summary.trim() };
+  // The dependency section is base64 JSON with its own marker, not a plain section.
+  const [depsHead = '', ...depsRest] = deps.split(DEPENDENCY_SECTION);
+  const dependencySection = (depsRest.join(DEPENDENCY_SECTION) || '').trim();
+  void depsHead;
+  const dependencies = dependencySection.length <= MAX_DEPENDENCY_OUTPUT_CHARS ? parseDependencyChanges(dependencySection) : parseDependencyChanges(undefined);
+  return { commitCount, headSha: sha.trim(), changedPaths, summary: summary.trim(), dependencies };
 }
 
 /** GitHub refuses pushes that touch Actions workflows unless the token carries the workflows permission. */
@@ -208,13 +248,13 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
   if (inspection.exitCode !== 0) {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
-  const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
+  const { commitCount, headSha, changedPaths, summary, dependencies } = parseInspection(inspection.stdout);
   await storeSessionFiles(agentSession, ctx, log);
 
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
     log.info('agent made no commits');
-    return { pushed: false, commitCount, headSha, summary };
+    return { pushed: false, commitCount, headSha, summary, changedPaths: changedPaths.slice(0, MAX_CHANGED_PATHS), dependencies };
   }
 
   const bundle = await mustRun(agentSession, bundleScript(ctx.baseCommit, headSha), 300);
@@ -264,7 +304,7 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     headSha: pushedSha,
     agentHeadSha: headSha,
     commitCount,
-    changedPaths: changedPaths.slice(0, 200),
+    changedPaths: changedPaths.slice(0, MAX_CHANGED_PATHS),
     editsWorkflows,
     summary,
     bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
@@ -275,5 +315,5 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     agentHeadSha: headSha,
     commitCount,
   });
-  return { pushed: true, commitCount, headSha: pushedSha, summary };
+  return { pushed: true, commitCount, headSha: pushedSha, summary, changedPaths: changedPaths.slice(0, MAX_CHANGED_PATHS), dependencies };
 });
