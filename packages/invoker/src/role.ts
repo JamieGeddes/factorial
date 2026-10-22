@@ -5,16 +5,16 @@
  */
 import type { WorkItem } from '@factorial/workitem';
 
-import { buildPrompt, planPrompt } from './prompt.ts';
+import { buildPrompt, planPrompt, reviewPrompt } from './prompt.ts';
 
 /** Roles the invoker knows how to start; each has a harness `factorial_<role>`. */
-export const ROLES = ['builder', 'planner'] as const;
+export const ROLES = ['builder', 'planner', 'reviewer'] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Where a role's run is recorded: its artefact folder, log stage and ledger statuses. */
 export interface RoleStage {
   /** The artefact folder under the attempt's prefix, and the log stage. */
-  stage: 'build' | 'plan';
+  stage: 'build' | 'plan' | 'review';
   running: string;
   done: string;
   failed: string;
@@ -23,6 +23,7 @@ export interface RoleStage {
 export const ROLE_STAGES: Record<Role, RoleStage> = {
   builder: { stage: 'build', running: 'building', done: 'built', failed: 'build-error' },
   planner: { stage: 'plan', running: 'planning', done: 'planned', failed: 'plan-error' },
+  reviewer: { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' },
 };
 
 export interface RunOutcome {
@@ -97,12 +98,46 @@ export function harnessTarget(env: Record<string, string | undefined>): HarnessT
   return { role, harnessArn, harnessId, qualifier };
 }
 
+/** A changed file the orchestrator flagged for care, and why. */
+export interface SensitivePath {
+  path: string;
+  reason: string;
+}
+
+/** What a role's prompt needs beyond the work item: the planner's attempt, the reviewer's sensitive paths. */
+export interface PromptOptions {
+  planAttempt?: number;
+  sensitivePaths?: SensitivePath[];
+}
+
 /** The user message that starts a session for the role. */
-export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBranch: string, planAttempt = 1): string {
+export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBranch: string, options: PromptOptions = {}): string {
   switch (role) {
     case 'builder':
       return buildPrompt(workItem, branch, baseBranch);
     case 'planner':
-      return planPrompt(workItem, branch, baseBranch, planAttempt);
+      return planPrompt(workItem, branch, baseBranch, options.planAttempt ?? 1);
+    case 'reviewer':
+      return reviewPrompt(workItem, branch, baseBranch, options.sensitivePaths ?? []);
   }
+}
+
+/**
+ * The sensitive paths PrepareReview found, passed as a JSON array of
+ * `{ path, reason }`: repository-relative paths, and single-line reasons from
+ * the built-in rules or the base branch's rules file. Anything else is
+ * refused rather than put into the prompt.
+ */
+export function parseSensitivePaths(value: string | undefined): SensitivePath[] {
+  if (value === undefined || value === '') return [];
+  const parsed: unknown = JSON.parse(value);
+  if (!Array.isArray(parsed) || parsed.length > 20) throw new Error('SENSITIVE_PATHS is not a list of at most 20 paths');
+  return parsed.map((entry: unknown) => {
+    const { path, reason } = (entry ?? {}) as { path?: unknown; reason?: unknown };
+    if (typeof path !== 'string' || !/^(?!\/)(?!.*(^|\/)\.\.(\/|$))[^\0\n`]{1,500}$/.test(path)) {
+      throw new Error('SENSITIVE_PATHS holds a value that is not a repository path');
+    }
+    if (typeof reason !== 'string' || !/^[^\0\r\n`]{1,200}$/.test(reason)) throw new Error('SENSITIVE_PATHS holds a reason that is not one short line');
+    return { path, reason };
+  });
 }

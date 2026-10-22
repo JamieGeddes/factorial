@@ -2,6 +2,7 @@ import type { WorkItem } from '@factorial/workitem';
 
 import type { WorkContext } from '../lib/context.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
+import type { ReviewDigest } from '../lib/review-files.ts';
 
 export interface TestResult {
   runUrl?: string;
@@ -81,10 +82,70 @@ export function planSection(plan: PlanDigest, builderSteps: string | undefined):
   ].join('\n');
 }
 
-/** The pull request description: the agent's summary, the plan, the closing reference, then the evidence. */
-export function pullRequestBody(ctx: WorkContext, summary: string, test: TestResult, headSha: string, plan?: PlanDigest): string {
+/** What the Review stage handed on: a review, the reason there is none, or nothing for runs before the stage existed. */
+export type ReviewOutcome = { ok: true; review: ReviewDigest } | { ok: false; errors?: string[] } | null | undefined;
+
+const VERDICTS: Record<ReviewDigest['verdict'], string> = {
+  approve: 'Approve',
+  'request-changes': 'Request changes',
+  comment: 'Comment',
+};
+
+function findingLine(finding: ReviewDigest['findings'][number], withSeverity: boolean): string {
+  const where = finding.line ? `${finding.path}:${finding.line}` : finding.path;
+  const body = finding.body.replace(/\s*\n\s*/g, ' ');
+  return `- ${withSeverity ? `**${finding.severity}** ` : ''}\`${where}\`: ${body}`;
+}
+
+/**
+ * The automated review, advisory: verdict and scores on one line, the
+ * summary, high-severity findings in the open and the rest collapsed. When
+ * there is no valid review, a fixed sentence: the validation errors can quote
+ * text from the reviewer's session, so they stay in the artefact store.
+ */
+export function reviewSection(outcome: Exclude<ReviewOutcome, undefined>): string {
+  if (!outcome || !outcome.ok) {
+    return [
+      '## Automated review',
+      '',
+      '_The automated review did not complete. It is advisory, so the pull request was opened anyway; the details are under `review/` in the artefacts._',
+    ].join('\n');
+  }
+  const { review } = outcome;
+  const { correctness, completeness, tests, safety } = review.scores;
+  const high = review.findings.filter((f) => f.severity === 'high');
+  const other = review.findings.filter((f) => f.severity !== 'high');
+  const omitted = review.totalFindings - review.findings.length;
+  return [
+    '## Automated review',
+    '',
+    `**${VERDICTS[review.verdict]}** · correctness ${correctness}/5 · completeness ${completeness}/5 · tests ${tests}/5 · safety ${safety}/5`,
+    '',
+    review.summary.trim(),
+    ...(high.length ? ['', '**High severity**', '', ...high.map((f) => findingLine(f, false))] : []),
+    ...(other.length
+      ? ['', '<details>', `<summary>${other.length} other finding${other.length === 1 ? '' : 's'}</summary>`, '', ...other.map((f) => findingLine(f, true)), '', '</details>']
+      : []),
+    ...(omitted > 0 ? ['', `_${omitted} more finding${omitted === 1 ? '' : 's'} in \`review/review.json\` in the artefacts._`] : []),
+    '',
+    '_Advisory: the review does not block this pull request._',
+  ].join('\n');
+}
+
+/** The pull request description: the agent's summary, the plan, the review, the closing reference, then the evidence. */
+export function pullRequestBody(
+  ctx: WorkContext,
+  summary: string,
+  test: TestResult,
+  headSha: string,
+  plan?: PlanDigest,
+  review?: ReviewOutcome,
+): string {
   const { rest, steps } = plan ? splitPlanSteps(summary) : { rest: summary, steps: undefined };
-  const summaryText = (rest.trim() || '_The agent did not write a summary._') + (plan ? `\n\n${planSection(plan, steps)}` : '');
+  const summaryText =
+    (rest.trim() || '_The agent did not write a summary._') +
+    (plan ? `\n\n${planSection(plan, steps)}` : '') +
+    (review !== undefined ? `\n\n${reviewSection(review)}` : '');
   const rows: Array<[string, string]> = [
     ['Work item', `[${ctx.workItem.source.type} ${ctx.workItem.source.id}](${ctx.workItem.source.url})`],
     ['Requested by', `@${ctx.workItem.requestedBy}`],

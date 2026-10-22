@@ -10,6 +10,7 @@ import Ajv2020Module from 'ajv/dist/2020.js';
 import type { ErrorObject } from 'ajv';
 import addFormatsModule from 'ajv-formats';
 import schema from '../../../contracts/review/v1/review.schema.json' with { type: 'json' };
+import sensitivePathsSchema from '../../../contracts/review/v1/sensitive-paths.schema.json' with { type: 'json' };
 
 // ajv and ajv-formats are CommonJS. Under Node's ESM loader their default import is the
 // module object, which also carries the class or function on `.default`.
@@ -51,6 +52,30 @@ export interface Review {
   summary: string;
 }
 
+/**
+ * One of a target repository's rules for changes that need particular care.
+ * Exactly one of path, prefix, name or contentPattern is set.
+ */
+export interface SensitivePathRule {
+  path?: string;
+  prefix?: string;
+  /** A file name, matched in any directory. */
+  name?: string;
+  /** POSIX extended regular expression, matched against added and removed lines (git diff -G). */
+  contentPattern?: string;
+  /** Completes "This change ...". */
+  reason: string;
+}
+
+/** A target repository's `.factorial/sensitive-paths.json`. */
+export interface SensitivePaths {
+  schemaVersion: 1;
+  rules: SensitivePathRule[];
+}
+
+/** Where a target repository keeps its sensitive-path rules. */
+export const SENSITIVE_PATHS_FILE = '.factorial/sensitive-paths.json';
+
 export type ReviewValidationResult = { ok: true; value: Review } | { ok: false; errors: string[] };
 
 export class ReviewValidationError extends Error {
@@ -66,6 +91,7 @@ export class ReviewValidationError extends Error {
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
 const validate = ajv.compile<Review>(schema);
+const validateSensitive = ajv.compile<SensitivePaths>(sensitivePathsSchema);
 
 function describe(error: ErrorObject): string {
   const path = error.instancePath === '' ? '(root)' : error.instancePath;
@@ -97,4 +123,16 @@ export function parseReviewJson(text: string): ReviewValidationResult {
     return { ok: false, errors: [`(root) is not valid JSON: ${error instanceof Error ? error.message : String(error)}`] };
   }
   return validateReview(value);
+}
+
+/** Parse and validate a repository's sensitive-path rules without throwing. */
+export function parseSensitivePathsJson(text: string): { ok: true; value: SensitivePaths } | { ok: false; errors: string[] } {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return { ok: false, errors: [`(root) is not valid JSON: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+  if (validateSensitive(value)) return { ok: true, value };
+  return { ok: false, errors: (validateSensitive.errors ?? []).map(describe) };
 }

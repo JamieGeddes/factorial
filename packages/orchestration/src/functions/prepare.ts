@@ -71,12 +71,12 @@ export function cloneScript(params: {
       : [
           `git checkout --quiet ${shellQuote(`origin/${branch}`)}`,
           `git branch --quiet ${shellQuote(branch)}`,
-          ...(at ? [`test "$(git rev-parse HEAD)" = ${shellQuote(at)} || { echo ${shellQuote(`branch ${branch} has moved since planning`)} >&2; exit 1; }`] : []),
+          ...(at ? [`test "$(git rev-parse HEAD)" = ${shellQuote(at)} || { echo ${shellQuote(`branch ${branch} is not at the expected commit ${at}`)} >&2; exit 1; }`] : []),
         ].join('\n');
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
-    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs /workspace/plan.md /workspace/plan.json',
+    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs /workspace/plan.md /workspace/plan.json /workspace/diff.patch /workspace/review.json',
     `git -c http.extraHeader=${shellQuote(gitAuthHeader(params.token))} clone --quiet ${shellQuote(url)} /workspace/repo`,
     'cd /workspace/repo',
     checkout,
@@ -99,7 +99,9 @@ export function initialNotes(
   const planSection =
     options.role === 'planner'
       ? '_Your plan goes in /workspace/plan.md and /workspace/plan.json, not here. Keep working notes under # Notes._'
-      : "_The planner's plan is in /workspace/plan.json: follow its steps in order by `id`. /workspace/plan.md is the planner's explanation, for context. Note here any step you change or skip, and why._";
+      : options.role === 'reviewer'
+        ? "_The plan the builder was given is /workspace/plan.json, with the planner's explanation in /workspace/plan.md. Your review goes in /workspace/review.json, not here. Keep working notes under # Notes._"
+        : "_The planner's plan is in /workspace/plan.json: follow its steps in order by `id`. /workspace/plan.md is the planner's explanation, for context. Note here any step you change or skip, and why._";
   return [
     '# Task',
     '',
@@ -227,6 +229,8 @@ export async function seedSession(params: {
   branch: string;
   resumedFrom?: Attempt;
   at?: string;
+  /** Check out the branch as it is on the remote, even for a new item: the reviewer's case, after the push. */
+  existing?: boolean;
 }): Promise<{ baseCommit: string; baseBranch: string }> {
   const { workItem, branch, resumedFrom } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
@@ -242,7 +246,7 @@ export async function seedSession(params: {
       token,
       workItemJson: JSON.stringify(workItem, null, 2),
       notes: initialNotes(workItem, { rework: rework !== undefined, role: params.role, ...(resumedFrom ? { resumedFrom } : {}) }),
-      mode: rework || resumedFrom ? 'checkout' : 'create',
+      mode: rework || resumedFrom || params.existing ? 'checkout' : 'create',
       ...(params.at ? { at: params.at } : {}),
     }),
     600,

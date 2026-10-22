@@ -19,6 +19,10 @@ Parameters:
     Type: Number
     Default: 2400
     Description: Upper bound for one planner run, above the planner harness's own 1800-second loop timeout.
+  ReviewTimeoutSeconds:
+    Type: Number
+    Default: 1200
+    Description: Upper bound for one reviewer run, above the reviewer harness's own 900-second loop timeout.
   BuildTimeoutSeconds:
     Type: Number
     Default: 7200
@@ -56,6 +60,7 @@ Globals:
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
         HARNESS_ARN: !ImportValue Factorial-BuilderHarnessArn
         PLANNER_HARNESS_ARN: !ImportValue Factorial-PlannerHarnessArn
+        REVIEWER_HARNESS_ARN: !ImportValue Factorial-ReviewerHarnessArn
         HARNESS_QUALIFIER: live
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
@@ -422,6 +427,12 @@ Resources:
                     - HarnessArn: !ImportValue Factorial-PlannerHarnessArn
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*/runtime-endpoint/*
+                  - !ImportValue Factorial-ReviewerHarnessArn
+                  - !Sub
+                    - ${HarnessArn}/harness-endpoint/*
+                    - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
+                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
               # Which version live serves, its model and its limits, for usage.json.
               - Sid: ReadHarnessVersions
                 Effect: Allow
@@ -437,6 +448,10 @@ Resources:
                   - !Sub
                     - ${HarnessArn}/harness-endpoint/*
                     - HarnessArn: !ImportValue Factorial-PlannerHarnessArn
+                  - !ImportValue Factorial-ReviewerHarnessArn
+                  - !Sub
+                    - ${HarnessArn}/harness-endpoint/*
+                    - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
@@ -509,6 +524,16 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/factorial-collect-plan
+      RetentionInDays: !Ref LogRetentionDays
+  PrepareReviewLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-prepare-review
+      RetentionInDays: !Ref LogRetentionDays
+  CollectReviewLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-collect-review
       RetentionInDays: !Ref LogRetentionDays
   CollectLogGroup:
     Type: AWS::Logs::LogGroup
@@ -617,6 +642,55 @@ Resources:
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref GitHubAppPolicy
 
+  # Reads back the validated plan files, the one exception to the artefact
+  # store being write-only: the planner's session has closed by now and the
+  # builder's copy is in a session treated as hostile, so the stored copy is
+  # the only one no agent has touched. Only these two keys are readable.
+  PrepareReviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-prepare-review
+      Description: Set up a fresh reviewer session at the tested commit with the plan, the summary and the diff.
+      CodeUri: ../packages/orchestration/dist/prepare-review/
+      Handler: index.handler
+      Timeout: 900
+      LoggingConfig:
+        LogGroup: !Ref PrepareReviewLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+            - Sid: ReadPlanArtefacts
+              Effect: Allow
+              Action: s3:GetObject
+              Resource:
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
+        - !Ref SessionCommandPolicy
+        - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
+
+  CollectReviewFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-collect-review
+      Description: Read and validate the reviewer's review, add findings for sensitive changes, and store it.
+      CodeUri: ../packages/orchestration/dist/collect-review/
+      Handler: index.handler
+      Timeout: 300
+      LoggingConfig:
+        LogGroup: !Ref CollectReviewLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref SessionCommandPolicy
+        - !Ref WorkArtefactsWritePolicy
+
   OpenPullRequestFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -657,7 +731,7 @@ Resources:
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
 
-  # Covers the planner's sessions as well as the builder's. The description
+  # Covers the planner's and reviewer's sessions as well as the builder's. The description
   # still names only the builder: changing a managed policy's description
   # replaces it, and the replacement collides with the fixed name.
   SessionCommandPolicy:
@@ -685,6 +759,12 @@ Resources:
                 - HarnessArn: !ImportValue Factorial-PlannerHarnessArn
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_planner-*/runtime-endpoint/*
+              - !ImportValue Factorial-ReviewerHarnessArn
+              - !Sub
+                - ${HarnessArn}/harness-endpoint/*
+                - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
+              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
 
   # Only orchestrator functions, outside the agent sandbox, may read the App
   # key and mint tokens.
@@ -784,6 +864,8 @@ Resources:
                   - !Ref CollectPlanFunction.Alias
                   - !Ref CollectFunction.Alias
                   - !Ref DispatchTestsFunction.Alias
+                  - !Ref PrepareReviewFunction.Alias
+                  - !Ref CollectReviewFunction.Alias
                   - !Ref OpenPullRequestFunction.Alias
                   - !Ref ReportFunction.Alias
               - Sid: RunInvoker
@@ -861,10 +943,13 @@ Resources:
         PlanTimeoutSeconds: !Ref PlanTimeoutSeconds
         BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
         TestTimeoutSeconds: !Ref TestTimeoutSeconds
+        ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
         CollectPlanFunctionAlias: !Ref CollectPlanFunction.Alias
         CollectFunctionAlias: !Ref CollectFunction.Alias
         DispatchTestsFunctionAlias: !Ref DispatchTestsFunction.Alias
+        PrepareReviewFunctionAlias: !Ref PrepareReviewFunction.Alias
+        CollectReviewFunctionAlias: !Ref CollectReviewFunction.Alias
         OpenPullRequestFunctionAlias: !Ref OpenPullRequestFunction.Alias
         ReportFunctionAlias: !Ref ReportFunction.Alias
         ClusterArn: !GetAtt BuildCluster.Arn
@@ -873,12 +958,14 @@ Resources:
         BuilderHarnessId: !ImportValue Factorial-BuilderHarnessId
         PlannerHarnessArn: !ImportValue Factorial-PlannerHarnessArn
         PlannerHarnessId: !ImportValue Factorial-PlannerHarnessId
+        ReviewerHarnessArn: !ImportValue Factorial-ReviewerHarnessArn
+        ReviewerHarnessId: !ImportValue Factorial-ReviewerHarnessId
         SubnetA: !Ref SubnetA
         SubnetB: !Ref SubnetB
         SecurityGroup: !Ref InvokerSecurityGroup
       DefinitionString: |
         {
-          "Comment": "Factorial: plan -> build -> test -> PR. Deterministic; the agents run inside Plan and Build.",
+          "Comment": "Factorial: plan -> build -> test -> review -> PR. Deterministic; the agents run inside Plan, Build and Review.",
           "QueryLanguage": "JSONata",
           "StartAt": "Start",
           "States": {
@@ -891,7 +978,10 @@ Resources:
                 "test": null,
                 "failure": null,
                 "planAttempt": 1,
-                "plan": null
+                "plan": null,
+                "reviewPrep": null,
+                "reviewError": null,
+                "review": null
               },
               "Output": { "workItemId": "{% $states.input.id %}" },
               "Next": "Prepare"
@@ -1085,6 +1175,95 @@ Resources:
                 { "ErrorEquals": ["TestsFailed"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportTestsFailed" },
                 { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
+              "Next": "PrepareReview"
+            },
+            "PrepareReview": {
+              "Type": "Task",
+              "Comment": "Set up a fresh reviewer session at the tested commit. The review is advisory: if any review step fails, the pull request still opens, saying the review did not complete.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${PrepareReviewFunctionAlias}",
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}" }
+              },
+              "Assign": { "reviewPrep": "{% $states.result.Payload %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "sensitive": "{% $states.result.Payload.sensitivePathsJson %}" },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "OpenPullRequest" }
+              ],
+              "Next": "Review"
+            },
+            "Review": {
+              "Type": "Task",
+              "Comment": "The reviewer judges the change in its own session and writes review.json. Nothing from its session is pushed. A failed run still goes to CollectReview, which may find a review.",
+              "Resource": "arn:aws:states:::ecs:runTask.sync",
+              "Arguments": {
+                "Cluster": "${ClusterArn}",
+                "TaskDefinition": "${TaskDefinitionArn}",
+                "LaunchType": "FARGATE",
+                "PropagateTags": "TASK_DEFINITION",
+                "NetworkConfiguration": {
+                  "AwsvpcConfiguration": {
+                    "Subnets": ["${SubnetA}", "${SubnetB}"],
+                    "SecurityGroups": ["${SecurityGroup}"],
+                    "AssignPublicIp": "ENABLED"
+                  }
+                },
+                "Overrides": {
+                  "ContainerOverrides": [
+                    {
+                      "Name": "invoker",
+                      "Environment": [
+                        { "Name": "ROLE", "Value": "reviewer" },
+                        { "Name": "HARNESS_ARN", "Value": "${ReviewerHarnessArn}" },
+                        { "Name": "HARNESS_ID", "Value": "${ReviewerHarnessId}" },
+                        { "Name": "HARNESS_QUALIFIER", "Value": "live" },
+                        { "Name": "SENSITIVE_PATHS", "Value": "{% $reviewPrep.sensitivePathsJson %}" },
+                        { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
+                        { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },
+                        { "Name": "BRANCH", "Value": "{% $ctx.branch %}" },
+                        { "Name": "BASE_BRANCH", "Value": "{% $ctx.baseBranch %}" },
+                        { "Name": "BASE_COMMIT", "Value": "{% $ctx.baseCommit %}" }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "TimeoutSeconds": ${ReviewTimeoutSeconds},
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "taskArn": "{% $states.result.TaskArn %}" },
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "reviewError": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "CollectReview" }
+              ],
+              "Next": "CollectReview"
+            },
+            "CollectReview": {
+              "Type": "Task",
+              "Comment": "Validate the review, add findings for sensitive changes and store it. A missing or invalid review is stored as review/error.json and the run continues.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${CollectReviewFunctionAlias}",
+                "Payload": { "ctx": "{% $ctx %}", "sensitive": "{% $reviewPrep.sensitive %}", "reviewError": "{% $reviewError %}" }
+              },
+              "Assign": { "review": "{% $states.result.Payload %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "reviewed": "{% $states.result.Payload.ok %}" },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "OpenPullRequest" }
+              ],
               "Next": "OpenPullRequest"
             },
             "OpenPullRequest": {
@@ -1092,7 +1271,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}", "plan": "{% $plan %}" }
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}", "plan": "{% $plan %}", "review": "{% $review %}" }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "prNumber": "{% $states.result.Payload.prNumber %}", "prUrl": "{% $states.result.Payload.prUrl %}" },
               "Catch": [

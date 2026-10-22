@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "rules": [
+    {
+      "path": "templates/00-foundation.yml",
+      "reason": "changes the foundation stack, which holds the deploy role, the CloudFormation execution role and the permissions boundaries"
+    },
+    {
+      "contentPattern": "[Pp]ermissions-?[Bb]oundary",
+      "reason": "changes a permissions boundary or what carries one"
+    },
+    {
+      "path": "scripts/check-workflows.ts",
+      "reason": "changes the check that enforces the rules on GitHub Actions workflows"
+    },
+    {
+      "path": "scripts/classify-changes.ts",
+      "reason": "changes which paths skip CI and the deploy"
+    }
+  ]
+}
