@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { builderIncomplete, invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
+import { builderIncomplete } from '../lib/incomplete.ts';
+
+import { invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -96,6 +98,12 @@ describe('a builder that stopped before finishing', () => {
     assert.match(text, /^Factorial's builder reached its iteration or time limit before finishing, so the change was not tested and no pull request was opened\./);
     assert.match(text, /Work in progress \(4 commits\) was saved to/);
     assert.doesNotMatch(text, /could not complete/);
+  });
+
+  it('says how many sessions the build had when it ran in rounds', () => {
+    const text = reportMessage({ status: 'failed', ctx, error: taskFailed(3), buildRound: 6 });
+    assert.match(text, /reached its iteration or time limit in 6 sessions before finishing/);
+    assert.doesNotMatch(reportMessage({ status: 'failed', ctx, error: taskFailed(3), buildRound: 1 }), /sessions/);
   });
 
   it('keeps the generic message for other task failures', () => {

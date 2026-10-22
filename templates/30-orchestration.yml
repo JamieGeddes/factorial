@@ -26,7 +26,12 @@ Parameters:
   BuildTimeoutSeconds:
     Type: Number
     Default: 7200
-    Description: Upper bound for the agent build step, including the harness's own timeout.
+    Description: Upper bound for one round of the agent build step, including the harness's own timeout.
+  MaxBuildRounds:
+    Type: Number
+    Default: 6
+    MinValue: 1
+    Description: How many builder sessions one work item may use before an unfinished build is reported as incomplete. Each round is a fresh session that continues from the branch and the builder's notes.
   TestTimeoutSeconds:
     Type: Number
     Default: 3600
@@ -530,6 +535,11 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-prepare-review
       RetentionInDays: !Ref LogRetentionDays
+  ContinueBuildLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-continue-build
+      RetentionInDays: !Ref LogRetentionDays
   CollectReviewLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -668,6 +678,35 @@ Resources:
               Resource:
                 - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
                 - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
+        - !Ref SessionCommandPolicy
+        - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
+
+  ContinueBuildFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-continue-build
+      Description: Start the next build round in a fresh builder session, from the branch, the plan and the previous round's notes.
+      CodeUri: ../packages/orchestration/dist/continue-build/
+      Handler: index.handler
+      Timeout: 900
+      LoggingConfig:
+        LogGroup: !Ref ContinueBuildLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+            # The read exceptions to the write-only store: the validated plan
+            # and the previous round's notes, which Collect stored before the push.
+            - Sid: ReadRoundArtefacts
+              Effect: Allow
+              Action: s3:GetObject
+              Resource:
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
+                - !Sub ${WorkArtefactsBucket.Arn}/*/build/notes.md
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
@@ -863,6 +902,7 @@ Resources:
                   - !Ref PrepareFunction.Alias
                   - !Ref CollectPlanFunction.Alias
                   - !Ref CollectFunction.Alias
+                  - !Ref ContinueBuildFunction.Alias
                   - !Ref DispatchTestsFunction.Alias
                   - !Ref PrepareReviewFunction.Alias
                   - !Ref CollectReviewFunction.Alias
@@ -942,11 +982,13 @@ Resources:
         FactorialVersion: !Ref FactorialVersion
         PlanTimeoutSeconds: !Ref PlanTimeoutSeconds
         BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
+        MaxBuildRounds: !Ref MaxBuildRounds
         TestTimeoutSeconds: !Ref TestTimeoutSeconds
         ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
         CollectPlanFunctionAlias: !Ref CollectPlanFunction.Alias
         CollectFunctionAlias: !Ref CollectFunction.Alias
+        ContinueBuildFunctionAlias: !Ref ContinueBuildFunction.Alias
         DispatchTestsFunctionAlias: !Ref DispatchTestsFunction.Alias
         PrepareReviewFunctionAlias: !Ref PrepareReviewFunction.Alias
         CollectReviewFunctionAlias: !Ref CollectReviewFunction.Alias
@@ -979,6 +1021,8 @@ Resources:
                 "failure": null,
                 "planAttempt": 1,
                 "plan": null,
+                "buildRound": 1,
+                "buildSession": null,
                 "reviewPrep": null,
                 "reviewError": null,
                 "review": null
@@ -996,7 +1040,7 @@ Resources:
                   "factorialVersion": "${FactorialVersion}"
                 }
               },
-              "Assign": { "ctx": "{% $states.result.Payload %}" },
+              "Assign": { "ctx": "{% $states.result.Payload %}", "buildSession": "{% $states.result.Payload.sessionId %}" },
               "Output": {
                 "workItemId": "{% $states.result.Payload.workItem.id %}",
                 "attempt": "{% $states.result.Payload.attempt %}",
@@ -1116,8 +1160,9 @@ Resources:
                         { "Name": "HARNESS_ARN", "Value": "${BuilderHarnessArn}" },
                         { "Name": "HARNESS_ID", "Value": "${BuilderHarnessId}" },
                         { "Name": "HARNESS_QUALIFIER", "Value": "live" },
+                        { "Name": "BUILD_ROUND", "Value": "{% $string($buildRound) %}" },
                         { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
-                        { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },
+                        { "Name": "SESSION_ID", "Value": "{% $buildSession %}" },
                         { "Name": "BRANCH", "Value": "{% $ctx.branch %}" },
                         { "Name": "BASE_BRANCH", "Value": "{% $ctx.baseBranch %}" },
                         { "Name": "BASE_COMMIT", "Value": "{% $ctx.baseCommit %}" }
@@ -1135,20 +1180,54 @@ Resources:
             },
             "SaveWork": {
               "Type": "Task",
-              "Comment": "The build failed. Push whatever the agent committed, and anything it left uncommitted, so the work is not lost; then report the failure. No tests run and no pull request is opened.",
+              "Comment": "The build stopped. Push whatever the agent committed, and anything it left uncommitted, so the work is not lost. If the builder merely ran out of steps or time, the build continues in a fresh session; otherwise the failure is reported, with no tests and no pull request.",
               "Resource": "arn:aws:states:::lambda:invoke",
-              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true }]) %}" },
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true, 'builderSessionId': $buildSession, 'failure': $failure }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
                 { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
-              "Next": "ReportFailure"
+              "Next": "BuildIncomplete"
+            },
+            "BuildIncomplete": {
+              "Type": "Choice",
+              "Comment": "A builder that stopped at its own limit gets another session, up to MaxBuildRounds; any other failure, or the last round, is reported.",
+              "Choices": [ { "Condition": "{% $collect.incomplete = true and $buildRound < ${MaxBuildRounds} %}", "Next": "ContinueBuild" } ],
+              "Default": "ReportFailure"
+            },
+            "ContinueBuild": {
+              "Type": "Task",
+              "Comment": "Seed a fresh builder session from the branch with the plan and the previous round's notes, then run the builder again.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ContinueBuildFunctionAlias}",
+                "Payload": { "ctx": "{% $ctx %}", "round": "{% $buildRound + 1 %}", "collect": "{% $collect %}" }
+              },
+              "Assign": {
+                "buildSession": "{% $states.result.Payload.sessionId %}",
+                "buildRound": "{% $states.result.Payload.round %}",
+                "failure": null,
+                "collect": null
+              },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "buildRound": "{% $states.result.Payload.round %}", "buildSession": "{% $states.result.Payload.sessionId %}" },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "Build"
             },
             "Collect": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
-              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $ctx %}" },
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'builderSessionId': $buildSession }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
@@ -1319,7 +1398,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ReportFunctionAlias}",
-                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}", "saved": "{% $collect %}" }
+                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}", "saved": "{% $collect %}", "buildRound": "{% $buildRound %}" }
               },
               "Output": { "workItemId": "{% $workItemInput.id %}", "attempt": "{% $exists($ctx.attempt) ? $ctx.attempt : null %}", "status": "failed" },
               "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $workItemInput.id %}", "attempt": "{% $exists($ctx.attempt) ? $ctx.attempt : null %}", "status": "failed", "error": "{% $states.errorOutput %}" }, "Next": "Failed" } ],

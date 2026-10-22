@@ -14,7 +14,9 @@
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
  * `<stage>/transcript.jsonl` and `<stage>/usage.json` in the artefact store
- * (`plan/` for the planner, `build/` for the builder, `review/` for the reviewer).
+ * (`plan/` for the planner, `build/` for the builder, `review/` for the reviewer;
+ * a build round after the first stores under `build/round-<n>/`, and the
+ * ledger's `buildUsageTotal` sums the rounds).
  */
 import { readFileSync } from 'node:fs';
 
@@ -35,7 +37,7 @@ import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, harnessTarget, incompleteReason, out
 import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
-import { addCallUsage, emptyRunUsage, type CallUsage } from './usage.ts';
+import { addCallUsage, addRunUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -57,7 +59,12 @@ const planAttempt = Number(process.env.PLAN_ATTEMPT ?? '1');
 if (!Number.isInteger(planAttempt) || planAttempt < 1) throw new Error('PLAN_ATTEMPT is not a positive integer');
 // The changes PrepareReview found to deployment and safety files, for the reviewer's prompt.
 const sensitivePaths = parseSensitivePaths(process.env.SENSITIVE_PATHS);
+// Which round of the build this is: 2 or more when continuing in a fresh session.
+const buildRound = Number(process.env.BUILD_ROUND ?? '1');
+if (!Number.isInteger(buildRound) || buildRound < 1) throw new Error('BUILD_ROUND is not a positive integer');
 const { stage, running, done, failed } = ROLE_STAGES[role];
+/** Where this run's records go: the stage, or a round folder under it after the first round. */
+const recordPath = (name: string): string => (role === 'builder' && buildRound > 1 ? `${stage}/round-${buildRound}/${name}` : `${stage}/${name}`);
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 // The harness version's own loop timeout ends the stream; this only guards
@@ -104,6 +111,8 @@ const run = {
   usage: emptyRunUsage(),
   calls: [] as CallUsage[],
   error: undefined as string | undefined,
+  /** The build's usage over earlier rounds, from the ledger row, when continuing. */
+  previousRoundsUsage: undefined as RunUsage | undefined,
 };
 const transcript = new TranscriptBuffer('/tmp/transcript.jsonl');
 
@@ -135,12 +144,12 @@ async function storeRunRecord(): Promise<Record<string, unknown> | undefined> {
     return undefined;
   }
   try {
-    await putArtefact(run.prefix, `${stage}/transcript.jsonl`, readFileSync(transcript.path, 'utf8'), 'application/x-ndjson');
-    await putJsonArtefact(run.prefix, `${stage}/usage.json`, usageRecord({ ...run, endedAt: Date.now() }));
+    await putArtefact(run.prefix, recordPath('transcript.jsonl'), readFileSync(transcript.path, 'utf8'), 'application/x-ndjson');
+    await putJsonArtefact(run.prefix, recordPath('usage.json'), usageRecord({ ...run, endedAt: Date.now() }));
     log.info('run record stored', { transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
     return {
-      transcriptKey: artefactKey(run.prefix, `${stage}/transcript.jsonl`),
-      usageKey: artefactKey(run.prefix, `${stage}/usage.json`),
+      transcriptKey: artefactKey(run.prefix, recordPath('transcript.jsonl')),
+      usageKey: artefactKey(run.prefix, recordPath('usage.json')),
       transcriptBytes: kept.bytes,
       transcriptTruncated: kept.truncated,
     };
@@ -159,10 +168,10 @@ function finish(succeeded: boolean): Promise<void> {
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
     log.info('harness finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage });
-    await record(
-      succeeded ? done : failed,
-      outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored }),
-    );
+    const outcome = outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
+    // The builder's figures are this round's; the total across rounds is kept beside them.
+    const rounds = role === 'builder' ? { buildRounds: buildRound, buildUsageTotal: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage } : {};
+    await record(succeeded ? done : failed, { ...outcome, ...rounds });
   })();
   return finished;
 }
@@ -183,10 +192,14 @@ async function main(): Promise<number> {
   run.prefix = typeof row.Item?.artefactPrefix === 'string' ? row.Item.artefactPrefix : undefined;
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
+  if (role === 'builder' && buildRound > 1) {
+    const previous = row.Item?.buildUsageTotal ?? row.Item?.usage;
+    run.previousRoundsUsage = previous && typeof previous === 'object' ? addRunUsage(emptyRunUsage(), previous as RunUsage) : undefined;
+  }
 
-  const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths });
+  const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths, buildRound });
   run.harness = await harnessInfo();
-  log.info('invoking harness', { role, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...run.harness });
+  log.info('invoking harness', { role, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();

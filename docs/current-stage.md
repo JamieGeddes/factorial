@@ -12,7 +12,7 @@ Stage 0 is complete: on 2026-10-17 a labelled issue (#2) became a tested pull re
 
 ## The state machine
 
-The orchestration stack (`factorial-orchestration`) holds the `factorial-work` state machine (Prepare → Plan → CollectPlan → Build → Collect → Test → PrepareReview → Review → CollectReview → OpenPullRequest) behind its `live` alias, the bus rule that starts it, the `factorial-work-items` ledger, the Fargate invoker (`packages/invoker`), the orchestrator Lambdas (`packages/orchestration`) and the artefact store. Every state's output carries `workItemId` and `attempt`.
+The orchestration stack (`factorial-orchestration`) holds the `factorial-work` state machine (Prepare → Plan → CollectPlan → Build → Collect → Test → PrepareReview → Review → CollectReview → OpenPullRequest, with Build → SaveWork → ContinueBuild → Build when the builder runs out of steps) behind its `live` alias, the bus rule that starts it, the `factorial-work-items` ledger, the Fargate invoker (`packages/invoker`), the orchestrator Lambdas (`packages/orchestration`) and the artefact store. Every state's output carries `workItemId` and `attempt`.
 
 ### Prepare
 
@@ -31,11 +31,12 @@ The orchestration stack (`factorial-orchestration`) holds the `factorial-work` s
 - The builder (`factorial_builder`, role `factorial-agent`) follows `plan.json` step by step, commits after each coherent step, keeps running notes in `/workspace/notes.md`, and writes `/workspace/summary.md` with a `## Plan steps` section reporting each step by its `id`. Its prompt sets an exploration budget before the first edit, forbids installs for documentation-only changes, states once that GitHub belongs to the orchestrator, and keeps the builder to executing the request.
 - The Fargate invoker runs the harness invocation to completion and Step Functions waits on it (`ecs:runTask.sync`). It takes the role and the harness from the state machine's container overrides, passes no `maxIterations` or `timeoutSeconds` (each harness version's own limits apply), records `role` on the ledger row, and passes the ids to the harness in the `baggage` header.
 - A builder that stops with any reason but `end_turn` (its iteration or time limit) is incomplete: the invoker records `buildError` and exits with code 3, so a half-finished change is never tested or opened as a pull request.
+- **Rounds.** A builder session has one context that only grows (see Agents) and an iteration limit, so a plan can outlast it. When the builder is incomplete, SaveWork pushes its work and, instead of reporting failure, ContinueBuild seeds a fresh builder session (`<workItemId>-r<round>` on the same harness) at the branch head (or the start commit when the round committed nothing) with the validated plan read back from the artefact store, the previous round's `notes.md` (stored by Collect before the push) and a "Continuing (round N)" section: what is on the branch, the `git log` and `git diff --stat` to run, check each plan step against the commits, carry on from the first step not done. The builder runs again with `BUILD_ROUND` set, and its prompt says to read that section first. Rounds repeat until the builder finishes or `MaxBuildRounds` (default 6) is reached, when the item is reported incomplete ("in N sessions") with the saved branch. The branch and `notes.md` are the memory between rounds; nothing is read out of the old session. There is no limit on a work item's size beyond that.
 
 ### Collect and SaveWork
 
 - Collect inspects the builder's session (hostile once the agent has run), commits anything left uncommitted, stores the session's files, and bundles the new commits. The push happens from a pristine clone in a separate clean-room session with hooks disabled and the token sent as a header; every commit is re-created with the App's identity, and the push is always a fast-forward on top of the head the session started from, never a force push.
-- When the build fails (a model or API error, the invoker task stopping, or the builder running out), SaveWork runs Collect in salvage mode: whatever the agent committed, plus any uncommitted changes in a commit marked as saved work in progress, is pushed to the work branch. No tests run and no pull request is opened; the failure comment links the branch, and relabelling the issue resumes from it.
+- When the build stops (a model or API error, the invoker task stopping, or the builder running out), SaveWork runs Collect in salvage mode with the Build failure and the round's session id: whatever the agent committed, plus any uncommitted changes in a commit marked as saved work in progress, is pushed to the work branch, and Collect reports `incomplete` when the stop was the builder's own limit. An incomplete build continues in another round (see Build); any other failure, or the last round, is reported: no tests run and no pull request is opened, the failure comment links the branch, and relabelling the issue resumes from it.
 
 ### Test
 
@@ -64,20 +65,21 @@ The orchestration stack (`factorial-orchestration`) holds the `factorial-work` s
 | Reviewer | high | 40 | 15 min | no |
 
 - Web search is AgentCore's managed Web Search connector behind the `factorial-web-search` gateway, attached as an `agentcore_gateway` tool and allowed as `@web-search/web-search___WebSearch`.
-- Each harness is configured with summarisation truncation, but the harness applies truncation only when the conversation exceeds the model's context window, which GLM 5.3 Flash's 1M-token window has never reached. In practice a session's context only grows; the builder's notes file and the branch are what carry state between sessions.
+- Each harness is configured with summarisation truncation, but the harness applies truncation only when the conversation exceeds the model's context window, which GLM 5.3 Flash's 1M-token window has never reached. In practice a session's context only grows; the builder's notes file and the branch are what carry state between sessions (see Build: rounds).
 - The template is laid out one block per role (see **Agent roles** in `CLAUDE.md` Conventions). The deploy workflow's final step moves every harness's `live` endpoint to its newest version.
 
 ## The artefact store and the ledger
 
-The artefact store (`factorial-work-artefacts-<account>`, in the orchestration stack) keeps each run's record under `<workItemId>/<attempt>/`. The ledger row holds `attempt` and `artefactPrefix`, and the pull request body links the prefix. The store is write-only, with two read exceptions by the orchestrator: the plan files (PrepareReview) and, when a build continues, the builder's notes.
+The artefact store (`factorial-work-artefacts-<account>`, in the orchestration stack) keeps each run's record under `<workItemId>/<attempt>/`. The ledger row holds `attempt` and `artefactPrefix`, and the pull request body links the prefix. The store is write-only, with two read exceptions by the orchestrator: the plan files (PrepareReview and ContinueBuild) and the previous round's `build/notes.md` (ContinueBuild).
 
 | Key | Written by | Contents |
 |---|---|---|
 | `workitem.json`, `prepare/branch.json` | Prepare | The work item and the branch |
 | `plan/plan.md`, `plan/plan.json`, `plan/validation.json` | CollectPlan | The plan and its validation |
 | `plan/transcript.jsonl`, `plan/usage.json` | Invoker | The planner's run |
-| `build/transcript.jsonl`, `build/usage.json` | Invoker | Every harness stream event (redacted, capped at 50 MB with a truncation marker) and the usage: summed and per-call tokens, harness version, model id, stop reason, tool calls, duration; written on every exit including a stopped task (`stopReason: "interrupted"`) |
-| `build/summary.md`, `build/notes.md`, `build/rework.md`, `build/logs/<name>`, `build/logs/index.json`, `build/bundle.git` | Collect, before the push (SaveWork too) | The session's files; command logs 5 MB per file keeping the end and 50 MB in total, with the index listing what was stored, truncated or skipped |
+| `build/transcript.jsonl`, `build/usage.json` (round 1), `build/round-<n>/transcript.jsonl`, `build/round-<n>/usage.json` (later rounds) | Invoker | Every harness stream event (redacted, capped at 50 MB with a truncation marker) and the usage: summed and per-call tokens, harness version, model id, stop reason, tool calls, duration; written on every exit including a stopped task (`stopReason: "interrupted"`) |
+| `build/round-<n>/continuing.json` | ContinueBuild | The round's session id and the commit it started from |
+| `build/summary.md`, `build/notes.md`, `build/rework.md`, `build/logs/<name>`, `build/logs/index.json`, `build/bundle.git` | Collect, before the push (SaveWork too; the latest round's) | The session's files; command logs 5 MB per file keeping the end and 50 MB in total, with the index listing what was stored, truncated or skipped |
 | `test/result.json` | OpenPullRequest, or Report when tests fail | The test outcome and run |
 | `review/prepared.json` | PrepareReview | The tested head, changed paths, the rules applied and the sensitive paths |
 | `review/transcript.jsonl`, `review/usage.json` | Invoker | The reviewer's run |
@@ -85,7 +87,7 @@ The artefact store (`factorial-work-artefacts-<account>`, in the orchestration s
 | `pr/pr.json` | OpenPullRequest | The pull request |
 | `report.json` | Every terminal path | The outcome and a short reason |
 
-The ledger row points at the build records with `build.transcriptKey` and `build.usageKey` and keeps the existing `usage` totals until the progress record (#15) defines per-stage fields. Token usage is recorded the way Z.ai reports it: `inputTokens` is the gross prompt size including cache reads, and `uncachedInputTokens` is what is billed at full rate.
+The ledger row points at the build records with `build.transcriptKey` and `build.usageKey` (the latest round's), holds `buildRounds`, `buildSessionId` (the latest round's session) and `buildUsageTotal` (usage summed over rounds; `usage` is the latest round's), and keeps the existing `usage` totals until the progress record (#15) defines per-stage fields. Token usage is recorded the way Z.ai reports it: `inputTokens` is the gross prompt size including cache reads, and `uncachedInputTokens` is what is billed at full rate.
 
 ## Logging and correlation
 
