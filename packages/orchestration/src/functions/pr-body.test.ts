@@ -258,7 +258,7 @@ describe('pullRequestBody: a builder summary with missing sections', () => {
     // No builder report on the steps: each is listed as a departure, and the plan still renders.
     assert.match(body, /- `validate-quantity` — not reported by the builder/);
     assert.ok(body.includes('<summary>Plan steps (2)</summary>'));
-    const body2 = pullRequestBody(ctx, builderSummary, {}, headSha, plan);
+    const body2 = pullRequestBody(ctx, builderSummary, {}, headSha, { ...plan, testsAdd: [] });
     assert.match(body2, /Result: not run/);
     assert.match(body2, /_The plan added no tests\._/);
     assert.match(body2, /## Plan\n\nAll 2 steps were done as planned\./);
