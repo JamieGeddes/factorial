@@ -112,16 +112,28 @@ export function seedPlanScript(markdown: string, json: string): string {
   ].join('\n');
 }
 
+/** At most this many open questions and tests-to-add travel in the digest, each cut to DIGEST_ITEM_CHARS. */
+const MAX_DIGEST_ITEMS = { openQuestions: 5, testsAdd: 8 };
+const DIGEST_ITEM_CHARS = 200;
+
 /** The plan as the state machine carries it to the pull request: small, whatever the plan's size. */
 export interface PlanDigest {
   summary: string;
   steps: Array<{ id: string; description: string }>;
+  /** What the request left undecided, capped. */
+  openQuestions: string[];
+  /** Tests the plan said to add, capped. */
+  testsAdd: string[];
 }
 
+const cutItem = (text: string): string => (text.length > DIGEST_ITEM_CHARS ? `${text.slice(0, DIGEST_ITEM_CHARS)}…` : text);
+
 export function planDigest(plan: Plan): PlanDigest {
-  const firstLine = (text: string): string => {
-    const line = text.trim().split('\n')[0] ?? '';
-    return line.length > 200 ? `${line.slice(0, 200)}…` : line;
+  return {
+    summary: plan.summary,
+    // The plan contract caps a description at 4000 characters; the body shows the whole of it.
+    steps: plan.steps.map((step) => ({ id: step.id, description: step.description })),
+    openQuestions: plan.openQuestions.slice(0, MAX_DIGEST_ITEMS.openQuestions).map(cutItem),
+    testsAdd: plan.tests.add.slice(0, MAX_DIGEST_ITEMS.testsAdd).map(cutItem),
   };
-  return { summary: plan.summary, steps: plan.steps.map((step) => ({ id: step.id, description: firstLine(step.description) })) };
 }

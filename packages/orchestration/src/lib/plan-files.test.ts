@@ -128,12 +128,25 @@ describe('session scripts', () => {
 });
 
 describe('planDigest', () => {
-  it('keeps the summary and the first line of each step, cut to 200 characters', () => {
+  it('keeps the summary and each step description in full, with the open questions and tests to add', () => {
     const plan = JSON.parse(validJson);
-    plan.steps[0].description = `${'x'.repeat(250)}\nsecond line`;
+    plan.steps[0].description = `${'x'.repeat(500)}\nsecond line`;
+    plan.openQuestions = ['q1', ...Array.from({ length: 8 }, (_, i) => `q${i}`)];
+    plan.tests.add = [...Array.from({ length: 12 }, (_, i) => `t${i}`)];
     const digest = planDigest(plan);
     assert.equal(digest.summary, plan.summary);
-    assert.equal(digest.steps[0]?.description.length, 201);
+    assert.equal(digest.steps[0]?.description.length, 512);
     assert.equal(digest.steps[1]?.id, 'handler-tests');
+    assert.equal(digest.openQuestions.length, 5);
+    assert.equal(digest.testsAdd.length, 8);
+  });
+
+  it('cuts each open question and test line to 200 characters with an ellipsis', () => {
+    const plan = JSON.parse(validJson);
+    plan.openQuestions = ['q'.repeat(300)];
+    plan.tests.add = ['t'.repeat(300)];
+    const digest = planDigest(plan);
+    assert.equal(digest.openQuestions[0]?.length, 201);
+    assert.equal(digest.testsAdd[0]?.length, 201);
   });
 });
