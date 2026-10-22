@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ROLE_STAGES, harnessTarget, outcomeAttributes, parseSensitivePaths } from './role.ts';
+import { ROLE_STAGES, harnessTarget, incompleteReason, outcomeAttributes, parseSensitivePaths } from './role.ts';
 
 const env = {
   ROLE: 'builder',
@@ -116,4 +116,17 @@ test('refuses sensitive paths that are not repository paths', () => {
     assert.throws(() => parseSensitivePaths(value), /SENSITIVE_PATHS/, value);
   }
   assert.throws(() => parseSensitivePaths('not json'));
+});
+
+test('treats a builder that stopped before end_turn as incomplete', () => {
+  assert.equal(incompleteReason('builder', 'end_turn'), undefined);
+  for (const reason of ['max_iterations_exceeded', 'timeout_exceeded', 'max_tokens']) {
+    assert.match(incompleteReason('builder', reason) ?? '', new RegExp(`^incomplete: the builder stopped with ${reason}`));
+  }
+  assert.match(incompleteReason('builder', undefined) ?? '', /no stop reason/);
+});
+
+test('leaves the planner and the reviewer to their Collect steps', () => {
+  assert.equal(incompleteReason('planner', 'max_iterations_exceeded'), undefined);
+  assert.equal(incompleteReason('reviewer', 'timeout_exceeded'), undefined);
 });

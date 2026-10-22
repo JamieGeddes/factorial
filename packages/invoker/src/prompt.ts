@@ -89,6 +89,6 @@ export function reviewPrompt(workItem: WorkItem, branch: string, baseBranch: str
           ...sensitivePaths.map(({ path, reason }) => `- ${path}: ${reason}`),
         ]
       : []),
-    'Write /workspace/review.json as described in your instructions, and check it with jq before you finish.',
+    'Write a first /workspace/review.json as soon as you have read the diff and checked it against the request, as your instructions describe, then refine it. Check it with jq before you finish.',
   ].join('\n');
 }

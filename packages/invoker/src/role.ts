@@ -26,6 +26,24 @@ export const ROLE_STAGES: Record<Role, RoleStage> = {
   reviewer: { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' },
 };
 
+/**
+ * The exit code for a builder that stopped before finishing: the ECS task
+ * fails, so the state machine saves the work and reports it instead of
+ * testing it and opening a pull request. Report recognises the code.
+ */
+export const INCOMPLETE_EXIT_CODE = 3;
+
+/**
+ * Why a run that ended without an error is still incomplete, or undefined
+ * if it is complete. Only the builder's run is judged here: a half-finished
+ * build must not become a pull request, while CollectPlan and CollectReview
+ * already check what the planner and the reviewer left behind.
+ */
+export function incompleteReason(role: Role, stopReason: string | undefined): string | undefined {
+  if (role !== 'builder' || stopReason === 'end_turn') return undefined;
+  return `incomplete: the builder stopped with ${stopReason ?? 'no stop reason'} before finishing`;
+}
+
 export interface RunOutcome {
   stopReason: string | undefined;
   toolCalls: number;
