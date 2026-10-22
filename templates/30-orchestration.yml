@@ -19,10 +19,6 @@ Parameters:
     Type: Number
     Default: 2400
     Description: Upper bound for one planner run, above the planner harness's own 1800-second loop timeout.
-  ReviewTimeoutSeconds:
-    Type: Number
-    Default: 1200
-    Description: Upper bound for one reviewer run, above the reviewer harness's own 900-second loop timeout.
   BuildTimeoutSeconds:
     Type: Number
     Default: 7200
@@ -943,7 +939,10 @@ Resources:
         PlanTimeoutSeconds: !Ref PlanTimeoutSeconds
         BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
         TestTimeoutSeconds: !Ref TestTimeoutSeconds
-        ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
+        # Above the reviewer harness's own 1200-second loop timeout. A
+        # constant, not a parameter: the deploy keeps a stack's existing
+        # parameter values, so a changed default would never reach it.
+        ReviewTimeoutSeconds: '1500'
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
         CollectPlanFunctionAlias: !Ref CollectPlanFunction.Alias
         CollectFunctionAlias: !Ref CollectFunction.Alias

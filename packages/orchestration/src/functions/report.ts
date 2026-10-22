@@ -24,6 +24,19 @@ interface ReportInput {
   saved?: { pushed?: boolean; commitCount?: number } | null;
 }
 
+/** The invoker's exit code for a builder that stopped before finishing (`INCOMPLETE_EXIT_CODE` in packages/invoker). */
+const INCOMPLETE_EXIT_CODE = 3;
+
+/** Whether the failure is the builder's task exiting as incomplete: its iteration or time limit, not an error. */
+export function builderIncomplete(error: ReportInput['error']): boolean {
+  if (error?.Error !== 'States.TaskFailed') return false;
+  const containers = safeJson(error.Cause)?.Containers;
+  return Array.isArray(containers) && containers.some((c: unknown) => {
+    const container = c as { Name?: unknown; ExitCode?: unknown } | null;
+    return container?.Name === 'invoker' && container.ExitCode === INCOMPLETE_EXIT_CODE;
+  });
+}
+
 /** A sentence pointing at the pushed branch, when there is one. */
 export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved'>): string {
   if (!input.saved?.pushed || !input.ctx) return '';
@@ -56,6 +69,9 @@ export function reportMessage(input: ReportInput): string {
       ].join('\n');
     }
     case 'failed':
+      if (builderIncomplete(input.error)) {
+        return `Factorial's builder reached its iteration or time limit before finishing, so the change was not tested and no pull request was opened. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.${savedWorkNote(input)}`;
+      }
       // Deliberately generic: causes can contain command output. Details stay
       // in the execution history and the ledger, both inside the account.
       return `Factorial could not complete this work item (\`${input.error?.Error ?? 'unknown error'}\`). Session \`${input.ctx?.sessionId ?? input.sessionIdHint ?? 'unknown'}\`; see the Factorial execution log.${savedWorkNote(input)}`;
@@ -67,7 +83,9 @@ export function reportArtefact(input: Pick<ReportInput, 'status' | 'error' | 'sa
   const reasons = {
     'no-changes': 'The agent made no changes.',
     'tests-failed': "The change did not pass the repository's checks.",
-    failed: `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
+    failed: builderIncomplete(input.error)
+      ? 'The builder reached its iteration or time limit before finishing.'
+      : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
     'invalid-plan': 'The planner did not produce a valid plan after two attempts.',
   };
   return {

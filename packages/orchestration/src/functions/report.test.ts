@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
+import { builderIncomplete, invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -73,6 +73,37 @@ describe('saved work after a failure', () => {
     assert.equal(savedWorkNote({ ctx, saved: { pushed: false, commitCount: 0 } }), '');
     assert.equal(savedWorkNote({ ctx, saved: null }), '');
     assert.equal(savedWorkNote({ saved: { pushed: true, commitCount: 2 } }), '');
+  });
+});
+
+describe('a builder that stopped before finishing', () => {
+  // The shape of an ecs:runTask.sync failure's cause, trimmed.
+  const taskFailed = (exitCode: number) => ({
+    Error: 'States.TaskFailed',
+    Cause: JSON.stringify({ StopCode: 'EssentialContainerExited', Containers: [{ Name: 'invoker', ExitCode: exitCode, LastStatus: 'STOPPED' }] }),
+  });
+
+  it('is recognised by the invoker exit code', () => {
+    assert.equal(builderIncomplete(taskFailed(3)), true);
+    assert.equal(builderIncomplete(taskFailed(1)), false);
+    assert.equal(builderIncomplete({ Error: 'Error', Cause: taskFailed(3).Cause }), false);
+    assert.equal(builderIncomplete({ Error: 'States.TaskFailed', Cause: 'not json' }), false);
+    assert.equal(builderIncomplete(undefined), false);
+  });
+
+  it('says the builder ran out, and links the saved work', () => {
+    const text = reportMessage({ status: 'failed', ctx, error: taskFailed(3), saved: { pushed: true, commitCount: 4 } });
+    assert.match(text, /^Factorial's builder reached its iteration or time limit before finishing, so the change was not tested and no pull request was opened\./);
+    assert.match(text, /Work in progress \(4 commits\) was saved to/);
+    assert.doesNotMatch(text, /could not complete/);
+  });
+
+  it('keeps the generic message for other task failures', () => {
+    assert.match(reportMessage({ status: 'failed', ctx, error: taskFailed(1) }), /^Factorial could not complete this work item/);
+  });
+
+  it('gives its own reason in report.json', () => {
+    assert.equal(reportArtefact({ status: 'failed', error: taskFailed(3) }).reason, 'The builder reached its iteration or time limit before finishing.');
   });
 });
 

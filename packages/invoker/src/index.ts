@@ -1,17 +1,20 @@
 /**
  * Harness invoker. Runs as a Fargate task started by Step Functions with
  * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes one agent
- * role's harness (the planner or the builder; the role and harness come in
- * the task input) once in the prepared session, logs its progress as
+ * role's harness (the planner, builder or reviewer; the role and harness come
+ * in the task input) once in the prepared session, logs its progress as
  * structured lines (CloudWatch Logs; text and tool input capped at 4000
  * characters each), records the outcome, and exits. Step Functions resumes
- * when the task stops, however long the run took. Nothing inside the agent
- * sandbox can influence this process: it runs under its own task role.
+ * when the task stops, however long the run took. A builder that stops
+ * before end_turn (its iteration or time limit) exits with
+ * INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
+ * pull request. Nothing inside the agent sandbox can influence this process:
+ * it runs under its own task role.
  *
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
  * `<stage>/transcript.jsonl` and `<stage>/usage.json` in the artefact store
- * (`plan/` for the planner, `build/` for the builder).
+ * (`plan/` for the planner, `build/` for the builder, `review/` for the reviewer).
  */
 import { readFileSync } from 'node:fs';
 
@@ -28,7 +31,7 @@ import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts'
 import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { ROLE_STAGES, harnessTarget, outcomeAttributes, parseSensitivePaths, promptFor } from './role.ts';
+import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, harnessTarget, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor } from './role.ts';
 import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
@@ -238,11 +241,14 @@ async function main(): Promise<number> {
     }
   }
 
+  // A builder that hit its iteration or time limit has not finished the
+  // plan: fail the task so its work is saved and reported, not tested and
+  // opened as a pull request.
+  const incomplete = run.error ? undefined : incompleteReason(role, run.stopReason);
+  if (incomplete) run.error = incomplete;
   await finish(!run.error);
-  if (run.error) return 1;
-  // max_iterations or a timeout may still have produced a usable commit; the
-  // Collect step decides. Only a transport or service error is fatal here.
-  return 0;
+  if (incomplete) return INCOMPLETE_EXIT_CODE;
+  return run.error ? 1 : 0;
 }
 
 main().then(
