@@ -132,7 +132,7 @@ describe('Sensitive-path rules', () => {
 
   it('accepts each kind of rule and no rules', () => {
     assert.equal(ok({ schemaVersion: 1, rules: [] }), true);
-    for (const match of [{ path: 'infra/iam.yml' }, { prefix: 'infra/' }, { contentPattern: 'iam:PassRole' }]) {
+    for (const match of [{ path: 'infra/iam.yml' }, { prefix: 'infra/' }, { name: '.gitattributes' }, { contentPattern: 'iam:PassRole' }]) {
       assert.equal(ok({ schemaVersion: 1, rules: [{ ...match, reason: 'changes IAM' }] }), true, JSON.stringify(match));
     }
   });
@@ -146,6 +146,7 @@ describe('Sensitive-path rules', () => {
   it('rejects paths outside the repository, multi-line values and more than 20 rules', () => {
     for (const prefix of ['/etc/', '../x', 'a/../../b']) assert.equal(ok({ schemaVersion: 1, rules: [{ prefix, reason: 'r' }] }), false, prefix);
     assert.equal(ok({ schemaVersion: 1, rules: [{ contentPattern: 'a\nb', reason: 'r' }] }), false);
+    for (const name of ['a/b', '..', '.']) assert.equal(ok({ schemaVersion: 1, rules: [{ name, reason: 'r' }] }), false, name);
     assert.equal(ok({ schemaVersion: 1, rules: [{ path: 'a', reason: 'r\nr' }] }), false);
     assert.equal(ok({ schemaVersion: 1, rules: Array.from({ length: 21 }, () => ({ path: 'a', reason: 'r' })) }), false);
   });

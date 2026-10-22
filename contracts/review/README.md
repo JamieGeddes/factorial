@@ -26,11 +26,12 @@ A target repository can list changes that need particular care in `.factorial/se
 |---|---|
 | `path` | A repository-relative file path, matched exactly. |
 | `prefix` | A path prefix, such as a directory ending in `/`. |
-| `contentPattern` | A POSIX extended regular expression, matched against each changed file's added and removed lines (`git diff -G`). |
+| `name` | A file name, matched in any directory, such as `.gitattributes`. |
+| `contentPattern` | A POSIX extended regular expression, matched against each changed file's added and removed lines (`git diff -G`, as text, so `.gitattributes` cannot exempt a file). |
 
 The `reason` completes "This change ...", for example `"changes the IAM roles the service deploys with"`. At most 20 rules.
 
-The orchestrator applies built-in rules first (`.github/workflows/`, `.github/actions/`, `CODEOWNERS` in its three locations, and `.factorial/`), then the repository's, and the first match gives a file's reason. It reads the file from the base branch, never the branch under review. An invalid or oversized file (over 64 KiB) is ignored and recorded in `review/prepared.json` as `rulesProblems`; the built-in rules still apply. Every matched file gets a high-severity finding from the orchestrator in the review, whatever the reviewer concludes.
+The orchestrator applies built-in rules first (`.github/workflows/`, `.github/actions/`, `CODEOWNERS` in its three locations, `.gitattributes` in any directory, and `.factorial/`), then the repository's, and the first match gives a file's reason. It reads the file from the base branch, never the branch under review. An invalid or oversized file (over 64 KiB) is ignored and recorded in `review/prepared.json` as `rulesProblems`; the built-in rules still apply. Every matched file gets a high-severity finding from the orchestrator in the review, whatever the reviewer concludes.
 
 Factorial's own rules are in its `.factorial/sensitive-paths.json`.
 

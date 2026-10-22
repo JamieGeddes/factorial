@@ -44,7 +44,7 @@ describe('seedReviewScript', () => {
     assert.match(script, /> \/workspace\/plan\.json/);
     assert.match(script, /> \/workspace\/plan\.md/);
     assert.match(script, /> \/workspace\/summary\.md/);
-    assert.match(script, /git diff --no-color --no-ext-diff 'origin\/main\.\.\.HEAD' > \/workspace\/diff\.patch/);
+    assert.match(script, /git diff --no-color --no-ext-diff --no-textconv --text 'origin\/main\.\.\.HEAD' > \/workspace\/diff\.patch/);
     assert.match(script, /--name-only --no-renames/);
     assert.match(script, /GIT_CONFIG_GLOBAL=\/dev\/null/);
   });
@@ -110,7 +110,7 @@ describe('content patterns', () => {
   it('quotes each pattern and diffs against the base branch without renames', () => {
     const hostile = "'; touch /x; '";
     const script = contentMatchScript({ baseBranch: 'main', patterns: ['iam:PassRole', hostile] });
-    assert.match(script, /git diff -z --name-only --no-renames --no-ext-diff -G 'iam:PassRole' 'origin\/main\.\.\.HEAD'/);
+    assert.match(script, /git diff -z --name-only --no-renames --no-ext-diff --no-textconv --text -G 'iam:PassRole' 'origin\/main\.\.\.HEAD'/);
     assert.ok(script.includes(`-G ${shellQuote(hostile)} `));
     assert.equal(script.match(/===FACTORIAL-REVIEW===/g)?.length, 2);
   });
@@ -135,7 +135,7 @@ describe('sensitiveChanges', () => {
 
   it('flags what the built-in and repository rules match, and nothing else', () => {
     const changes = sensitiveChanges(
-      ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify/action.yml', '.github/CODEOWNERS', '.factorial/sensitive-paths.json', 'templates/00-foundation.yml', 'infra/db.yml', 'templates/20-agent.yml', 'docs/a.md'],
+      ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify/action.yml', '.github/CODEOWNERS', 'src/.gitattributes', '.factorial/sensitive-paths.json', 'templates/00-foundation.yml', 'infra/db.yml', 'templates/20-agent.yml', 'docs/a.md'],
       rules,
       [['templates/20-agent.yml']],
     );
@@ -143,6 +143,7 @@ describe('sensitiveChanges', () => {
       '.github/workflows/ci.yml',
       '.github/actions/classify/action.yml',
       '.github/CODEOWNERS',
+      'src/.gitattributes',
       '.factorial/sensitive-paths.json',
       'templates/00-foundation.yml',
       'infra/db.yml',
@@ -150,12 +151,14 @@ describe('sensitiveChanges', () => {
     ]);
     assert.match(changes[0]!.reason, /GitHub Actions/);
     assert.match(changes[2]!.reason, /approve/);
-    assert.match(changes[3]!.reason, /flagged for care/);
-    assert.match(changes[6]!.reason, /permissions boundary/);
+    assert.match(changes[3]!.reason, /hide changes/);
+    assert.match(changes[4]!.reason, /flagged for care/);
+    assert.match(changes[7]!.reason, /permissions boundary/);
   });
 
   it('flags only Actions, ownership and Factorial configuration by default, whatever the repository', () => {
-    assert.deepEqual(sensitiveChanges(['templates/00-foundation.yml', 'src/a.ts'], BUILT_IN_RULES), []);
+    assert.deepEqual(sensitiveChanges(['templates/00-foundation.yml', 'src/a.ts', 'src/my.gitattributes'], BUILT_IN_RULES), []);
+    assert.deepEqual(sensitiveChanges(['.gitattributes'], BUILT_IN_RULES).map((c) => c.path), ['.gitattributes']);
   });
 
   it("gives the first matching rule's reason", () => {

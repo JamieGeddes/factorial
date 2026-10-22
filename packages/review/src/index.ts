@@ -54,11 +54,13 @@ export interface Review {
 
 /**
  * One of a target repository's rules for changes that need particular care.
- * Exactly one of path, prefix or contentPattern is set.
+ * Exactly one of path, prefix, name or contentPattern is set.
  */
 export interface SensitivePathRule {
   path?: string;
   prefix?: string;
+  /** A file name, matched in any directory. */
+  name?: string;
   /** POSIX extended regular expression, matched against added and removed lines (git diff -G). */
   contentPattern?: string;
   /** Completes "This change ...". */

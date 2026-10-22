@@ -57,7 +57,7 @@ export function seedReviewScript(params: { baseBranch: string; planJson: string;
     `printf '%s' ${encode(params.planMarkdown)} | base64 -d > /workspace/plan.md`,
     `printf '%s' ${encode(params.summary)} | base64 -d > /workspace/summary.md`,
     'cd /workspace/repo',
-    `git diff --no-color --no-ext-diff ${range} > /workspace/diff.patch`,
+    `git diff --no-color --no-ext-diff --no-textconv --text ${range} > /workspace/diff.patch`,
     `git diff -z --name-only --no-renames --no-ext-diff ${range} | base64 -w0`,
     `printf '%s' ${shellQuote(SECTION)}`,
     `if git cat-file -e ${rules} 2>/dev/null; then printf 'ok:'; git show ${rules} | head -c ${MAX_RULES_FILE_BYTES + 1} | base64 -w0; else printf 'missing:'; fi`,
@@ -90,7 +90,8 @@ export function parseReviewSeed(stdout: string): ReviewSeed {
 /**
  * Rules that hold in any repository on GitHub: Actions run with the
  * repository's secrets and can deploy, CODEOWNERS decides who must approve,
- * and .factorial/ holds these rules themselves.
+ * .gitattributes changes how git and GitHub show a diff, and .factorial/
+ * holds these rules themselves.
  */
 export const BUILT_IN_RULES: readonly SensitivePathRule[] = [
   { prefix: '.github/workflows/', reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' },
@@ -98,6 +99,7 @@ export const BUILT_IN_RULES: readonly SensitivePathRule[] = [
   { path: 'CODEOWNERS', reason: 'changes who must approve changes' },
   { path: '.github/CODEOWNERS', reason: 'changes who must approve changes' },
   { path: 'docs/CODEOWNERS', reason: 'changes who must approve changes' },
+  { name: '.gitattributes', reason: 'changes how git and GitHub treat files, which can hide changes from a diff' },
   { prefix: '.factorial/', reason: 'changes how Factorial treats this repository, including which changes are flagged for care' },
 ];
 
@@ -128,7 +130,9 @@ export const contentPatterns = (rules: readonly SensitivePathRule[]): string[] =
 /**
  * For each content pattern, print the changed files whose added or removed
  * lines match it, in the same encoding as the seed, one section per pattern.
- * Run in the same fresh session as the seed, before the reviewer.
+ * Run in the same fresh session as the seed, before the reviewer. --text
+ * and --no-textconv stop the branch's .gitattributes marking a file binary
+ * or converting it, which would hide its lines from the match.
  */
 export function contentMatchScript(params: { baseBranch: string; patterns: readonly string[] }): string {
   const range = shellQuote(`origin/${assertGitBranch(params.baseBranch, 'base branch')}...HEAD`);
@@ -137,7 +141,7 @@ export function contentMatchScript(params: { baseBranch: string; patterns: reado
     HARDENED_GIT_ENV,
     'cd /workspace/repo',
     ...params.patterns.flatMap((pattern) => [
-      `git diff -z --name-only --no-renames --no-ext-diff -G ${shellQuote(pattern)} ${range} | base64 -w0`,
+      `git diff -z --name-only --no-renames --no-ext-diff --no-textconv --text -G ${shellQuote(pattern)} ${range} | base64 -w0`,
       `printf '%s' ${shellQuote(SECTION)}`,
     ]),
   ].join('\n');
@@ -166,6 +170,7 @@ export function sensitiveChanges(changedPaths: readonly string[], rules: readonl
   const matchers = rules.map((rule): ((path: string) => boolean) => {
     if (rule.path !== undefined) return (path) => path === rule.path;
     if (rule.prefix !== undefined) return (path) => path.startsWith(rule.prefix!);
+    if (rule.name !== undefined) return (path) => path === rule.name || path.endsWith(`/${rule.name}`);
     const matched = new Set(contentMatches[next++] ?? []);
     return (path) => matched.has(path);
   });

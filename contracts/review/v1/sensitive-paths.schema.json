@@ -30,6 +30,13 @@
             "description": "A repository-relative path prefix, such as a directory ending in /.",
             "$ref": "#/$defs/repositoryPath"
           },
+          "name": {
+            "description": "A file name, matched in any directory, such as .gitattributes.",
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 255,
+            "pattern": "^(?!\\.\\.?$)[^/\\n\\r\\u0000]+$"
+          },
           "contentPattern": {
             "description": "A POSIX extended regular expression, matched against the added and removed lines of each changed file (git diff -G).",
             "type": "string",
