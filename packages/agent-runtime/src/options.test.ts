@@ -35,6 +35,7 @@ describe('queryOptions', () => {
     assert.deepEqual(Object.keys(options.agents ?? {}), ['explore']);
     assert.deepEqual(options.agents?.explore?.tools, ['Read', 'Grep', 'Glob']);
     assert.deepEqual(options.mcpServers, {});
+    assert.equal(options.pathToClaudeCodeExecutable, '/opt/factorial/agent-runtime/claude-as-agent');
   });
 
   it('offers web search only when the gateway is configured', () => {

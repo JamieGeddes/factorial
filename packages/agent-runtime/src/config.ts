@@ -19,6 +19,12 @@ export interface Config {
   webSearchGatewayUrl: string | undefined;
   port: number;
   workspace: string;
+  /** The agent user's home directory. */
+  agentHome: string;
+  /** Where the host keeps the run's record: root-owned, out of the agent user's reach. */
+  stateDirectory: string;
+  /** Starts Claude Code as the agent user (agent-runtime/claude-as-agent). */
+  claudeExecutable: string;
 }
 
 const ROLES: readonly Role[] = ['builder'];
@@ -50,5 +56,8 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     webSearchGatewayUrl: env.FACTORIAL_WEB_SEARCH_GATEWAY_URL || undefined,
     port: 8080,
     workspace: '/workspace',
+    agentHome: '/home/agent',
+    stateDirectory: '/var/lib/factorial',
+    claudeExecutable: '/opt/factorial/agent-runtime/claude-as-agent',
   };
 }

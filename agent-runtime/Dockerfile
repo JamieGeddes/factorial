@@ -7,9 +7,12 @@
 # credentials and no credential helpers: the model is reached through Bedrock
 # with the execution role, and the orchestrator does all GitHub access.
 #
-# The host and the SDK are root-owned and read-only to the agent user, which
-# the SDK's subprocess (and so the model's shell) runs as (docs/security.md
-# section 9). Commands sent through InvokeAgentRuntimeCommand still run as root.
+# The host process runs as root and starts the SDK's Claude Code subprocess as
+# the agent user through claude-as-agent, so the model's loop, shell and tools
+# cannot signal or trace the host, change its hooks or limits, or edit the
+# run's record in /var/lib/factorial. The host and the SDK are root-owned and
+# read-only to the agent user (docs/security.md section 9). Commands sent
+# through InvokeAgentRuntimeCommand also run as root.
 #
 # Base image pinned by digest (node:22-bookworm-slim, linux/arm64).
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim@sha256:b20fe038d9592822dd534600a1ddf467e985178aa3fed60ec441a056c2cc45bd
@@ -63,11 +66,12 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --omit=peer \
  && rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl \
  && npm cache clean --force
-COPY dist/host.mjs dist/quiet.mjs ./
+COPY dist/host.mjs dist/quiet.mjs claude-as-agent ./
 RUN printf '#!/bin/sh\nexec node /opt/factorial/agent-runtime/quiet.mjs "$@"\n' > /usr/local/bin/quiet \
  && chmod 755 /usr/local/bin/quiet \
  && chown -R root:root /opt/factorial \
- && chmod -R go-w /opt/factorial
+ && chmod -R go-w /opt/factorial \
+ && mkdir -m 0700 /var/lib/factorial
 
 ENV HOME=/home/agent \
     CLAUDE_CONFIG_DIR=/workspace/.claude \
@@ -75,5 +79,5 @@ ENV HOME=/home/agent \
 
 WORKDIR /workspace
 EXPOSE 8080
-USER agent
+# No USER: the host is root by design (see the top of this file).
 ENTRYPOINT ["node", "/opt/factorial/agent-runtime/host.mjs"]

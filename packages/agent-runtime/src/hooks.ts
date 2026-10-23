@@ -10,8 +10,8 @@ import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthro
 
 export type Decision = { allow: true } | { allow: false; reason: string };
 
-/** Host-owned state inside the workspace: the run's record and the SDK's own files. */
-const HOST_DIRECTORIES = ['.factorial', '.claude'];
+/** The SDK's own files inside the workspace (CLAUDE_CONFIG_DIR). */
+const HOST_DIRECTORIES = ['.claude'];
 
 /** File tools and the input field that names their target. */
 const FILE_TOOLS: Record<string, string> = {

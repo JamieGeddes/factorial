@@ -9,7 +9,6 @@ import type { Config } from './config.ts';
 /** Passed through from the host when present. */
 export const PASSED_THROUGH: readonly string[] = [
   'PATH',
-  'HOME',
   'LANG',
   'TZ',
   'CLAUDE_CONFIG_DIR',
@@ -36,6 +35,8 @@ export function agentEnvironment(config: Config, host: NodeJS.ProcessEnv): Recor
   }
   return {
     ...env,
+    // The host runs as root; the subprocess runs as the agent user.
+    HOME: config.agentHome,
     AWS_REGION: config.region,
     CLAUDE_CODE_USE_BEDROCK: '1',
     ANTHROPIC_MODEL: config.model,

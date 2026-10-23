@@ -13,6 +13,9 @@ import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
 
 const config = readConfig(process.env);
+// The host must be root so the agent user, which the SDK subprocess drops to,
+// can neither signal nor trace it, nor change the run's record.
+if (process.getuid?.() !== 0) throw new Error('the host process must run as root; see agent-runtime/Dockerfile');
 let log = createLogger('agent-runtime');
 const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
@@ -31,7 +34,7 @@ function startQuery(request: RunRequest): AsyncIterable<unknown> {
   return query({ prompt: request.prompt, options });
 }
 
-const run = new Run(`${config.workspace}/.factorial`, startQuery, (state) => {
+const run = new Run(config.stateDirectory, startQuery, (state) => {
   setBusy(state === 'running');
   if (state === 'running') return;
   const { messages, outcome, error } = run.status();

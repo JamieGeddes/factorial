@@ -39,6 +39,7 @@ export function queryOptions(config: Config, parts: OptionParts): Options {
     maxTurns: config.maxTurns,
     maxBudgetUsd: config.maxBudgetUsd,
     env: agentEnvironment(config, parts.hostEnv),
+    pathToClaudeCodeExecutable: config.claudeExecutable,
     persistSession: true,
     abortController: parts.abortController,
     stderr: parts.stderr,

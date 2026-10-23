@@ -98,10 +98,11 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 **Recorded with PR 3 (2026-10-23):**
 
 - `attach` takes `after`, the number of the last message the caller has; every streamed message carries its number as the SSE `id`, so the invoker resumes without gaps or repeats.
-- The `PreToolUse` hook checks the target path of `Edit`, `Write` and `NotebookEdit`, and also denies writes under `/workspace/.factorial` and `/workspace/.claude`. It does not parse paths out of `Bash` commands, which cannot be done reliably; there the non-root user and file ownership are the constraint.
+- The `PreToolUse` hook checks the target path of `Edit`, `Write` and `NotebookEdit`, and also denies writes under `/workspace/.claude`, the SDK's own files. It does not parse paths out of `Bash` commands, which cannot be done reliably; there the non-root user and file ownership are the constraint.
+- **Privilege separation** (replaces "`USER agent` is the last instruction" in 1.1): the host process runs as root and starts Claude Code as `agent` through `agent-runtime/claude-as-agent` (`setpriv` with no-new-privileges and an empty bounding set), so the model cannot signal, trace or reconfigure the host. The transcript and `result.json` move from `/workspace/.factorial` to `/var/lib/factorial`, root-only; PR 5 and PR 6 read them there, as root, through the command API. The host refuses to start unless it is root.
 - `quiet` is bundled from `agent-environment/tools` into the image by the host's esbuild build, so the image's build context stays `agent-runtime/`.
 - npm installs both the glibc and the musl Claude Code binary on linux-arm64; the Dockerfile removes the musl one (about 270 MB). The image is about 1 GB.
-- The local check ran the image against Claude Haiku 5.5 on Bedrock with 15-minute federation credentials limited to that model and the web search gateway, rather than a stub provider: web search, a write, the `git push` denial, `status`, `attach` and the second-run 409 all behaved as designed, for $0.0023.
+- The local check ran the image against Claude Haiku 5.5 on Bedrock with 15-minute federation credentials limited to that model and the web search gateway, rather than a stub provider: web search, a write, the `git push` denial, `status`, `attach` and the second-run 409 all behaved as designed, for $0.0023. After the privilege separation, a second run confirmed the model's shell is `agent`, cannot signal the host and cannot open `/var/lib/factorial`.
 - Phase 0's last check (a Sonnet 5.5 stream under the agent boundary) moves to PR 4's first hand invocation, which makes that call under the real execution role.
 - PR 4 must: run `npm run build -w @factorial/agent-runtime` before the image build; include `agent-environment/tools`, `packages/agent-runtime`, `packages/log`, `packages/artefacts`, `agent-runtime/` and both lockfiles in the image tag; and grant image pull on `repository/factorial/agent-runtime` (the `factorial-agent-runtime` policy names only `agent-environment` today).
 
@@ -210,7 +211,7 @@ Pull requests 3 to 6 can be reviewed independently but deploy in order; each is 
 3. **Prompt caching.** That cache-read tokens are non-zero on `eu.anthropic.claude-sonnet-5-5` in `eu-west-1`, and whether the 200K window with earlier compaction or the 1M window with later compaction is cheaper per item.
 4. **User and ownership.** That `chown` after Prepare's root-run clone is enough, and that git inside `/workspace/repo` as `agent` raises no `safe.directory` complaint.
 5. **Cold start and image size.** The SDK's native binary and `node_modules` add to the image; measure the session start time against the Harness's and note it beside the token numbers.
-6. **Disk.** The SDK's transcript under `CLAUDE_CONFIG_DIR` and Factorial's own under `/workspace/.factorial` both grow with the run; confirm the microVM's ephemeral disk holds a 150-call run with headroom.
+6. **Disk.** The SDK's transcript under `CLAUDE_CONFIG_DIR` and Factorial's own under `/var/lib/factorial` both grow with the run; confirm the microVM's ephemeral disk holds a 150-call run with headroom.
 7. **Usage accounting.** Whether per-call usage on assistant messages, summed, matches the result's `modelUsage`; the ledger keeps whichever is the sum over every model call including subagents.
 8. **Rate limits.** What the account's Bedrock token-per-minute quotas are for the EU profiles and whether a four-wide subagent fan-out hits them.
 

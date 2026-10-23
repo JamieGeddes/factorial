@@ -17,13 +17,14 @@ describe('agentEnvironment', () => {
   it('passes through only allow-listed variables', () => {
     const env = agentEnvironment(config, {
       PATH: '/usr/bin',
-      HOME: '/home/agent',
+      HOME: '/root',
       AWS_CONTAINER_CREDENTIALS_FULL_URI: 'http://169.254.170.23/v1/credentials',
       FACTORIAL_WEB_SEARCH_GATEWAY_URL: 'https://gateway.example/mcp',
       GITHUB_TOKEN: 'ghs_secret',
       NODE_OPTIONS: '--require /tmp/x.js',
     });
     assert.equal(env.PATH, '/usr/bin');
+    assert.equal(env.HOME, '/home/agent');
     assert.equal(env.AWS_CONTAINER_CREDENTIALS_FULL_URI, 'http://169.254.170.23/v1/credentials');
     assert.equal(env.GITHUB_TOKEN, undefined);
     assert.equal(env.NODE_OPTIONS, undefined);

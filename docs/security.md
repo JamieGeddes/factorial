@@ -229,7 +229,8 @@ On the Harness, the tool allow-list, the model and the loop's limits are enforce
 ### 9.2 Mitigations
 
 - **Non-root agent user.** The SDK subprocess, and therefore the model's shell and file tools, runs as a non-root user (`bypassPermissions` refuses root in any case). This supersedes the root decision in section 8 for Runtime images; section 8 continues to apply to the Harness while it remains.
-- **Root-owned host.** The host process, the SDK and the agent definitions are installed root-owned and read-only to the agent user, so the model cannot edit what constrains it.
+- **Host process separated from the agent.** The host process runs as root and starts the SDK's subprocess as the agent user through a `setpriv` wrapper, with no-new-privileges and an empty capability bounding set. The model therefore cannot signal or trace the process that holds the hooks and limits, read its environment, or edit the run's record, which the host keeps in `/var/lib/factorial` (root-only).
+- **Root-owned host files.** The host process, the SDK and the agent definitions are installed root-owned and read-only to the agent user, so the model cannot edit what constrains it.
 - **Nothing read from disk.** Agents, hooks and permission rules are passed in code with `settingSources: []`, so nothing under `.claude/` in the workspace or home directory is read.
 - **Model fixed twice.** The model is set on the immutable Runtime version's environment and passed by the host code, never taken from the request; the execution role is allowed only that model's Bedrock inference profile.
 - **Caps in the host.** Subagent depth, concurrency, per-agent turns, `maxTurns` and `maxBudgetUsd` are set by the host process.

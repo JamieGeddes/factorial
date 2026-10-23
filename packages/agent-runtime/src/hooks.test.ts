@@ -17,7 +17,6 @@ describe('decideToolUse', () => {
     assert.equal(allowed('Edit', { file_path: '/workspace/../opt/factorial/agent-runtime/host.mjs' }), false);
     assert.equal(allowed('Write', { file_path: '/workspace-other/x' }), false);
     assert.equal(allowed('NotebookEdit', { notebook_path: '/tmp/n.ipynb' }), false);
-    assert.equal(allowed('Write', { file_path: '/workspace/.factorial/result.json' }), false);
     assert.equal(allowed('Edit', { file_path: '/workspace/.claude/settings.json' }), false);
     assert.equal(allowed('Write', {}), false);
   });
