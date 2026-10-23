@@ -8,3 +8,6 @@ coverage/
 
 # macOS
 .DS_Store
+
+# Local settings for human-run scripts (may name account-specific resources)
+.env

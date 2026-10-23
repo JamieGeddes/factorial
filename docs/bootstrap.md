@@ -21,6 +21,22 @@ The foundation stack (`templates/00-foundation.yml`) creates:
 - AWS CLI authenticated as an administrator of the target account, in `eu-west-1`.
 - `cfn-lint` installed (`uv tool install cfn-lint` or `pipx install cfn-lint`).
 - `gh` authenticated with admin access to the repository.
+- Node 22 and `npm ci` run in the repository, for the deploy script.
+- A bootstrap bucket for the foundation template, created by hand (below).
+
+### The bootstrap bucket
+
+The foundation template is over CloudFormation's 51,200-byte limit for an inline template, so the deploy script uploads it to S3 and deploys it from there. The bucket sits outside every stack because it must exist before the first foundation deploy. Its name contains the account ID, so it is kept in a local `.env`, which git ignores, and never committed.
+
+1. Open the AWS console, set the region selector (top right) to **Europe (Ireland) eu-west-1**, and open **S3**.
+2. In the left navigation, select **General purpose buckets**, then **Create bucket**.
+3. **Bucket type:** General purpose. **Bucket namespace:** Account regional namespace. **Bucket name:** a `factorial-bootstrap` prefix; the console shows the full name with the account and region suffix.
+4. **Object Ownership:** leave **ACLs disabled (recommended)**.
+5. **Block Public Access settings for this bucket:** leave **Block all public access** ticked.
+6. **Bucket Versioning:** select **Enable**, so every deployed template is kept.
+7. **Default encryption:** leave **Server-side encryption with Amazon S3 managed keys (SSE-S3)**.
+8. Select **Create bucket**, then copy the full bucket name.
+9. In the repository, `cp .env.example .env` and set `FACTORIAL_BOOTSTRAP_BUCKET` to that name.
 
 ## Steps
 
@@ -33,32 +49,17 @@ The foundation stack (`templates/00-foundation.yml`) creates:
    5. Leave **Required reviewers** off unless you want to approve every deploy by hand; merges to `main` are already reviewed.
    6. Select **Save protection rules**.
 
-1. Lint the template.
+1. Lint and deploy the stack. GitHub issues OIDC tokens with an immutable subject that embeds the owner and repository IDs, so the deploy role's trust policy needs both the names and the IDs; the script looks them up with `gh`, checks the bootstrap bucket is in `eu-west-1`, runs `cfn-lint` on the template, and deploys it through the bucket.
 
    ```sh
-   cfn-lint
+   npm run deploy:foundation
    ```
 
-2. Deploy the stack. GitHub issues OIDC tokens with an immutable subject that embeds the owner and repository IDs, so the deploy role's trust policy needs both the names and the IDs.
-
-   ```sh
-   OWNER=<owner> REPO=<repository>
-   aws cloudformation deploy \
-     --stack-name factorial-foundation \
-     --template-file templates/00-foundation.yml \
-     --capabilities CAPABILITY_NAMED_IAM \
-     --parameter-overrides \
-       GitHubOwner="$OWNER" \
-       GitHubRepository="$REPO" \
-       GitHubOwnerId="$(gh api repos/$OWNER/$REPO --jq .owner.id)" \
-       GitHubRepositoryId="$(gh api repos/$OWNER/$REPO --jq .id)" \
-     --tags Project=Factorial \
-     --no-fail-on-empty-changeset
-   ```
+   It deploys the repository `gh repo view` reports; set `GITHUB_OWNER` and `GITHUB_REPOSITORY` to override.
 
    If a deploy run later fails with `Not authorized to perform sts:AssumeRoleWithWebIdentity`, compare the subject GitHub is sending (`gh api repos/$OWNER/$REPO/actions/oidc/customization/sub`) with the trust policy on the `factorial-deploy` role.
 
-3. Give GitHub Actions the deploy role ARN. It contains the account ID, so it is a repository secret, never committed.
+2. Give GitHub Actions the deploy role ARN. It contains the account ID, so it is a repository secret, never committed.
 
    ```sh
    gh secret set AWS_DEPLOY_ROLE_ARN --body "$(aws cloudformation describe-stacks \
@@ -67,7 +68,7 @@ The foundation stack (`templates/00-foundation.yml`) creates:
      --output text)"
    ```
 
-4. After the first successful deploy of the orchestration stack, give the test workflow its callback role (also an account-specific ARN, so a secret):
+3. After the first successful deploy of the orchestration stack, give the test workflow its callback role (also an account-specific ARN, so a secret):
 
    ```sh
    gh secret set AWS_TEST_CALLBACK_ROLE_ARN --body "$(aws cloudformation describe-stacks \
@@ -76,7 +77,7 @@ The foundation stack (`templates/00-foundation.yml`) creates:
      --output text)"
    ```
 
-5. Enable Anthropic models in Amazon Bedrock. Agents on the Runtime call Claude through Bedrock with their execution role, so the account needs Anthropic's one-off use-case form on file. Access is granted as soon as it is submitted.
+4. Enable Anthropic models in Amazon Bedrock. Agents on the Runtime call Claude through Bedrock with their execution role, so the account needs Anthropic's one-off use-case form on file. Access is granted as soon as it is submitted.
 
    1. Open the AWS console, switch the region selector (top right) to **Europe (Ireland) eu-west-1**, and open **Amazon Bedrock**.
    2. In the left navigation, select **Model catalog**, filter **Providers** to **Anthropic**, and select any Claude model.
@@ -117,7 +118,7 @@ To rotate it later, use `put-secret-value` with the same shape. The harness read
 
 ## Changing the foundation
 
-Changes to this stack change Factorial's safety limits. They are made by a human, reviewed as such, and deployed by re-running step 2. The deploy role cannot do it.
+Changes to this stack change Factorial's safety limits. They are made by a human, reviewed as such, and deployed by re-running step 1. The deploy role cannot do it.
 
 What needs a foundation change:
 

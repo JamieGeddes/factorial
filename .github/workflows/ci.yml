@@ -52,11 +52,10 @@ jobs:
           npm run build
           npm test
           npm run check:yml
-          npm run check:template-size
       # Fast path: report the required check as passed without running the
       # repository's checks, because nothing that affects them changed.
       - if: needs.classify.outputs.functional == 'false'
-        run: echo "Only non-functional paths changed; skipping typecheck, build, tests, the .yml check and the template size check."
+        run: echo "Only non-functional paths changed; skipping typecheck, build, tests and the .yml check."
 
   templates:
     name: Lint CloudFormation

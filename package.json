@@ -17,8 +17,8 @@
     "test": "node --disable-warning=ExperimentalWarning --test 'scripts/*.test.ts' && npm test --workspaces --if-present",
     "check:yml": "node --disable-warning=ExperimentalWarning scripts/check-yml-extension.ts",
     "lint:cfn": "cfn-lint",
-    "ci": "npm run typecheck && npm run build && npm test && npm run check:yml && npm run check:template-size && npm run check:workflows && npm run lint:cfn",
-    "check:template-size": "node --disable-warning=ExperimentalWarning scripts/check-template-size.ts",
+    "ci": "npm run typecheck && npm run build && npm test && npm run check:yml && npm run check:workflows && npm run lint:cfn",
+    "deploy:foundation": "node --disable-warning=ExperimentalWarning scripts/deploy-foundation.ts",
     "check:workflows": "node --disable-warning=ExperimentalWarning scripts/check-workflows.ts"
   },
   "devDependencies": {
