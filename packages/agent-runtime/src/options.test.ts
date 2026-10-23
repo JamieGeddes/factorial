@@ -12,7 +12,7 @@ const config = readConfig({
   FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_MAX_TURNS: '150',
-  FACTORIAL_MAX_BUDGET_USD: '25',
+  FACTORIAL_MAX_BUDGET_USD: '10',
   FACTORIAL_MAX_DURATION_SECONDS: '6600',
   AWS_REGION: 'eu-west-1',
 });
@@ -32,7 +32,7 @@ describe('queryOptions', () => {
     assert.deepEqual(options.settingSources, []);
     assert.equal(options.permissionMode, 'bypassPermissions');
     assert.equal(options.maxTurns, 150);
-    assert.equal(options.maxBudgetUsd, 25);
+    assert.equal(options.maxBudgetUsd, 10);
     assert.deepEqual(options.tools, BUILDER_TOOLS);
     assert.deepEqual(Object.keys(options.agents ?? {}), ['explore']);
     assert.deepEqual(options.agents?.explore?.tools, ['Read', 'Grep', 'Glob']);
