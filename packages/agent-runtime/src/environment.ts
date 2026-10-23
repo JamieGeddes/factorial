@@ -40,7 +40,7 @@ export function agentEnvironment(config: Config, host: NodeJS.ProcessEnv): Recor
     AWS_REGION: config.region,
     CLAUDE_CODE_USE_BEDROCK: '1',
     ANTHROPIC_MODEL: config.model,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: config.smallModel,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: config.backgroundModel,
     CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '1',

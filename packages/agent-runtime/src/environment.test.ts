@@ -7,7 +7,8 @@ import { agentEnvironment } from './environment.ts';
 const config = readConfig({
   FACTORIAL_ROLE: 'builder',
   FACTORIAL_MODEL: 'eu.anthropic.claude-sonnet-5-5',
-  FACTORIAL_SMALL_MODEL: 'eu.anthropic.claude-haiku-5-5',
+  FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
+  FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_MAX_TURNS: '150',
   FACTORIAL_MAX_BUDGET_USD: '25',
   AWS_REGION: 'eu-west-1',

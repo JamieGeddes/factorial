@@ -31,7 +31,7 @@ export function queryOptions(config: Config, parts: OptionParts): Options {
     allowedTools: parts.webSearch ? [TOOL_NAME] : [],
     mcpServers: parts.webSearch ? { [SERVER_NAME]: parts.webSearch } : {},
     strictMcpConfig: true,
-    agents: builderAgents,
+    agents: builderAgents(config),
     hooks: { PreToolUse: parts.preToolUse },
     settingSources: [],
     permissionMode: 'bypassPermissions',

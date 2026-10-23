@@ -9,7 +9,8 @@ import { TOOL_NAME, webSearchServer } from './web-search.ts';
 const config = readConfig({
   FACTORIAL_ROLE: 'builder',
   FACTORIAL_MODEL: 'eu.anthropic.claude-sonnet-5-5',
-  FACTORIAL_SMALL_MODEL: 'eu.anthropic.claude-haiku-5-5',
+  FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
+  FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_MAX_TURNS: '150',
   FACTORIAL_MAX_BUDGET_USD: '25',
   AWS_REGION: 'eu-west-1',
@@ -34,6 +35,7 @@ describe('queryOptions', () => {
     assert.deepEqual(options.tools, BUILDER_TOOLS);
     assert.deepEqual(Object.keys(options.agents ?? {}), ['explore']);
     assert.deepEqual(options.agents?.explore?.tools, ['Read', 'Grep', 'Glob']);
+    assert.equal(options.agents?.explore?.model, 'eu.anthropic.claude-haiku-5-5');
     assert.deepEqual(options.mcpServers, {});
     assert.equal(options.pathToClaudeCodeExecutable, '/opt/factorial/agent-runtime/claude-as-agent');
   });

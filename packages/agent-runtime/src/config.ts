@@ -8,10 +8,15 @@ export type Role = 'builder';
 
 export interface Config {
   role: Role;
-  /** Bedrock inference profile id for the main loop, e.g. eu.anthropic.claude-sonnet-5-5. */
+  // Bedrock inference profile ids, named by what each model does rather than
+  // by size, so changing one (Sonnet to Opus for the main loop, say) is one
+  // value on the Runtime version.
+  /** The role's main loop, e.g. eu.anthropic.claude-sonnet-5-5. */
   model: string;
-  /** Inference profile id for the SDK's small background calls. */
-  smallModel: string;
+  /** The explore subagent, e.g. eu.anthropic.claude-haiku-5-5. */
+  exploreModel: string;
+  /** The SDK's own background calls (ANTHROPIC_DEFAULT_HAIKU_MODEL). */
+  backgroundModel: string;
   region: string;
   maxTurns: number;
   maxBudgetUsd: number;
@@ -49,7 +54,8 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   return {
     role: role as Role,
     model: required(env, 'FACTORIAL_MODEL'),
-    smallModel: required(env, 'FACTORIAL_SMALL_MODEL'),
+    exploreModel: required(env, 'FACTORIAL_EXPLORE_MODEL'),
+    backgroundModel: required(env, 'FACTORIAL_BACKGROUND_MODEL'),
     region: required(env, 'AWS_REGION'),
     maxTurns,
     maxBudgetUsd: positiveNumber(env, 'FACTORIAL_MAX_BUDGET_USD'),
