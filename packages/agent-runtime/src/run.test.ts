@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 
-import { HOST_ERROR, Run, type Entry } from './run.ts';
+import { HOST_ERROR, MAX_DURATION, Run, type Entry } from './run.ts';
 
 const result = { type: 'result', subtype: 'success', num_turns: 2, total_cost_usd: 0.01 };
 
@@ -114,5 +114,51 @@ describe('Run', () => {
     const last: unknown[] = [];
     silent.subscribe(1, (entry) => last.push(entry.message), () => {});
     assert.deepEqual(last, [{ type: HOST_ERROR, error: 'the SDK ended without a result message' }]);
+  });
+});
+
+describe('Run time limit', () => {
+  it('stops the run at its limit and reports it as incomplete', async () => {
+    let aborted = false;
+    let release: () => void = () => {};
+    const stopped = new Promise<void>((resolve) => (release = resolve));
+    const run = new Run(
+      directory(),
+      async function* () {
+        yield { type: 'system', subtype: 'init' };
+        await stopped;
+        throw new Error('aborted');
+      },
+      () => {},
+      {
+        maxDurationMs: 5,
+        abort: () => {
+          aborted = true;
+          release();
+        },
+      },
+    );
+    run.start({ prompt: 'go', round: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    assert.equal(aborted, true);
+    const status = run.status();
+    assert.equal(status.state, 'finished');
+    assert.equal(status.outcome, 'incomplete');
+    assert.equal(status.stopReason, 'max_duration');
+    const last: unknown[] = [];
+    run.subscribe(1, (entry) => last.push(entry.message), () => {});
+    assert.deepEqual(last, [{ type: MAX_DURATION }]);
+  });
+
+  it('keeps a success that arrives before the limit', async () => {
+    const run = new Run(directory(), async function* () {
+      yield result;
+    }, () => {}, { maxDurationMs: 60_000, abort: () => assert.fail('aborted') });
+    run.start({ prompt: 'go', round: 1 });
+    await tick();
+    await tick();
+    assert.equal(run.status().outcome, 'complete');
+    assert.equal(run.status().stopReason, undefined);
   });
 });

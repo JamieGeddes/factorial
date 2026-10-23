@@ -20,6 +20,8 @@ export interface Config {
   region: string;
   maxTurns: number;
   maxBudgetUsd: number;
+  /** Wall-clock limit for the run, below the state machine's Build timeout. */
+  maxDurationSeconds: number;
   /** The AgentCore web search gateway's MCP URL; web search is off when unset. */
   webSearchGatewayUrl: string | undefined;
   port: number;
@@ -59,6 +61,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     region: required(env, 'AWS_REGION'),
     maxTurns,
     maxBudgetUsd: positiveNumber(env, 'FACTORIAL_MAX_BUDGET_USD'),
+    maxDurationSeconds: positiveNumber(env, 'FACTORIAL_MAX_DURATION_SECONDS'),
     webSearchGatewayUrl: env.FACTORIAL_WEB_SEARCH_GATEWAY_URL || undefined,
     port: 8080,
     workspace: '/workspace',

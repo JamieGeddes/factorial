@@ -11,6 +11,7 @@ const config = readConfig({
   FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_MAX_TURNS: '150',
   FACTORIAL_MAX_BUDGET_USD: '25',
+  FACTORIAL_MAX_DURATION_SECONDS: '6600',
   AWS_REGION: 'eu-west-1',
 });
 
