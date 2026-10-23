@@ -37,9 +37,7 @@ Parameters:
     AllowedPattern: '^[A-Za-z0-9._-]+$'
 
 Resources:
-  # ---------------------------------------------------------------------------
   # Identity for GitHub Actions. No stored AWS keys anywhere.
-  # ---------------------------------------------------------------------------
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
     Properties:
@@ -55,7 +53,6 @@ Resources:
         - Key: Project
           Value: Factorial
 
-  # ---------------------------------------------------------------------------
   # Permissions boundary. Every IAM role Factorial creates for itself (Lambdas,
   # the state machine, the agent harness) must carry this boundary. It is the
   # mechanical enforcement of "agents never deploy or promote Factorial" and of
@@ -67,7 +64,6 @@ Resources:
   # Organizations, billing, access points, registry settings, ...) is outside
   # the boundary by construction. The Deny statements at the end are defence
   # in depth for the few allowed services that contain a dangerous subset.
-  # ---------------------------------------------------------------------------
   PermissionsBoundary:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -266,7 +262,6 @@ Resources:
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
 
-  # ---------------------------------------------------------------------------
   # Agent permissions boundary. Agent execution roles are shared with the
   # agent's own shell, so once an agent has run its session is treated as
   # hostile. Their ceiling is therefore only what a harness needs to run:
@@ -278,7 +273,6 @@ Resources:
   # factorial-agent or factorial-agent-* must carry this one, and only those
   # roles may be passed to AgentCore. A new agent therefore gets this ceiling
   # just by following the naming convention.
-  # ---------------------------------------------------------------------------
   AgentPermissionsBoundary:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -365,11 +359,9 @@ Resources:
               - xray:GetSamplingTargets
             Resource: '*'
 
-  # ---------------------------------------------------------------------------
   # CloudFormation execution role. CloudFormation assumes this to create the
   # resources in Factorial's stacks, so the deploy role itself never needs
   # permissions on individual services. Scoped to factorial-* resource names.
-  # ---------------------------------------------------------------------------
   CloudFormationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -781,12 +773,10 @@ Resources:
         - Key: Project
           Value: Factorial
 
-  # ---------------------------------------------------------------------------
   # Deployment role. Assumable only by GitHub Actions jobs in the deploy
   # environment of the Factorial repository. It drives CloudFormation (which does the real
   # work through the execution role), publishes artefacts, and is the ONLY
   # principal allowed to move the live aliases.
-  # ---------------------------------------------------------------------------
   DeployRole:
     Type: AWS::IAM::Role
     Properties:
@@ -928,9 +918,7 @@ Resources:
         - Key: Project
           Value: Factorial
 
-  # ---------------------------------------------------------------------------
   # Artefacts: packaged templates and Lambda bundles uploaded by deployments.
-  # ---------------------------------------------------------------------------
   ArtefactBucket:
     Type: AWS::S3::Bucket
     Properties:
@@ -980,9 +968,7 @@ Resources:
               Bool:
                 aws:SecureTransport: 'false'
 
-  # ---------------------------------------------------------------------------
   # Container registry for the agent harness environment image.
-  # ---------------------------------------------------------------------------
   AgentEnvironmentRepository:
     Type: AWS::ECR::Repository
     Properties:
@@ -993,28 +979,12 @@ Resources:
       EncryptionConfiguration:
         EncryptionType: AES256
       LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep the most recent 20 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 20
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep the most recent 20 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}'
       Tags:
         - Key: Project
           Value: Factorial
 
-  # ---------------------------------------------------------------------------
   # Container registry for the agent runtime image (Claude Agent SDK host).
-  # ---------------------------------------------------------------------------
   AgentRuntimeRepository:
     Type: AWS::ECR::Repository
     Properties:
@@ -1025,28 +995,12 @@ Resources:
       EncryptionConfiguration:
         EncryptionType: AES256
       LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep the most recent 20 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 20
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep the most recent 20 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}'
       Tags:
         - Key: Project
           Value: Factorial
 
-  # ---------------------------------------------------------------------------
   # Container registry for the orchestration's harness invoker.
-  # ---------------------------------------------------------------------------
   InvokerRepository:
     Type: AWS::ECR::Repository
     Properties:
@@ -1057,21 +1011,7 @@ Resources:
       EncryptionConfiguration:
         EncryptionType: AES256
       LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep the most recent 20 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 20
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
+        LifecyclePolicyText: '{"rules":[{"rulePriority":1,"description":"Keep the most recent 20 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":20},"action":{"type":"expire"}}]}'
       Tags:
         - Key: Project
           Value: Factorial
