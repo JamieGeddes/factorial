@@ -73,11 +73,15 @@ RUN printf '#!/bin/sh\nexec node /opt/factorial/agent-runtime/quiet.mjs "$@"\n' 
  && chmod -R go-w /opt/factorial \
  && mkdir -m 0700 /var/lib/factorial
 
-ENV HOME=/home/agent \
-    CLAUDE_CONFIG_DIR=/workspace/.claude \
+# The host's own HOME and working directory are root-owned: as root it must
+# never read configuration the agent user can write (an ~/.aws/config with a
+# credential_process would run as root when the host signs a gateway call).
+# The subprocess gets HOME=/home/agent and CLAUDE_CONFIG_DIR=/workspace/.claude
+# from the host (packages/agent-runtime/src/environment.ts).
+ENV HOME=/root \
     NODE_ENV=production
 
-WORKDIR /workspace
+WORKDIR /opt/factorial/agent-runtime
 EXPOSE 8080
 # No USER: the host is root by design (see the top of this file).
 ENTRYPOINT ["node", "/opt/factorial/agent-runtime/host.mjs"]

@@ -11,7 +11,6 @@ export const PASSED_THROUGH: readonly string[] = [
   'PATH',
   'LANG',
   'TZ',
-  'CLAUDE_CONFIG_DIR',
   // Credentials for SigV4 to Bedrock: the Runtime supplies the execution role
   // through the container credential variables; the static ones are for local
   // runs of the image only.
@@ -37,6 +36,7 @@ export function agentEnvironment(config: Config, host: NodeJS.ProcessEnv): Recor
     ...env,
     // The host runs as root; the subprocess runs as the agent user.
     HOME: config.agentHome,
+    CLAUDE_CONFIG_DIR: `${config.workspace}/.claude`,
     AWS_REGION: config.region,
     CLAUDE_CODE_USE_BEDROCK: '1',
     ANTHROPIC_MODEL: config.model,

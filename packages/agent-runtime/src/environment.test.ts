@@ -25,6 +25,7 @@ describe('agentEnvironment', () => {
     });
     assert.equal(env.PATH, '/usr/bin');
     assert.equal(env.HOME, '/home/agent');
+    assert.equal(env.CLAUDE_CONFIG_DIR, '/workspace/.claude');
     assert.equal(env.AWS_CONTAINER_CREDENTIALS_FULL_URI, 'http://169.254.170.23/v1/credentials');
     assert.equal(env.GITHUB_TOKEN, undefined);
     assert.equal(env.NODE_OPTIONS, undefined);

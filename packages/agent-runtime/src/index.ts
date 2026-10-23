@@ -16,6 +16,12 @@ const config = readConfig(process.env);
 // The host must be root so the agent user, which the SDK subprocess drops to,
 // can neither signal nor trace it, nor change the run's record.
 if (process.getuid?.() !== 0) throw new Error('the host process must run as root; see agent-runtime/Dockerfile');
+// As root, the host must read no configuration from a directory the agent user can write.
+for (const [name, value] of [['HOME', process.env.HOME], ['cwd', process.cwd()]]) {
+  if (!value || value.startsWith(config.workspace) || value.startsWith(config.agentHome)) {
+    throw new Error(`the host's ${name} (${value}) must be root-owned, outside ${config.workspace} and ${config.agentHome}`);
+  }
+}
 let log = createLogger('agent-runtime');
 const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
