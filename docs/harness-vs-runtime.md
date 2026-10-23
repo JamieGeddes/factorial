@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-22. **Status:** decided, stay on Harness. **Revisit:** see the last section.
 
+**2026-10-23:** an implementation plan for option 5 (the Claude Agent SDK on a Runtime) is in `docs/agent-sdk-plan.md`. The Harness remains the default until that plan's phase 2; the repository state before the move is tagged `stage-0-harness`.
+
 A decision record, as principle 6 in `docs/architecture-principles.md` asks for: the question, the evidence, the options, the decision and its consequences. It extends the one-paragraph decision in `docs/design-plan.md` §3.2 with the evidence from the first week of runs.
 
 ## The question
@@ -128,7 +130,7 @@ Claude Platform on AWS removes the third-party key the way Bedrock Managed Agent
 **Costs and risks**
 
 - Factorial owns the Runtime container and the layer around the SDK. Smaller than a Strands loop, but code in the security surface and in every pull request Factorial raises against itself.
-- The agent definition (prompt, tools, model) lives in that code and is versioned by the Runtime version rather than a harness version. The `live` alias rule holds unchanged; "model fixed on the version" is enforced by the image and by IAM on the execution role, which needs a deliberate decision and a note in `docs/security.md`.
+- The agent definition (prompt, tools, model) lives in that code and is versioned by the Runtime version rather than a harness version. The `live` alias rule holds unchanged; "model fixed on the version" is enforced by the Runtime version (its environment and the host code), which needs a deliberate decision and a note in `docs/security.md`. Checked 2026-10-23: Claude Platform on AWS has no per-model IAM condition key, so IAM scopes the role to the workspace and no further.
 - With a Z.ai key, `ANTHROPIC_AUTH_TOKEN` sits in the subprocess environment, readable from the shell. The SDK's own guidance is a credential-injecting proxy outside the sandbox. Claude Platform on AWS avoids the problem.
 - The SDK is licensed under Anthropic's Commercial Terms of Service, not an open-source licence. The dependency convention requires stating that before it is added.
 - `bypassPermissions` cannot run as root, and Runtime command sessions run as root. The SDK would run as a non-root user in the container, which `docs/security.md` already lists as a change to make.
@@ -155,7 +157,7 @@ What does change is where in-session enforcement lives. Today the tool allow-lis
 
 - The agent subprocess runs as a non-root user, which the SDK requires for `bypassPermissions` anyway; the host process, the SDK files and the agent definitions are root-owned and read-only to that user.
 - Agents, hooks and permission rules are passed in code with `settingsSources` empty, so nothing on disk under `.claude/` is read.
-- The model is fixed by the image and an IAM condition on the execution role, not by an environment variable the shell can see.
+- The model is fixed by the Runtime version, set in its environment and passed by the host code, never taken from the request. IAM scopes the role to the workspace; there is no per-model condition key on Claude Platform on AWS (checked 2026-10-23).
 - Subagent depth, concurrency and `maxBudgetUsd` caps are set in the host process.
 - No subagent's output is evidence. The builder's summary is already the model's claim, and subagent reports are the same.
 
@@ -198,7 +200,7 @@ flowchart TB
         subgraph reviewerrt["AgentCore Runtime: factorial_reviewer ('live' endpoint)"]
             reviewerproc["Agent SDK container, read-only tools<br/>fresh session on the tested branch,<br/>rules from the base branch,<br/>writes review.json"]
         end
-        builderrole["factorial-agent role<br/>(agent boundary; no GitHub, no PutEvents;<br/>IAM condition pins the model)"]
+        builderrole["factorial-agent role<br/>(agent boundary; no GitHub, no PutEvents;<br/>SigV4 to the workspace only)"]
         reviewerrole["factorial-agent-reviewer role<br/>(same boundary)"]
         removed["Removed: factorial_planner harness,<br/>model API key in Identity, LiteLLM config,<br/>web search gateway (if the SDK's search works here)"]
         builderrt --- builderrole
