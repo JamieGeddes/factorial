@@ -34,7 +34,7 @@ Nine rules follow from the threat model. Each is enforced by infrastructure, not
 3. **Capability is granted by infrastructure, never by prompt.** What a role may do is fixed by IAM, a permissions boundary, the harness's tool allow-list and the harness version. The prompt explains the job; it is not a control.
 4. **Every trust transition is an artefact.** Where work moves from one role to another, or from an agent to the orchestrator, it moves as a file the orchestrator reads, validates and stores. There is no shared mutable state between stages.
 5. **Verification runs on trusted definitions.** Tests run from the workflow on the default branch, on a checkout of the work commit held as data, with no credentials. The pull request head is the commit that passed.
-6. **One role, one purpose, one boundary.** Each agent role is its own harness, runtime, session and IAM role, with the smallest tool set that does its job. A boundary is crossed whenever the next session could have been written to by a model.
+6. **One trust boundary, one session.** Each trust boundary is its own harness or Runtime, session and IAM role, with the smallest tool set that does its job. Subagents share their parent's trust level and never cross a boundary. A boundary is crossed whenever the next session could have been written to by a model.
 7. **Humans gate every irreversible step.** Nothing merges, deploys or promotes without a human approval that the system cannot grant itself.
 8. **The control plane is least-privilege too.** The deploy role, the CloudFormation execution role and the boundaries are scoped to Factorial's own names, so even a compromised deployment cannot reach outside them.
 9. **Nothing is deleted and everything is attributable.** The record of a run is write-once, redacted, and joined by one correlation key from trigger to pull request.
@@ -168,6 +168,7 @@ These are the gaps between this design and what is deployed. Each is a candidate
 - **A change that edits `.github/workflows/` is pushed with `workflows: write`**, and CI then runs the edited workflow on the pull request with the repository's secrets available. The secrets are role ARNs only and both OIDC trusts are bound to `main`, which limits the exposure; keep it that way and review workflow changes with care.
 - **The organisation rulesets are not yet in place.** The repository is under a personal account with a single repository ruleset on `main` that the admin role can bypass, and no ruleset confines the App to `factorial/**` or protects tags. Moving the repository into the organisation and applying the rulesets in 3.6 closes this; until then the App's `contents: write` token could push to any branch other than `main`, and the `factorial/*` restriction is enforced by the orchestrator alone.
 - **Traces are not yet exported**, so the correlation key does not yet reach AgentCore traces.
+- **In-session enforcement moves to Factorial-owned code on the Runtime, by decision.** Once a role runs on the Claude Agent SDK, its tool allow-list, hooks, subagents and limits are enforced by Factorial's host process inside the microVM rather than by the managed harness. This is an accepted risk, not a work item: section 9 records the decision and its mitigations.
 
 ## 8. Root in the session (accepted decision)
 
@@ -216,3 +217,26 @@ One thing must be confirmed by direct invocation before the change ships: that t
 - **Other gaps are worth more.** An egress allow-list limits what injected instructions can reach at all, and withholding write tools from the planner at the harness level replaces a prompt-enforced restriction with an enforced one. Both rank above this change.
 
 **Revisit when** any of the following happens: a target repository's build output or logs become an input to a trusted decision; AWS documents a non-root user as the recommended default for harnesses; or the harness gains a way to pin the managed loop so the change can be validated against a fixed version.
+
+## 9. In-session enforcement in Factorial-owned code (accepted decision)
+
+**Decided 2026-10-23**, as part of the move to the Claude Agent SDK on AgentCore Runtime (`docs/agent-sdk-plan.md`). It takes effect for a role when that role first runs on a Runtime; until then the harness enforces as described in section 3.
+
+### 9.1 What changes
+
+On the Harness, the tool allow-list, the model and the loop's limits are enforced by a managed process in the microVM that Factorial does not own. On the Runtime they are enforced by Factorial's TypeScript host process around the SDK's `query()`: permission rules, hooks, subagent definitions and caps. Section 3.4 names "code running inside the sandbox" as the thing to avoid; this decision accepts it for in-session controls only. No outer boundary changes: the execution role, the permissions boundaries, the hostile-session rule, the bundle and clean room, the trusted test workflow and the tested-head check are untouched, and none of them depends on which loop ran in Build.
+
+### 9.2 Mitigations
+
+- **Non-root agent user.** The SDK subprocess, and therefore the model's shell and file tools, runs as a non-root user (`bypassPermissions` refuses root in any case). This supersedes the root decision in section 8 for Runtime images; section 8 continues to apply to the Harness while it remains.
+- **Root-owned host.** The host process, the SDK and the agent definitions are installed root-owned and read-only to the agent user, so the model cannot edit what constrains it.
+- **Nothing read from disk.** Agents, hooks and permission rules are passed in code with `settingSources: []`, so nothing under `.claude/` in the workspace or home directory is read.
+- **Model fixed twice.** The model is set on the immutable Runtime version's environment and passed by the host code, never taken from the request; the execution role is allowed only that model's Bedrock inference profile.
+- **Caps in the host.** Subagent depth, concurrency, per-agent turns, `maxTurns` and `maxBudgetUsd` are set by the host process.
+- **No subagent output is evidence.** Subagent reports are the model's claim, like the builder's summary. Anything the orchestrator acts on still leaves as a named file and is validated outside the session.
+
+### 9.3 Why this is acceptable
+
+The in-session allow-list was never the access gate: as section 8 says, it constrains what a prompt injection can drive, and the gates are the outer rules above. On Bedrock the execution role signs with SigV4 and holds no key, which is rule 2's production shape and removes the third-party key gap in section 7. Net, one in-session control moves from AWS-owned to Factorial-owned code, and the credential surface shrinks.
+
+**Revisit when** an in-session decision (a hook verdict, a subagent report) becomes an input to a trusted decision without being re-checked outside the session, or AgentCore offers a managed loop that can host the SDK's subagents and compaction.
