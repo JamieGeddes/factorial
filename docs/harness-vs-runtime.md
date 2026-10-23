@@ -2,6 +2,8 @@
 
 **Date:** 2026-10-22. **Status:** decided, stay on Harness. **Revisit:** see the last section.
 
+**2026-10-23:** an implementation plan for option 5 (the Claude Agent SDK on a Runtime) is in `docs/agent-sdk-plan.md`, with Claude reached through Amazon Bedrock rather than Claude Platform on AWS. The Harness remains the default until that plan's phase 2; the repository state before the move is tagged `stage-0-harness`.
+
 A decision record, as principle 6 in `docs/architecture-principles.md` asks for: the question, the evidence, the options, the decision and its consequences. It extends the one-paragraph decision in `docs/design-plan.md` §3.2 with the evidence from the first week of runs.
 
 ## The question
@@ -120,7 +122,7 @@ Evaluated on 2026-10-22 as a fifth option. The Claude Agent SDK is Claude Code a
 | Route | Model | Key in the sandbox? | Status |
 |---|---|---|---|
 | Claude Platform on AWS (`CLAUDE_CODE_USE_ANTHROPIC_AWS`) | Claude, first-party API parity | No: SigV4 from the execution role, IAM-controlled | GA in all AWS commercial regions; AWS Marketplace billing in consumption units; no Bedrock model-access approval |
-| Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK`) | Claude | No | Needs the Bedrock model access declined for the proof of concept |
+| Amazon Bedrock (`CLAUDE_CODE_USE_BEDROCK`) | Claude | No | Chosen on 2026-10-23: the EU inference profiles for Sonnet 5.5 and Haiku 5.5 are active in `eu-west-1`; the use-case form is the only step outstanding. Claude Code's own web search is unavailable here, so the gateway stays |
 | Z.ai's Anthropic-compatible endpoint (`ANTHROPIC_BASE_URL`) | GLM | Yes, unless injected by a proxy outside the sandbox | Documented by Z.ai for GLM 4.7 with Claude Code; GLM 5.3 Flash unverified |
 
 Claude Platform on AWS removes the third-party key the way Bedrock Managed Agents does, and is available in `eu-west-1` now. At first-party list prices Haiku 5.5 costs no more than GLM 5.3 Flash, and Sonnet 5.5 is the tier at which the step-count pattern seen on Flash goes away. The harness is tuned for Claude; a GLM model behind the Anthropic-compatible endpoint would get the loop but not the model it was built around.
@@ -128,7 +130,7 @@ Claude Platform on AWS removes the third-party key the way Bedrock Managed Agent
 **Costs and risks**
 
 - Factorial owns the Runtime container and the layer around the SDK. Smaller than a Strands loop, but code in the security surface and in every pull request Factorial raises against itself.
-- The agent definition (prompt, tools, model) lives in that code and is versioned by the Runtime version rather than a harness version. The `live` alias rule holds unchanged; "model fixed on the version" is enforced by the image and by IAM on the execution role, which needs a deliberate decision and a note in `docs/security.md`.
+- The agent definition (prompt, tools, model) lives in that code and is versioned by the Runtime version rather than a harness version. The `live` alias rule holds unchanged; "model fixed on the version" is enforced by the Runtime version (its environment and the host code), which needs a deliberate decision and a note in `docs/security.md`. Checked 2026-10-23: Claude Platform on AWS has no per-model IAM condition key, so there IAM scopes the role to the workspace and no further; on Bedrock the execution role is scoped to the model's inference profile ARN, which is why Bedrock was chosen.
 - With a Z.ai key, `ANTHROPIC_AUTH_TOKEN` sits in the subprocess environment, readable from the shell. The SDK's own guidance is a credential-injecting proxy outside the sandbox. Claude Platform on AWS avoids the problem.
 - The SDK is licensed under Anthropic's Commercial Terms of Service, not an open-source licence. The dependency convention requires stating that before it is added.
 - `bypassPermissions` cannot run as root, and Runtime command sessions run as root. The SDK would run as a non-root user in the container, which `docs/security.md` already lists as a change to make.
@@ -145,9 +147,9 @@ Claude Platform on AWS removes the third-party key the way Bedrock Managed Agent
 - The reviewer does not consolidate. It must run in a fresh session on the tested branch, with rules from the base branch and no view of the builder's context: a trust rule and an anchoring rule. It is a second Runtime with read-only tools and its own execution role.
 - The template already supports this. The three roles' IAM policies are near-identical (workload identity, model key, web search gateway); the differences are prompt and tool allow-list, which become subagent definitions in one versioned image. IAM principals and `live` endpoints drop from three to two; agent definitions in code rise, all inside one Runtime version.
 
-The state graph would change in two steps: first keep every state and point Plan and Build at the builder Runtime with a mode switch and Review at the reviewer Runtime, which proves compaction and subagents without touching orchestration; then merge Plan and CollectPlan into Build once the in-session plan artefact is validated the same way. A separate Plan state stays only for the later feature where one trigger fans out into child work items through the lineage fields, which needs a plan before any build exists. Three things for the spike to settle: whether the SDK's built-in web search works on Claude Platform on AWS, which decides if the gateway goes; where the one-language and "the loop is configuration" conventions land, since the agent definition becomes TypeScript on a Runtime version; and the subagent caps.
+The state graph would change in two steps: first keep every state and point Plan and Build at the builder Runtime with a mode switch and Review at the reviewer Runtime, which proves compaction and subagents without touching orchestration; then merge Plan and CollectPlan into Build once the in-session plan artefact is validated the same way. A separate Plan state stays only for the later feature where one trigger fans out into child work items through the lineage fields, which needs a plan before any build exists. Three things for the spike to settle: whether the gateway's web search can be offered to the SDK as an in-process tool, since Claude Code's own web search is unavailable on Bedrock; where the one-language and "the loop is configuration" conventions land, since the agent definition becomes TypeScript on a Runtime version; and the subagent caps.
 
-**Security model.** The outer model (`docs/security.md`) does not change; every boundary that matters is outside the session, and the SDK touches none of them. No credential enters the sandbox: on Claude Platform on AWS the role signs with SigV4 and holds no key, which is rule 2's intended production shape, and the role's rights stay model calls and logs. The session is hostile from the first token and output leaves as named files through the command API, capped, redacted and validated. The clean-room push, bundle hand-over, trusted test workflow and tested-head check never see which harness ran inside Build. The reviewer stays a separate Runtime, session and IAM role; section 3.4 forbids anything that judges or ships the builder's output from sharing its session, and that rule gains weight under the SDK because a review subagent would be easy to write and wrong.
+**Security model.** The outer model (`docs/security.md`) does not change; every boundary that matters is outside the session, and the SDK touches none of them. No credential enters the sandbox: on Bedrock the role signs with SigV4 and holds no key, which is exactly rule 2's production shape, and the role's rights stay model calls and logs. The session is hostile from the first token and output leaves as named files through the command API, capped, redacted and validated. The clean-room push, bundle hand-over, trusted test workflow and tested-head check never see which harness ran inside Build. The reviewer stays a separate Runtime, session and IAM role; section 3.4 forbids anything that judges or ships the builder's output from sharing its session, and that rule gains weight under the SDK because a review subagent would be easy to write and wrong.
 
 Folding the planner into the builder crosses no boundary if two conditions hold. Section 3.4 allows sharing a session when the earlier role cannot write: the plan subagent runs before any write, with Read, Grep and Glob only and Bash denied, so the builder starts in a session no model has written to. And the plan remains a trust transition under rule 4: the orchestrator reads `plan.json` out, validates it and stores it whatever a hook decided in the session, and a build whose stored plan fails validation is still `invalid-plan`. The outer check stays the gate; the in-session hook is a short-cut. The explorer subagent is the same case, read-only in a session that is already the builder's.
 
@@ -155,7 +157,7 @@ What does change is where in-session enforcement lives. Today the tool allow-lis
 
 - The agent subprocess runs as a non-root user, which the SDK requires for `bypassPermissions` anyway; the host process, the SDK files and the agent definitions are root-owned and read-only to that user.
 - Agents, hooks and permission rules are passed in code with `settingsSources` empty, so nothing on disk under `.claude/` is read.
-- The model is fixed by the image and an IAM condition on the execution role, not by an environment variable the shell can see.
+- The model is fixed by the Runtime version, set in its environment and passed by the host code, never taken from the request, and by the execution role, which is allowed one Bedrock inference profile. (Claude Platform on AWS has no per-model condition key; checked 2026-10-23.)
 - Subagent depth, concurrency and `maxBudgetUsd` caps are set in the host process.
 - No subagent's output is evidence. The builder's summary is already the model's claim, and subagent reports are the same.
 
@@ -178,8 +180,8 @@ flowchart TB
     end
 
     %% ------------------------------------------------------- Claude Platform
-    subgraph anthropic["Claude Platform on AWS (Anthropic-operated, eu-west-1)"]
-        claudeapi["Claude API<br/>SigV4 from the execution role<br/>no key in the account"]
+    subgraph anthropic["Amazon Bedrock (eu-west-1, EU inference profiles)"]
+        claudeapi["Claude Sonnet 5.5 / Haiku 5.5<br/>SigV4 from the execution role,<br/>scoped to one inference profile<br/>no key in the account"]
     end
 
     %% ---------------------------------------------------------------- Agent
@@ -198,9 +200,9 @@ flowchart TB
         subgraph reviewerrt["AgentCore Runtime: factorial_reviewer ('live' endpoint)"]
             reviewerproc["Agent SDK container, read-only tools<br/>fresh session on the tested branch,<br/>rules from the base branch,<br/>writes review.json"]
         end
-        builderrole["factorial-agent role<br/>(agent boundary; no GitHub, no PutEvents;<br/>IAM condition pins the model)"]
+        builderrole["factorial-agent role<br/>(agent boundary; no GitHub, no PutEvents;<br/>IAM allows one model)"]
         reviewerrole["factorial-agent-reviewer role<br/>(same boundary)"]
-        removed["Removed: factorial_planner harness,<br/>model API key in Identity, LiteLLM config,<br/>web search gateway (if the SDK's search works here)"]
+        removed["Removed: factorial_planner harness,<br/>model API key in Identity, LiteLLM config<br/>(the web search gateway stays)"]
         builderrt --- builderrole
         reviewerrt --- reviewerrole
     end
@@ -252,9 +254,9 @@ flowchart TB
     class removed removed
 ```
 
-Read off the diagram: the two trust boundaries the SDK does not touch are the clean-room session, which is the only path to GitHub, and the reviewer's Runtime, which is the only session that judges the builder's output. Inside the builder's Runtime the host process is the new piece of Factorial-owned code; the plan and explore subagents live beneath the builder and share its trust level. The one external dependency that changes is the model: Claude Platform on AWS replaces the Z.ai key, reached by the execution role rather than a secret.
+Read off the diagram: the two trust boundaries the SDK does not touch are the clean-room session, which is the only path to GitHub, and the reviewer's Runtime, which is the only session that judges the builder's output. Inside the builder's Runtime the host process is the new piece of Factorial-owned code; the plan and explore subagents live beneath the builder and share its trust level. The one external dependency that changes is the model: Bedrock replaces the Z.ai key, reached by the execution role rather than a secret.
 
-**Spike:** the builder only, on a Runtime in `eu-west-1`, with Claude Platform on AWS. Run a #87-sized item on Haiku 5.5 and on Sonnet 5.5 against GLM 5.3 Flash on the Harness, and compare rounds, calls, tokens, cost and outcome. The planner and reviewer stay on Harness for the spike.
+**Spike:** the builder only, on a Runtime in `eu-west-1`, with Claude on Bedrock. Run a #87-sized item on Haiku 5.5 and on Sonnet 5.5 against GLM 5.3 Flash on the Harness, and compare rounds, calls, tokens, cost and outcome. The planner and reviewer stay on Harness for the spike.
 
 ## If building from scratch
 
