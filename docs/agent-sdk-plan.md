@@ -95,6 +95,16 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 - Web search: an in-process MCP server (`createSdkMcpServer`) with one `web_search` tool that signs a request to the AgentCore web search gateway with the execution role and returns the results as text. It replaces the harness's `@web-search/...` tool and is allowed to the builder only. The host's AWS SDK client is the only thing that signs; the model sees a tool, not a credential.
 - Tests: the server contract (ping states, run and attach, 409), the hook decisions, the environment allow-list, and the mapping of result subtypes to outcomes, all without a model.
 
+**Recorded with PR 3 (2026-10-23):**
+
+- `attach` takes `after`, the number of the last message the caller has; every streamed message carries its number as the SSE `id`, so the invoker resumes without gaps or repeats.
+- The `PreToolUse` hook checks the target path of `Edit`, `Write` and `NotebookEdit`, and also denies writes under `/workspace/.factorial` and `/workspace/.claude`. It does not parse paths out of `Bash` commands, which cannot be done reliably; there the non-root user and file ownership are the constraint.
+- `quiet` is bundled from `agent-environment/tools` into the image by the host's esbuild build, so the image's build context stays `agent-runtime/`.
+- npm installs both the glibc and the musl Claude Code binary on linux-arm64; the Dockerfile removes the musl one (about 270 MB). The image is about 1 GB.
+- The local check ran the image against Claude Haiku 5.5 on Bedrock with 15-minute federation credentials limited to that model and the web search gateway, rather than a stub provider: web search, a write, the `git push` denial, `status`, `attach` and the second-run 409 all behaved as designed, for $0.0023.
+- Phase 0's last check (a Sonnet 5.5 stream under the agent boundary) moves to PR 4's first hand invocation, which makes that call under the real execution role.
+- PR 4 must: run `npm run build -w @factorial/agent-runtime` before the image build; include `agent-environment/tools`, `packages/agent-runtime`, `packages/log`, `packages/artefacts`, `agent-runtime/` and both lockfiles in the image tag; and grant image pull on `repository/factorial/agent-runtime` (the `factorial-agent-runtime` policy names only `agent-environment` today).
+
 **1.3 The agent stack** (`templates/20-agent.yml`)
 
 - Parameter `AgentRuntimeImageTag`, passed by the deploy workflow like `AgentImageTag`.

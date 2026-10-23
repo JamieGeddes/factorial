@@ -1,0 +1,50 @@
+/**
+ * Entry point: reads the Runtime version's configuration, then serves the
+ * Runtime contract on port 8080 and runs one SDK query when asked.
+ */
+import { query } from '@anthropic-ai/claude-agent-sdk';
+import { createLogger } from '@factorial/log';
+
+import { readConfig } from './config.ts';
+import { preToolUseHooks } from './hooks.ts';
+import { queryOptions } from './options.ts';
+import { Run, type RunRequest } from './run.ts';
+import { createServer, pingTracker } from './server.ts';
+import { signedGatewayCall, webSearchServer } from './web-search.ts';
+
+const config = readConfig(process.env);
+let log = createLogger('agent-runtime');
+const abortController = new AbortController();
+const { ping, setBusy } = pingTracker();
+
+function startQuery(request: RunRequest): AsyncIterable<unknown> {
+  log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
+  const options = queryOptions(config, {
+    hostEnv: process.env,
+    preToolUse: preToolUseHooks(config.workspace, (toolName, reason) => log.info('tool use denied', { toolName, reason })),
+    webSearch: config.webSearchGatewayUrl
+      ? webSearchServer(signedGatewayCall(config.webSearchGatewayUrl, config.region))
+      : undefined,
+    abortController,
+    stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
+  });
+  return query({ prompt: request.prompt, options });
+}
+
+const run = new Run(`${config.workspace}/.factorial`, startQuery, (state) => {
+  setBusy(state === 'running');
+  if (state === 'running') return;
+  const { messages, outcome, error } = run.status();
+  log.info('run ended', { state, messages, outcome, error });
+});
+
+const server = createServer(run, ping, (request) =>
+  log.info('run started', { role: config.role, model: config.model, round: request.round }),
+);
+server.listen(config.port, '0.0.0.0', () => log.info('listening', { port: config.port, role: config.role, model: config.model }));
+
+process.on('SIGTERM', () => {
+  log.info('SIGTERM; stopping the run');
+  abortController.abort();
+  server.close();
+});
