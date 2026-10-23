@@ -134,7 +134,7 @@ Green items are new. Everything else exists today.
 
 ### 3.2 Agents: Harness, one per role, model fixed per harness
 
-**Harness over Runtime.** Harness remains the right AgentCore primitive. The agent loop is configuration (model, prompt, tools, limits, image) captured in immutable versions, which maps directly onto the `live` alias rule. Runtime would only be worth its cost if an agent needed its own internal graph. It does not: Step Functions owns the graph, and every agent is a single loop with a defined input and output.
+**Harness over Runtime.** Harness remains the right AgentCore primitive. The agent loop is configuration (model, prompt, tools, limits, image) captured in immutable versions, which maps directly onto the `live` alias rule. Runtime would only be worth its cost if an agent needed its own internal graph. It does not: Step Functions owns the graph, and every agent is a single loop with a defined input and output. Re-examined on 2026-10-22 with a week of run data; the decision stands, with the evidence and the conditions for revisiting it in `docs/harness-vs-runtime.md`.
 
 **One harness per role.** Instead of one agent that does everything, each stage that needs a model invokes a harness built for that role:
 
