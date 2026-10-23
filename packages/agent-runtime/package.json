@@ -1,0 +1,19 @@
+{
+  "name": "@factorial/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Host process for the AgentCore Runtime: serves the Runtime contract and runs one Claude Agent SDK query per session",
+  "type": "module",
+  "scripts": {
+    "build": "node --disable-warning=ExperimentalWarning build.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.309",
+    "@aws-sdk/credential-provider-node": "^3.972.86",
+    "@factorial/log": "^0.1.0",
+    "@smithy/signature-v4": "^5.7.4",
+    "zod": "^4.6.7"
+  }
+}
