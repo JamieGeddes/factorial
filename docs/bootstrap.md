@@ -13,6 +13,8 @@ The foundation stack (`templates/00-foundation.yml`) creates:
 | `factorial-agent-permissions-boundary` | Upper bound for every agent execution role. Allows only running a harness: model calls, resolving its model key through the service, pulling its image, web search through a `factorial-*` gateway and telemetry. Also carried by the web search gateway's service role, which AgentCore assumes. |
 | Artefact bucket | Packaged templates and Lambda bundles. |
 | `factorial/agent-environment` ECR repository | The agent harness container image. |
+| `factorial/invoker` ECR repository | The Fargate task that invokes an agent and records its run. |
+| `factorial/agent-runtime` ECR repository | The AgentCore Runtime image: Factorial's host process around the Claude Agent SDK (`docs/agent-sdk-plan.md`). |
 
 ## Prerequisites
 
@@ -73,6 +75,24 @@ The foundation stack (`templates/00-foundation.yml`) creates:
      --query "Stacks[0].Outputs[?OutputKey=='TestCallbackRoleArn'].OutputValue" \
      --output text)"
    ```
+
+5. Enable Anthropic models in Amazon Bedrock. Agents on the Runtime call Claude through Bedrock with their execution role, so the account needs Anthropic's one-off use-case form on file. Access is granted as soon as it is submitted.
+
+   1. Open the AWS console, switch the region selector (top right) to **Europe (Ireland) eu-west-1**, and open **Amazon Bedrock**.
+   2. In the left navigation, select **Model catalog**, filter **Providers** to **Anthropic**, and select any Claude model.
+   3. Select **Submit use case details** on the model page, fill in the company, website, intended users, industry and use case fields, and select **Submit**.
+   4. Confirm the form is on file and a model answers:
+
+      ```sh
+      aws bedrock get-use-case-for-model-access --region eu-west-1 --query formData --output text >/dev/null && echo "form on file"
+      aws bedrock-runtime invoke-model --region eu-west-1 \
+        --model-id eu.anthropic.claude-haiku-5-5 \
+        --cli-binary-format raw-in-base64-out \
+        --body '{"anthropic_version":"bedrock-2023-05-31","max_tokens":10,"messages":[{"role":"user","content":"Say ok"}]}' \
+        /dev/stdout
+      ```
+
+   The first command fails with "You have not filled out the request form" until the form is submitted.
 
 Everything else is deployed by the `deploy` workflow on merge to `main`, which passes the `factorial-cloudformation` role to CloudFormation and reads the other foundation outputs through their `Factorial-*` exports.
 
