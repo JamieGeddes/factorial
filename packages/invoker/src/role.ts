@@ -40,7 +40,8 @@ export const INCOMPLETE_EXIT_CODE = 3;
  * already check what the planner and the reviewer left behind.
  */
 export function incompleteReason(role: Role, stopReason: string | undefined): string | undefined {
-  if (role !== 'builder' || stopReason === 'end_turn') return undefined;
+  // end_turn is the harness's finished run; success is the Agent SDK's.
+  if (role !== 'builder' || stopReason === 'end_turn' || stopReason === 'success') return undefined;
   return `incomplete: the builder stopped with ${stopReason ?? 'no stop reason'} before finishing`;
 }
 
@@ -114,6 +115,44 @@ export function harnessTarget(env: Record<string, string | undefined>): HarnessT
   const qualifier = required('HARNESS_QUALIFIER');
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(qualifier)) throw new Error(`"${qualifier}" is not an endpoint name`);
   return { role, harnessArn, harnessId, qualifier };
+}
+
+export interface RuntimeTarget {
+  role: Role;
+  runtimeArn: string;
+  runtimeId: string;
+  /** The endpoint invoked, `live` in normal running. */
+  qualifier: string;
+}
+
+/** Which kind of agent the task invokes: a harness, or Factorial's host on an AgentCore Runtime. */
+export type AgentTarget = ({ kind: 'harness' } & HarnessTarget) | ({ kind: 'runtime' } & RuntimeTarget);
+
+/**
+ * Read and check the target from the task's environment. TARGET is
+ * `harness` (the default) or `runtime`; a runtime is named by RUNTIME_ARN and
+ * RUNTIME_QUALIFIER, and must be the role's runtime, `factorial_<role>-…`.
+ */
+export function agentTarget(env: Record<string, string | undefined>): AgentTarget {
+  const target = env.TARGET || 'harness';
+  if (target === 'harness') return { kind: 'harness', ...harnessTarget(env) };
+  if (target !== 'runtime') throw new Error(`Unknown target "${target}"`);
+  const required = (name: string): string => {
+    const value = env[name];
+    if (!value) throw new Error(`Missing required environment variable ${name}`);
+    return value;
+  };
+  const role = required('ROLE');
+  if (!isRole(role)) throw new Error(`Unknown agent role "${role}"`);
+  const runtimeArn = required('RUNTIME_ARN');
+  const match = /^arn:aws[a-z-]*:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime\/([A-Za-z0-9_-]+)$/.exec(runtimeArn);
+  const runtimeId = match?.[1];
+  if (!runtimeId || !new RegExp(`^factorial_${role}-[A-Za-z0-9]+$`).test(runtimeId)) {
+    throw new Error(`RUNTIME_ARN does not name the ${role} runtime`);
+  }
+  const qualifier = required('RUNTIME_QUALIFIER');
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(qualifier)) throw new Error(`"${qualifier}" is not an endpoint name`);
+  return { kind: 'runtime', role, runtimeArn, runtimeId, qualifier };
 }
 
 /** A changed file the orchestrator flagged for care, and why. */

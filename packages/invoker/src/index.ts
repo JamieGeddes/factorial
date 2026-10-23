@@ -1,8 +1,10 @@
 /**
- * Harness invoker. Runs as a Fargate task started by Step Functions with
+ * Agent invoker. Runs as a Fargate task started by Step Functions with
  * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes one agent
- * role's harness (the planner, builder or reviewer; the role and harness come
- * in the task input) once in the prepared session, logs its progress as
+ * role (the planner, builder or reviewer; the role and its target come in the
+ * task input) once in the prepared session, on its harness or, with
+ * TARGET=runtime, on Factorial's host on an AgentCore Runtime
+ * (packages/agent-runtime), logs its progress as
  * structured lines (CloudWatch Logs; text and tool input capped at 4000
  * characters each), records the outcome, and exits. Step Functions resumes
  * when the task stops, however long the run took. A builder that stops
@@ -10,6 +12,10 @@
  * INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
  * pull request. Nothing inside the agent sandbox can influence this process:
  * it runs under its own task role.
+ *
+ * On a runtime, the run's SDK messages are read as server-sent events; a
+ * stream that ends before the run is re-attached (runtime-stream.ts), and
+ * the host's status decides how the run ended (sdk-messages.ts).
  *
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
@@ -20,9 +26,11 @@
  */
 import { readFileSync } from 'node:fs';
 
-import { BedrockAgentCoreClient, InvokeHarnessCommand } from '@aws-sdk/client-bedrock-agentcore';
+import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand, InvokeHarnessCommand } from '@aws-sdk/client-bedrock-agentcore';
 import {
   BedrockAgentCoreControlClient,
+  GetAgentRuntimeCommand,
+  GetAgentRuntimeEndpointCommand,
   GetHarnessCommand,
   GetHarnessEndpointCommand,
 } from '@aws-sdk/client-bedrock-agentcore-control';
@@ -33,8 +41,10 @@ import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts'
 import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, harnessTarget, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor } from './role.ts';
-import { modelIdOf, usageRecord, type HarnessInfo } from './run-record.ts';
+import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, agentTarget, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor, type RuntimeTarget } from './role.ts';
+import { modelIdOf, runtimeInfoOf, usageRecord, type HarnessInfo, type SdkRecord } from './run-record.ts';
+import { streamRun, type InvokeSession } from './runtime-stream.ts';
+import { SdkTally, runUsageOf, runtimeStop, type HostStatus } from './sdk-messages.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
 import { addCallUsage, addRunUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
@@ -46,8 +56,9 @@ function requireEnv(name: string): string {
 }
 
 const tableName = requireEnv('TABLE_NAME');
-// The role and its harness arrive in the task input, so one task definition serves every role.
-const { role, harnessArn, harnessId, qualifier } = harnessTarget(process.env);
+// The role and its target arrive in the task input, so one task definition serves every role.
+const target = agentTarget(process.env);
+const { role, qualifier } = target;
 const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
 const branch = requireEnv('BRANCH');
@@ -113,11 +124,15 @@ const run = {
   error: undefined as string | undefined,
   /** The build's usage over earlier rounds, from the ledger row, when continuing. */
   previousRoundsUsage: undefined as RunUsage | undefined,
+  /** What only the Agent SDK reports, on a runtime. */
+  sdk: undefined as SdkRecord | undefined,
 };
 const transcript = new TranscriptBuffer('/tmp/transcript.jsonl');
 
 /** The version `live` serves and its model. Best effort: the build goes ahead without it. */
 async function harnessInfo(): Promise<HarnessInfo> {
+  if (target.kind === 'runtime') return runtimeInfo(target);
+  const { harnessId } = target;
   try {
     const { endpoint } = await control.send(new GetHarnessEndpointCommand({ harnessId, endpointName: qualifier }));
     const harnessVersion = endpoint?.liveVersion ?? endpoint?.targetVersion;
@@ -132,6 +147,25 @@ async function harnessInfo(): Promise<HarnessInfo> {
     };
   } catch (error) {
     log.error('harness version unknown', { error });
+    return {};
+  }
+}
+
+/** The runtime version `live` serves, its model and limits. Best effort, like harnessInfo. */
+async function runtimeInfo({ runtimeId }: RuntimeTarget): Promise<HarnessInfo> {
+  try {
+    const endpoint = await control.send(new GetAgentRuntimeEndpointCommand({ agentRuntimeId: runtimeId, endpointName: qualifier }));
+    const runtimeVersion = endpoint.liveVersion ?? endpoint.targetVersion;
+    const runtime = await control.send(
+      new GetAgentRuntimeCommand({ agentRuntimeId: runtimeId, ...(runtimeVersion ? { agentRuntimeVersion: runtimeVersion } : {}) }),
+    );
+    return {
+      ...(runtime.agentRuntimeName ? { runtimeName: runtime.agentRuntimeName } : {}),
+      ...(runtimeVersion ? { runtimeVersion } : {}),
+      ...runtimeInfoOf(runtime.environmentVariables),
+    };
+  } catch (error) {
+    log.error('runtime version unknown', { error });
     return {};
   }
 }
@@ -167,7 +201,7 @@ function finish(succeeded: boolean): Promise<void> {
     const stored = await storeRunRecord();
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
-    log.info('harness finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage });
+    log.info('harness finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.sdk?.costUsd });
     const outcome = outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
     // The builder's figures are this round's; the total across rounds is kept beside them.
     const rounds = role === 'builder' ? { buildRounds: buildRound, buildUsageTotal: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage } : {};
@@ -199,11 +233,28 @@ async function main(): Promise<number> {
 
   const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths, buildRound });
   run.harness = await harnessInfo();
-  log.info('invoking harness', { role, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
+  log.info('invoking agent', { role, target: target.kind, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();
   transcript.append({ request: { role, prompt, ...run.harness } });
+  if (target.kind === 'runtime') {
+    await invokeRuntime(target, prompt);
+  } else {
+    await invokeHarness(target.harnessArn, prompt);
+  }
+
+  // A builder that hit its iteration or time limit has not finished the
+  // plan: fail the task so its work is saved and reported, not tested and
+  // opened as a pull request.
+  const incomplete = run.error ? undefined : incompleteReason(role, run.stopReason);
+  if (incomplete) run.error = incomplete;
+  await finish(!run.error);
+  if (incomplete) return INCOMPLETE_EXIT_CODE;
+  return run.error ? 1 : 0;
+}
+
+async function invokeHarness(harnessArn: string, prompt: string): Promise<void> {
   const response = await agentcore.send(
     new InvokeHarnessCommand({
       harnessArn,
@@ -253,15 +304,79 @@ async function main(): Promise<number> {
       log.error('stream error', { error: run.error });
     }
   }
+}
 
-  // A builder that hit its iteration or time limit has not finished the
-  // plan: fail the task so its work is saved and reported, not tested and
-  // opened as a pull request.
-  const incomplete = run.error ? undefined : incompleteReason(role, run.stopReason);
-  if (incomplete) run.error = incomplete;
-  await finish(!run.error);
-  if (incomplete) return INCOMPLETE_EXIT_CODE;
-  return run.error ? 1 : 0;
+/** The JSON a runtime invocation sends; the model, limits and tools are the version's, never the request's. */
+function runtimePayload(payload: object): Uint8Array {
+  return new TextEncoder().encode(JSON.stringify(payload));
+}
+
+async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<void> {
+  const baggage = traceBaggage(sessionId, workItemId, run.attempt);
+  const send = (payload: object, accept: string) =>
+    agentcore.send(
+      new InvokeAgentRuntimeCommand({
+        agentRuntimeArn: runtime.runtimeArn,
+        qualifier: runtime.qualifier,
+        runtimeSessionId: sessionId,
+        baggage,
+        contentType: 'application/json',
+        accept,
+        payload: runtimePayload(payload),
+      }),
+    );
+  const invoke: InvokeSession = async (payload) => {
+    const response = await send(payload, 'text/event-stream');
+    if (!response.response) throw new Error('the runtime returned no body');
+    return response.response as AsyncIterable<Uint8Array>;
+  };
+
+  const tally = new SdkTally();
+  const reconnects = await streamRun(
+    invoke,
+    { action: 'run', prompt, round: buildRound, workItemId, attempt: run.attempt },
+    (message) => {
+      if (typeof message === 'object' && message !== null) transcript.append(message);
+      for (const line of tally.add(message)) log.info(line.message, line.fields);
+      // Kept current, so a stopped task still records what was used.
+      run.toolCalls = tally.toolCalls;
+      run.calls = tally.calls;
+      run.usage = tally.calls.reduce(addCallUsage, emptyRunUsage());
+    },
+    () => tally.ended,
+    {
+      maxReconnects: 20,
+      delayMs: 5000,
+      onReconnect: (attempt, after, reason) => log.info('re-attaching to the run', { attempt, after, reason }),
+    },
+  );
+
+  // The host's own record of how the run ended. Best effort: the streamed
+  // messages are the fallback.
+  let status: HostStatus | undefined;
+  try {
+    const response = await send({ action: 'status' }, 'application/json');
+    status = JSON.parse((await response.response?.transformToString()) ?? '{}') as HostStatus;
+  } catch (error) {
+    log.error('run status unknown', { error });
+  }
+
+  run.usage = runUsageOf(tally);
+  const stop = runtimeStop(tally, status);
+  run.stopReason = stop.stopReason;
+  if (stop.error) {
+    run.error = stop.error;
+    log.error('run failed', { error: run.error });
+  }
+  run.sdk = {
+    ...(tally.result ? { resultSubtype: tally.result.subtype } : {}),
+    ...(tally.result?.numTurns === undefined ? {} : { numTurns: tally.result.numTurns }),
+    ...(tally.result?.costUsd === undefined ? {} : { costUsd: tally.result.costUsd }),
+    ...(tally.result?.modelUsage ? { modelUsage: tally.result.modelUsage } : {}),
+    permissionDenials: tally.result?.permissionDenials ?? 0,
+    reconnects,
+  };
+  log.info('runtime run ended', { stopReason: run.stopReason, status: status?.state, outcome: status?.outcome, ...run.sdk, modelUsage: undefined });
 }
 
 main().then(
