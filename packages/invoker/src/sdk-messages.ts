@@ -139,13 +139,32 @@ export class SdkTally {
   }
 }
 
+/** How a stop reason counts, in the host's terms (packages/agent-runtime/src/outcome.ts). */
+function outcomeOfStop(stopReason: string, error: string | undefined): string {
+  if (error) return 'failed';
+  return stopReason === 'success' ? 'complete' : 'incomplete';
+}
+
 /**
- * The stop reason and error for the ledger and usage.json. The host's status,
- * when it could be read, is the authority on how the run ended; the streamed
- * messages are the fallback. `success` is complete; a turn, budget or time
- * limit is incomplete (the rounds path); anything else is an error.
+ * The stop reason and error for the ledger and usage.json. `success` is
+ * complete; a turn, budget or time limit is incomplete (the rounds path);
+ * anything else is an error. The streamed messages and the host's status come
+ * from the same root-owned process, which the model cannot reach, but they
+ * are read separately: when both are available and they disagree, the run
+ * ends as an error rather than trusting either.
  */
 export function runtimeStop(tally: SdkTally, status: HostStatus | undefined): { stopReason: string; error?: string } {
+  const stop = streamStop(tally, status);
+  if (status?.outcome && status.outcome !== outcomeOfStop(stop.stopReason, stop.error)) {
+    return {
+      stopReason: 'outcome_mismatch',
+      error: `outcome_mismatch: the host reported ${status.outcome}, the stream ${stop.stopReason}`,
+    };
+  }
+  return stop;
+}
+
+function streamStop(tally: SdkTally, status: HostStatus | undefined): { stopReason: string; error?: string } {
   if (status?.state === 'failed' || tally.hostError) {
     return { stopReason: 'host_error', error: `host_error: ${status?.error ?? tally.hostError ?? 'the host process failed'}` };
   }

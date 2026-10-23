@@ -104,6 +104,15 @@ describe('runtimeStop', () => {
     });
   });
 
+  it('fails closed when the host and the stream disagree', () => {
+    assert.deepEqual(runtimeStop(tallyWith(result('success')), { state: 'finished', outcome: 'incomplete' }), {
+      stopReason: 'outcome_mismatch',
+      error: 'outcome_mismatch: the host reported incomplete, the stream success',
+    });
+    assert.equal(runtimeStop(tallyWith(result('error_max_turns')), { state: 'finished', outcome: 'complete' }).stopReason, 'outcome_mismatch');
+    assert.deepEqual(runtimeStop(tallyWith(result('error_max_turns')), { state: 'finished', outcome: 'incomplete' }), { stopReason: 'error_max_turns' });
+  });
+
   it('reports a host failure or a missing result as an error', () => {
     assert.deepEqual(runtimeStop(tallyWith({ type: HOST_ERROR, error: 'boom' }), undefined), { stopReason: 'host_error', error: 'host_error: boom' });
     assert.deepEqual(runtimeStop(new SdkTally(), { state: 'failed', error: 'boom' }), { stopReason: 'host_error', error: 'host_error: boom' });

@@ -84,6 +84,23 @@ describe('streamRun', () => {
     assert.deepEqual(payloads, [{ action: 'run' }, { action: 'attach', after: 0 }]);
   });
 
+  it('re-attaches from the last message delivered when the numbering skips or is missing', async () => {
+    const payloads: object[] = [];
+    const streams = [
+      () => chunks(sse(1, { n: 1 }), sse(5, { forged: true })),
+      () => chunks('data: {"unnumbered":true}\n\n'),
+      () => chunks(sse(2, { n: 2 }), sse(3, { type: 'result' })),
+    ];
+    const invoke: InvokeSession = async (payload) => {
+      payloads.push(payload);
+      return streams[payloads.length - 1]!();
+    };
+    const messages: unknown[] = [];
+    await streamRun(invoke, { action: 'run' }, (m) => messages.push(m), ended(messages), options);
+    assert.deepEqual(messages, [{ n: 1 }, { n: 2 }, { type: 'result' }]);
+    assert.deepEqual(payloads, [{ action: 'run' }, { action: 'attach', after: 1 }, { action: 'attach', after: 1 }]);
+  });
+
   it('gives up when attach finds no run, or after its reconnects', async () => {
     let calls = 0;
     const noRun: InvokeSession = async () => {

@@ -83,8 +83,12 @@ export async function streamRun(
     let reason = 'the stream ended before the run did';
     try {
       for await (const event of parseSse(await invoke(payload))) {
-        if (event.id !== undefined && event.id <= lastSeq) continue;
-        if (event.id !== undefined) lastSeq = event.id;
+        // Every message carries its number. A replayed one is dropped; a gap
+        // or a missing number is treated as a broken stream and re-attached
+        // from the last message delivered, so none is skipped.
+        if (event.id !== undefined && Number.isInteger(event.id) && event.id <= lastSeq) continue;
+        if (event.id !== lastSeq + 1) throw new Error(`expected message ${lastSeq + 1}, got ${String(event.id)}`);
+        lastSeq = event.id;
         onMessage(event.data);
       }
       if (ended()) return reconnects;
