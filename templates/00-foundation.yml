@@ -624,10 +624,13 @@ Resources:
               # the stack tag only: CloudFormation's aws:cloudformation:* tags
               # stay on the harness (CreateAgentRuntime for
               # harness_factorial_planner carried only Project=Factorial and
-              # was refused on 2026-10-21). Its ARN is runtime/* for the same
-              # reason as the endpoint above. As with harnesses, this lets the
-              # role add Project=Factorial to any runtime, which grants
-              # nothing.
+              # was refused on 2026-10-21). A runtime the agent stack creates
+              # itself (factorial_builder on AgentCore Runtime) carries those
+              # tags too, as every direct create does (CloudTrail, 2026-10-23),
+              # so they are allowed when present, from a factorial- stack. Its
+              # ARN is runtime/* for the same reason as the endpoint above. As
+              # with harnesses, this lets the role add Project=Factorial to any
+              # runtime, which grants nothing.
               - Sid: AgentCoreRuntimeTagOnCreate
                 Effect: Allow
                 Action: bedrock-agentcore:TagResource
@@ -635,9 +638,14 @@ Resources:
                 Condition:
                   StringEquals:
                     aws:RequestTag/Project: Factorial
+                  StringLikeIfExists:
+                    aws:RequestTag/aws:cloudformation:stack-name: factorial-*
                   ForAllValues:StringEquals:
                     aws:TagKeys:
                       - Project
+                      - aws:cloudformation:stack-name
+                      - aws:cloudformation:stack-id
+                      - aws:cloudformation:logical-id
               - Sid: ContainerRegistry
                 Effect: Allow
                 Action: ecr:*

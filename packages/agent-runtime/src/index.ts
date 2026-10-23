@@ -40,12 +40,13 @@ function startQuery(request: RunRequest): AsyncIterable<unknown> {
   return query({ prompt: request.prompt, options });
 }
 
+const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };
 const run = new Run(config.stateDirectory, startQuery, (state) => {
   setBusy(state === 'running');
   if (state === 'running') return;
-  const { messages, outcome, error } = run.status();
-  log.info('run ended', { state, messages, outcome, error });
-});
+  const { messages, outcome, stopReason, error } = run.status();
+  log.info('run ended', { state, messages, outcome, stopReason, error });
+}, limits);
 
 const server = createServer(run, ping, (request) =>
   log.info('run started', { role: config.role, model: config.model, round: request.round }),

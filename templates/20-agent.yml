@@ -1,13 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
-  Factorial agents: one block per role (harness, live endpoint and execution
-  role), plus what the roles share (the model API key credential, the agent
-  runtime policy and the web search gateway). Deployed by GitHub Actions.
+  Factorial agents: one block per role (harness or runtime, live endpoint and
+  execution role), plus what the roles share (the model API key credential,
+  the agent runtime policy and the web search gateway). Deployed by GitHub
+  Actions.
 
 Parameters:
   AgentImageTag:
     Type: String
     Description: Tag of the agent environment image in the factorial/agent-environment repository.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
+  AgentRuntimeImageTag:
+    Type: String
+    Description: Tag of the agent runtime image in the factorial/agent-runtime repository.
     AllowedPattern: '^[A-Za-z0-9._-]+$'
   ModelApiBase:
     Type: String
@@ -60,7 +65,9 @@ Resources:
               - ecr:BatchGetImage
               - ecr:GetDownloadUrlForLayer
               - ecr:BatchCheckLayerAvailability
-            Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/agent-environment
+            Resource:
+              - !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/agent-environment
+              - !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/agent-runtime
           - Sid: RegistryAuth
             Effect: Allow
             Action:
@@ -479,6 +486,128 @@ Resources:
           Value: Factorial
 
   # ---------------------------------------------------------------------------
+  # Role: builder on AgentCore Runtime (docs/agent-sdk-plan.md, phase 1).
+  # Factorial's host process around the Claude Agent SDK, on Claude through
+  # Bedrock with this role and no model key. Deployed beside the builder
+  # harness; the state machine's BuilderTarget chooses which one Build uses.
+  # Every update creates an immutable runtime version; the live endpoint is
+  # moved by the deploy workflow's promotion step, never by this template.
+  # ---------------------------------------------------------------------------
+  BuilderRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-agent-builder
+      Description: Execution role of the Factorial builder runtime.
+      PermissionsBoundary: !ImportValue Factorial-AgentPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_builder-*
+      ManagedPolicyArns:
+        - !Ref AgentRuntimePolicy
+      Policies:
+        - PolicyName: factorial-agent-builder
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The models are pinned here as well as on the runtime version
+              # (FACTORIAL_*MODEL below): this role can call only these EU
+              # inference profiles, and the foundation models only through
+              # them. Changing a model changes both.
+              - Sid: InferenceProfiles
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
+              - Sid: FoundationModelsThroughProfiles
+                Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-haiku-5-5
+                Condition:
+                  StringEquals:
+                    bedrock:InferenceProfileArn:
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
+              # The host's web_search tool signs gateway calls with this role.
+              # The agent's shell shares the role, so could call the gateway
+              # directly too; that is the same read-only search.
+              - Sid: WebSearchGateway
+                Effect: Allow
+                Action: bedrock-agentcore:InvokeGateway
+                Resource: !GetAtt WebSearchGateway.GatewayArn
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  BuilderRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: factorial_builder
+      Description: Factorial builder on the Claude Agent SDK.
+      RoleArn: !GetAtt BuilderRuntimeRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Join
+            - ':'
+            - - !ImportValue Factorial-AgentRuntimeRepositoryUri
+              - !Ref AgentRuntimeImageTag
+      ProtocolConfiguration: HTTP
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      LifecycleConfiguration:
+        IdleRuntimeSessionTimeout: 900
+        MaxLifetime: 14400
+      # Part of the immutable runtime version, read by the host at start and
+      # never taken from a request (packages/agent-runtime/src/config.ts).
+      # Fixed here, not parameters: `cloudformation deploy` keeps a
+      # parameter's previous value, so a changed default never reaches an
+      # existing stack. AWS_REGION is reserved and set by the service.
+      EnvironmentVariables:
+        FACTORIAL_ROLE: builder
+        # Named by purpose: the main loop, the explore subagent and the
+        # SDK's background calls. Each must be allowed in the role above.
+        FACTORIAL_MODEL: eu.anthropic.claude-sonnet-5-5
+        FACTORIAL_EXPLORE_MODEL: eu.anthropic.claude-haiku-5-5
+        FACTORIAL_BACKGROUND_MODEL: eu.anthropic.claude-haiku-5-5
+        # The same turn limit as the harness's MaxIterations. A run that
+        # reaches a limit ends incomplete and the next round continues it.
+        FACTORIAL_MAX_TURNS: '150'
+        FACTORIAL_MAX_BUDGET_USD: '10'
+        # Below the orchestration stack's BuildTimeoutSeconds (7200), as the
+        # harness's TimeoutSeconds is, so the host ends the run itself and
+        # Collect still runs.
+        FACTORIAL_MAX_DURATION_SECONDS: '6600'
+        FACTORIAL_WEB_SEARCH_GATEWAY_URL: !GetAtt WebSearchGateway.GatewayUrl
+      Tags:
+        Project: Factorial
+
+  # Created once at whatever version is current. AgentRuntimeVersion is
+  # deliberately not set: promotion is the deploy workflow's final step.
+  BuilderRuntimeLiveEndpoint:
+    Type: AWS::BedrockAgentCore::RuntimeEndpoint
+    Properties:
+      AgentRuntimeId: !GetAtt BuilderRuntime.AgentRuntimeId
+      Name: live
+      Description: The builder runtime version handling new WorkItems.
+      Tags:
+        Project: Factorial
+
+  # ---------------------------------------------------------------------------
   # Role: planner. Decides what to change and how to verify it, and writes
   # /workspace/plan.md and /workspace/plan.json (contracts/plan). It makes no
   # code changes: nothing from its session is bundled or pushed, only the two
@@ -895,3 +1024,15 @@ Outputs:
     Value: !GetAtt ReviewerLiveEndpoint.Arn
     Export:
       Name: Factorial-ReviewerLiveEndpointArn
+  BuilderRuntimeArn:
+    Value: !GetAtt BuilderRuntime.AgentRuntimeArn
+    Export:
+      Name: Factorial-BuilderRuntimeArn
+  BuilderRuntimeId:
+    Value: !GetAtt BuilderRuntime.AgentRuntimeId
+    Export:
+      Name: Factorial-BuilderRuntimeId
+  BuilderRuntimeLiveEndpointArn:
+    Value: !GetAtt BuilderRuntimeLiveEndpoint.AgentRuntimeEndpointArn
+    Export:
+      Name: Factorial-BuilderRuntimeLiveEndpointArn

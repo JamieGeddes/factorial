@@ -27,12 +27,23 @@ export interface RunStatus {
   state: RunState;
   messages: number;
   outcome?: Outcome;
+  /** Set when the host stopped the run itself. */
+  stopReason?: 'max_duration';
   result?: unknown;
   error?: string;
 }
 
 /** A message the host adds to the stream when the run fails outside the SDK. */
 export const HOST_ERROR = 'factorial_host_error';
+
+/** A message the host adds to the stream when it stops a run at its time limit. */
+export const MAX_DURATION = 'factorial_max_duration';
+
+export interface Limits {
+  maxDurationMs: number;
+  /** Stops the SDK query; the run then ends as incomplete. */
+  abort: () => void;
+}
 
 export type StartQuery = (request: RunRequest) => AsyncIterable<unknown>;
 
@@ -50,15 +61,24 @@ export class Run {
   private seq = 0;
   private result: unknown;
   private error: string | undefined;
+  private timedOut = false;
+  private timer: NodeJS.Timeout | undefined;
   private readonly subscribers = new Set<Subscriber>();
   private readonly transcriptPath: string;
   private readonly resultPath: string;
   private readonly startQuery: StartQuery;
   private readonly onStateChange: (state: RunState) => void;
+  private readonly limits: Limits | undefined;
 
-  constructor(directory: string, startQuery: StartQuery, onStateChange: (state: RunState) => void = () => {}) {
+  constructor(
+    directory: string,
+    startQuery: StartQuery,
+    onStateChange: (state: RunState) => void = () => {},
+    limits?: Limits,
+  ) {
     this.startQuery = startQuery;
     this.onStateChange = onStateChange;
+    this.limits = limits;
     mkdirSync(directory, { recursive: true });
     this.transcriptPath = path.join(directory, 'transcript.jsonl');
     this.resultPath = path.join(directory, 'result.json');
@@ -72,6 +92,13 @@ export class Run {
   start(request: RunRequest): boolean {
     if (this.state !== 'idle') return false;
     this.setState('running');
+    if (this.limits) {
+      const { maxDurationMs, abort } = this.limits;
+      this.timer = setTimeout(() => {
+        this.timedOut = true;
+        abort();
+      }, maxDurationMs);
+    }
     void this.consume(request);
     return true;
   }
@@ -81,6 +108,12 @@ export class Run {
     if (isResult(this.result)) {
       status.outcome = outcomeOf(this.result.subtype);
       status.result = this.result;
+    }
+    // A run stopped at its time limit is the rounds path, like a turn limit,
+    // unless it had already succeeded.
+    if (this.timedOut && status.outcome !== 'complete') {
+      status.outcome = 'incomplete';
+      status.stopReason = 'max_duration';
     }
     if (this.error !== undefined) status.error = this.error;
     return status;
@@ -119,9 +152,15 @@ export class Run {
         this.record(message);
         if (isResult(message)) this.result = message;
       }
-      if (this.result === undefined) throw new Error('the SDK ended without a result message');
+      if (this.result === undefined && !this.timedOut) throw new Error('the SDK ended without a result message');
+      if (this.timedOut) this.record({ type: MAX_DURATION });
       this.finish('finished');
     } catch (error) {
+      if (this.timedOut) {
+        this.record({ type: MAX_DURATION });
+        this.finish('finished');
+        return;
+      }
       this.error = error instanceof Error ? error.message : String(error);
       this.record({ type: HOST_ERROR, error: this.error });
       this.finish('failed');
@@ -135,6 +174,7 @@ export class Run {
   }
 
   private finish(state: 'finished' | 'failed'): void {
+    clearTimeout(this.timer);
     writeFileSync(this.resultPath, `${JSON.stringify({ ...this.status(), state }, null, 2)}\n`);
     this.setState(state);
     for (const subscriber of this.subscribers) subscriber.onEnd();

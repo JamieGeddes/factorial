@@ -109,6 +109,14 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 
 **1.3 The agent stack** (`templates/20-agent.yml`)
 
+**Recorded with PR 4 (2026-10-23):**
+
+- **Foundation change after all.** CloudTrail shows CloudFormation's direct AgentCore creates carry the `aws:cloudformation:*` tags, and the execution role allowed only `Project` when tagging a new runtime (enough for a harness's own runtime). `AgentCoreRuntimeTagOnCreate` now also allows the three stack tags, from a `factorial-` stack. A human deploys the foundation before this PR merges.
+- **Wall-clock limit.** `maxLifetime` (14,400 s) is longer than `BuildTimeoutSeconds` (7,200 s) and the SDK has no time limit, so the host aborts at `FACTORIAL_MAX_DURATION_SECONDS` (6,600, as the harness's `TimeoutSeconds`) and reports the run `incomplete` with `stopReason: max_duration`.
+- **Limits:** `FACTORIAL_MAX_TURNS=150` (the harness's `MaxIterations`) and `FACTORIAL_MAX_BUDGET_USD=10`, chosen as enough for a reasonable task on Sonnet with caching.
+- The role's model grants are two statements: `InvokeModel*` on the Sonnet and Haiku EU inference profiles, and on their foundation models in any region only through those profiles (`bedrock:InferenceProfileArn`). The trust policy is limited to `runtime/factorial_builder-*`.
+- The promotion step promotes only a `READY` runtime version and fails if there is none.
+
 - Parameter `AgentRuntimeImageTag`, passed by the deploy workflow like `AgentImageTag`.
 - A new block, in the one-block-per-role layout:
   - `BuilderRuntimeRole`, named `factorial-agent-builder`, trusting `bedrock-agentcore.amazonaws.com` with the source-account condition, carrying `Factorial-AgentPermissionsBoundaryArn`, with `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream` on the builder's inference profile ARN and its foundation-model ARNs (one statement per model the version may use, which is how the model is pinned), `bedrock-agentcore:InvokeGateway` and `InvokeWebSearch` for the web search tool, the existing `factorial-agent-runtime` managed policy for image pull, logs and tracing, and nothing else: no model key.

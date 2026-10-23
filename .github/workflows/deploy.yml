@@ -147,15 +147,18 @@ jobs:
           bucket=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-ArtefactBucketName'].Value" --output text)
           repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-AgentEnvironmentRepositoryUri'].Value" --output text)
           invoker_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-InvokerRepositoryUri'].Value" --output text)
-          test -n "$cfn_role" && test -n "$bucket" && test -n "$repo_uri" && test -n "$invoker_repo_uri"
+          runtime_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-AgentRuntimeRepositoryUri'].Value" --output text)
+          test -n "$cfn_role" && test -n "$bucket" && test -n "$repo_uri" && test -n "$invoker_repo_uri" && test -n "$runtime_repo_uri"
           echo "::add-mask::$cfn_role"
           echo "::add-mask::$bucket"
           echo "::add-mask::$repo_uri"
           echo "::add-mask::$invoker_repo_uri"
+          echo "::add-mask::$runtime_repo_uri"
           echo "cfn_role=$cfn_role" >> "$GITHUB_OUTPUT"
           echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
           echo "repo_uri=$repo_uri" >> "$GITHUB_OUTPUT"
           echo "invoker_repo_uri=$invoker_repo_uri" >> "$GITHUB_OUTPUT"
+          echo "runtime_repo_uri=$runtime_repo_uri" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
@@ -203,12 +206,36 @@ jobs:
             --tag "$REPO_URI:$tag" invoker/
           echo "Pushed invoker image $tag."
 
+      # The host bundle (agent-runtime/dist) comes from "Build Lambda bundles"
+      # above. The tag covers everything the image is built from: the image
+      # directory with its own lockfile, the host and the workspace packages
+      # it bundles, quiet's source, and the root lockfile.
+      - name: Build and push the agent runtime image when its inputs change
+        id: runtime_image
+        env:
+          REPO_URI: ${{ steps.foundation.outputs.runtime_repo_uri }}
+        run: |
+          set -euo pipefail
+          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/log HEAD:packages/artefacts HEAD:agent-environment/tools HEAD:package-lock.json | sha256sum | cut -c1-32)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if aws ecr describe-images --repository-name factorial/agent-runtime --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+            echo "Agent runtime image $tag already exists; skipping the build."
+            exit 0
+          fi
+          test -f agent-runtime/dist/host.mjs && test -f agent-runtime/dist/quiet.mjs
+          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
+          docker buildx build --platform linux/arm64 --provenance=false --push \
+            --tag "$REPO_URI:$tag" agent-runtime/
+          echo "Pushed agent runtime image $tag."
+
       - name: Deploy stacks in order
         env:
           CFN_ROLE: ${{ steps.foundation.outputs.cfn_role }}
           BUCKET: ${{ steps.foundation.outputs.bucket }}
           AGENT_IMAGE_TAG: ${{ steps.image.outputs.tag }}
           INVOKER_IMAGE_TAG: ${{ steps.invoker.outputs.tag }}
+          AGENT_RUNTIME_IMAGE_TAG: ${{ steps.runtime_image.outputs.tag }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -232,7 +259,7 @@ jobs:
             fi
             params=()
             case "$stack" in
-              factorial-agent) params=(--parameter-overrides "AgentImageTag=$AGENT_IMAGE_TAG") ;;
+              factorial-agent) params=(--parameter-overrides "AgentImageTag=$AGENT_IMAGE_TAG" "AgentRuntimeImageTag=$AGENT_RUNTIME_IMAGE_TAG") ;;
               factorial-orchestration) params=(--parameter-overrides "InvokerImageTag=$INVOKER_IMAGE_TAG" "FactorialVersion=$GITHUB_SHA") ;;
             esac
             # package uploads local artefacts (Lambda bundles) and rewrites
@@ -287,4 +314,38 @@ jobs:
             aws bedrock-agentcore-control update-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
               --target-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
             echo "$harness_id: live endpoint moved from harness version $current to $latest."
+          done
+
+      # The same for every runtime: each runtime block outputs <Role>RuntimeId.
+      # Only a READY version is promoted.
+      - name: Promote every runtime live endpoint
+        run: |
+          set -euo pipefail
+          runtime_ids=$(aws cloudformation describe-stacks --stack-name factorial-agent \
+            --query "Stacks[0].Outputs[?ends_with(OutputKey, 'RuntimeId')].OutputValue" --output text 2>/dev/null || true)
+          if [ -z "$runtime_ids" ] || [ "$runtime_ids" = "None" ]; then
+            echo "No runtimes in the agent stack; nothing to promote."
+            exit 0
+          fi
+          for runtime_id in $runtime_ids; do
+            latest=$(aws bedrock-agentcore-control list-agent-runtime-versions --agent-runtime-id "$runtime_id" \
+              --query "max_by(agentRuntimes[?status=='READY'], &to_number(agentRuntimeVersion)).agentRuntimeVersion" --output text)
+            if [ -z "$latest" ] || [ "$latest" = "None" ]; then
+              echo "::error::$runtime_id has no READY version to promote."
+              exit 1
+            fi
+            # A freshly created endpoint reports no targetVersion yet; fall back
+            # to the version actually serving traffic.
+            current=$(aws bedrock-agentcore-control get-agent-runtime-endpoint --agent-runtime-id "$runtime_id" --endpoint-name live \
+              --query '[targetVersion, liveVersion] | [?@ != null] | [0]' --output text)
+            status=$(aws bedrock-agentcore-control get-agent-runtime-endpoint --agent-runtime-id "$runtime_id" --endpoint-name live \
+              --query 'status' --output text)
+            if [ "$latest" = "$current" ] && [ "$status" = "READY" ]; then
+              echo "$runtime_id: live endpoint already at runtime version $latest."
+              continue
+            fi
+            # Re-issuing the update also repairs an endpoint left in a failed state.
+            aws bedrock-agentcore-control update-agent-runtime-endpoint --agent-runtime-id "$runtime_id" --endpoint-name live \
+              --agent-runtime-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
+            echo "$runtime_id: live endpoint moved from runtime version $current to $latest."
           done
