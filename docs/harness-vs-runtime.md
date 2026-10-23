@@ -161,6 +161,99 @@ What does change is where in-session enforcement lives. Today the tool allow-lis
 
 Even so, the in-session allow-list is what section 8 already says it is: a constraint on what a prompt injection can drive, never the access gate. The gate remains the outer rules. Rule 6 would be reworded from "each agent role is its own harness" to "each trust boundary is its own Runtime, session and IAM role; subagents share their parent's trust level and never cross one". Net: no outer boundary weakens, and one in-session control moves from AWS-owned to Factorial-owned code, which is an accepted-risk entry for `docs/security.md` with the mitigations above, in the style of the root decision.
 
+**What it would look like.** `docs/system-diagram.md` redrawn for this option, after both steps of the state-graph change above. Blue-bordered nodes are new or changed; the dotted red node lists what goes; everything else is the system as it is. Human-provided inputs and the triggers stack are collapsed, since neither changes.
+
+```mermaid
+flowchart TB
+    classDef human fill:#f6f6f6,stroke:#999999,stroke-dasharray: 4 4,color:#555555
+    classDef changed stroke:#2f6f9f,stroke-width:2px
+    classDef removed fill:#f6f6f6,stroke:#c0392b,stroke-dasharray: 4 4,color:#555555
+
+    %% ------------------------------------------------------------------ GitHub
+    subgraph github["GitHub"]
+        direction TB
+        issue["Issue #N<br/>(factorial label)"]
+        testwf["test.yml run<br/>(dispatched on main,<br/>trusted definition)"]
+        pr["Pull request<br/>(author: factorial[bot])<br/>awaiting human approval"]
+    end
+
+    %% ------------------------------------------------------- Claude Platform
+    subgraph anthropic["Claude Platform on AWS (Anthropic-operated, eu-west-1)"]
+        claudeapi["Claude API<br/>SigV4 from the execution role<br/>no key in the account"]
+    end
+
+    %% ---------------------------------------------------------------- Agent
+    subgraph agent["Stack 20: factorial-agent"]
+        direction TB
+        subgraph builderrt["AgentCore Runtime: factorial_builder (immutable versions, 'live' endpoint)<br/>one session per work item, hostile once the model has run"]
+            direction TB
+            hostproc["Host process (TypeScript, root-owned, read-only)<br/>query(): hooks, permission rules,<br/>subagent definitions, maxTurns, maxBudgetUsd,<br/>plan.json validated before the build phase"]
+            builderproc["claude subprocess (non-root)<br/>builder: follows the plan, edits,<br/>commits, writes summary.md<br/>compaction below the window"]
+            plansub["Subagent: plan<br/>Read, Grep, Glob only, no Bash<br/>runs before any write,<br/>writes plan.json"]
+            explsub["Subagent: explore<br/>read-only<br/>isolated context"]
+            hostproc -->|"spawns"| builderproc
+            builderproc -->|"first"| plansub
+            builderproc -->|"on demand"| explsub
+        end
+        subgraph reviewerrt["AgentCore Runtime: factorial_reviewer ('live' endpoint)"]
+            reviewerproc["Agent SDK container, read-only tools<br/>fresh session on the tested branch,<br/>rules from the base branch,<br/>writes review.json"]
+        end
+        builderrole["factorial-agent role<br/>(agent boundary; no GitHub, no PutEvents;<br/>IAM condition pins the model)"]
+        reviewerrole["factorial-agent-reviewer role<br/>(same boundary)"]
+        removed["Removed: factorial_planner harness,<br/>model API key in Identity, LiteLLM config,<br/>web search gateway (if the SDK's search works here)"]
+        builderrt --- builderrole
+        reviewerrt --- reviewerrole
+    end
+
+    %% --------------------------------------------------------- Orchestration
+    subgraph orchestration["Stack 30: factorial-orchestration (unchanged shape)"]
+        direction TB
+        sfn["Step Functions: factorial-work (live alias)<br/>Prepare → Build → Collect → Test →<br/>PrepareReview → Review → CollectReview → OpenPullRequest<br/>(Plan folded into Build; SaveWork/ContinueBuild kept<br/>as the safety net for time and turn limits)"]
+        prepare["Lambda: factorial-prepare<br/>(clones repo into the session,<br/>creates the work branch)"]
+        invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync)<br/>invokes the Runtime, streams SDK<br/>messages, usage and cost to the record"]
+        collect["Lambda: factorial-collect<br/>(reads plan.json, summary.md, notes.md;<br/>validates the plan; exports git bundle)"]
+        cleanroom["Clean-room session<br/>(no model has run here)<br/>import bundle, check head,<br/>re-create commits, push"]
+        dispatch["Lambda: factorial-dispatch-tests<br/>(test.yml on main, task token)"]
+        preparereview["Lambda: factorial-prepare-review<br/>(fresh clone at the tested head,<br/>writes plan, summary, diff, rules)"]
+        collectreview["Lambda: factorial-collect-review<br/>(reads review.json, validates)"]
+        openpr["Lambda: factorial-open-pr<br/>(verifies head = tested sha)"]
+        store["S3 artefact store + DynamoDB ledger<br/>plan, transcript, usage, bundle, review"]
+        sfn --> prepare
+        sfn -->|"RunTask (Build and Review)"| invoker
+        sfn --> collect
+        sfn --> dispatch
+        sfn --> preparereview
+        sfn --> collectreview
+        sfn --> openpr
+    end
+
+    triggers["Stack 10: factorial-triggers<br/>(unchanged: adapter, factorial-work bus)"]
+    issue -->|"webhook (control)"| triggers
+    triggers -->|"StartExecution on live alias<br/>(control)"| sfn
+
+    prepare -->|"session command API:<br/>clone, token as header<br/>(data)"| builderrt
+    invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| builderrt
+    invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| reviewerrt
+    builderrt -->|"model calls<br/>(data)"| claudeapi
+    reviewerrt -->|"model calls<br/>(data)"| claudeapi
+    collect -->|"session command API:<br/>named files, bundle<br/>(data)"| builderrt
+    collect -->|"bundle<br/>(data)"| cleanroom
+    cleanroom -->|"push factorial/* branch,<br/>App installation token<br/>(data)"| github
+    dispatch -->|"workflow_dispatch<br/>(control)"| testwf
+    testwf -->|"OIDC callback role:<br/>SendTaskSuccess/Failure<br/>(control)"| sfn
+    preparereview -->|"session command API:<br/>clone tested head, seed files<br/>(data)"| reviewerrt
+    collectreview -->|"session command API:<br/>review.json<br/>(data)"| reviewerrt
+    openpr -->|"create PR, comment<br/>(data)"| pr
+    collect -.-> store
+    collectreview -.-> store
+    invoker -.-> store
+
+    class hostproc,builderproc,plansub,explsub,reviewerproc,claudeapi,builderrole changed
+    class removed removed
+```
+
+Read off the diagram: the two trust boundaries the SDK does not touch are the clean-room session, which is the only path to GitHub, and the reviewer's Runtime, which is the only session that judges the builder's output. Inside the builder's Runtime the host process is the new piece of Factorial-owned code; the plan and explore subagents live beneath the builder and share its trust level. The one external dependency that changes is the model: Claude Platform on AWS replaces the Z.ai key, reached by the execution role rather than a secret.
+
 **Spike:** the builder only, on a Runtime in `eu-west-1`, with Claude Platform on AWS. Run a #87-sized item on Haiku 5.5 and on Sonnet 5.5 against GLM 5.3 Flash on the Harness, and compare rounds, calls, tokens, cost and outcome. The planner and reviewer stay on Harness for the spike.
 
 ## If building from scratch
