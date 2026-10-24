@@ -1,8 +1,8 @@
 /**
  * ContinueBuild: the builder stopped at its iteration or time limit before
  * finishing the plan, and Collect has saved its work to the branch. Set up
- * the next round: a fresh builder session (a new session id on the same
- * harness) cloned at the branch head, with the validated plan read back
+ * the next round: a fresh builder session (a new session on the same agent)
+ * cloned at the branch head, with the validated plan read back
  * from the artefact store, the previous round's notes (the builder's own
  * memory, stored by Collect before the push) and a section saying where
  * it stands. The state machine then runs the builder again.
