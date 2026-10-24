@@ -16,7 +16,7 @@ import type { WorkContext } from '../lib/context.ts';
 import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId, continuingSection, seedRoundScript } from '../lib/continue-files.ts';
 import { logged, runKey } from '../lib/log.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
-import { mustRun, sessionTarget } from '../lib/session.ts';
+import { handOverWorkspace, mustRun, sessionTarget } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
@@ -71,7 +71,9 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
   const notes =
     (previousNotes ?? initialNotes(ctx.workItem, { role: 'builder', ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}) })) +
     continuingSection({ round, baseCommit: ctx.baseCommit, pushed, commitCount: collect.commitCount ?? 0 });
-  await mustRun(sessionTarget(sessionId, 'builder'), seedRoundScript({ planJson, planMarkdown, notes }), 60);
+  const builder = sessionTarget(sessionId, 'builder');
+  await mustRun(builder, seedRoundScript({ planJson, planMarkdown, notes }), 60);
+  await handOverWorkspace(builder);
 
   await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0 });
   await recordProgress(ctx.workItem.id, 'build-continuing', { buildRounds: round, buildSessionId: sessionId });
