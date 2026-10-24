@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 
-import { asAgent, cleanRoomTarget, sessionTarget } from './session.ts';
+import { asAgent, cleanRoomTarget, commandFor, sessionTarget } from './session.ts';
 
 const HARNESS = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_builder-abc';
 const RUNTIME = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_builder-abc';
@@ -74,5 +74,24 @@ describe('asAgent', () => {
     // Replace the privilege drop with a plain shell to check the quoting round-trips.
     const local = wrapped.replace(/^exec setpriv .*\\\n {2}env HOME=\/home\/agent /, 'env HOME=/home/agent ');
     assert.equal(execFileSync('bash', ['-c', local], { encoding: 'utf8' }), "it's\n/home/agent\n");
+  });
+});
+
+describe('commandFor', () => {
+  const harness = { arn: HARNESS, qualifier: 'live', sessionId: 's', kind: 'harness' } as const;
+  const runtime = { ...harness, arn: RUNTIME, kind: 'runtime' } as const;
+  const script = `set -euo pipefail\nprintf '%s\\n' "it's" | cat\nexit 7`;
+
+  it('sends a harness script as it is', () => {
+    assert.equal(commandFor(harness, script), script);
+  });
+
+  it('names bash for the Runtime, which runs the first word as a program', () => {
+    const command = commandFor(runtime, script);
+    assert.match(command, /^bash -c '/);
+    // A shell's word splitting, as the Runtime does, gives back the script intact.
+    const run = spawnSync('bash', ['-c', command], { encoding: 'utf8' });
+    assert.equal(run.stdout, "it's\n");
+    assert.equal(run.status, 7);
   });
 });
