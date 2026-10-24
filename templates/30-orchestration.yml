@@ -27,13 +27,6 @@ Parameters:
     Type: Number
     Default: 7200
     Description: Upper bound for one round of the agent build step, including the harness's own timeout.
-  BuilderTarget:
-    Type: String
-    Default: runtime
-    AllowedValues:
-      - harness
-      - runtime
-    Description: Where the builder runs, its harness or Factorial's host on the builder Runtime. Its session commands, its clean room and its invocation follow it; the planner and reviewer stay on their harnesses.
   MaxBuildRounds:
     Type: Number
     Default: 6
@@ -56,6 +49,17 @@ Parameters:
     MinValue: 1
     Description: Days a run's artefacts are kept before the lifecycle rule expires them.
 
+# Settings changed only by a pull request. A parameter would not do: the
+# deploy keeps a stack's existing parameter values, so a changed Default
+# never takes effect.
+Mappings:
+  Builder:
+    # Where the builder runs: `harness`, or `runtime` for Factorial's host on
+    # the builder Runtime. Its session commands, its clean room and its
+    # invocation follow it; the planner and reviewer stay on their harnesses.
+    Target:
+      Value: runtime
+
 Globals:
   Function:
     Runtime: nodejs22.x
@@ -74,7 +78,7 @@ Globals:
         PLANNER_HARNESS_ARN: !ImportValue Factorial-PlannerHarnessArn
         REVIEWER_HARNESS_ARN: !ImportValue Factorial-ReviewerHarnessArn
         HARNESS_QUALIFIER: live
-        BUILDER_TARGET: !Ref BuilderTarget
+        BUILDER_TARGET: !FindInMap [Builder, Target, Value]
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
@@ -836,7 +840,7 @@ Resources:
                 - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
-          # The builder's Runtime, for when BuilderTarget is runtime: commands
+          # The builder's Runtime, for when the builder's target is runtime: commands
           # only, since the invoker runs the agent.
           - Effect: Allow
             Action:
@@ -1040,7 +1044,7 @@ Resources:
         TaskDefinitionArn: !Ref InvokerTaskDefinition
         BuilderHarnessArn: !ImportValue Factorial-BuilderHarnessArn
         BuilderHarnessId: !ImportValue Factorial-BuilderHarnessId
-        BuilderTarget: !Ref BuilderTarget
+        BuilderTarget: !FindInMap [Builder, Target, Value]
         BuilderRuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
         PlannerHarnessArn: !ImportValue Factorial-PlannerHarnessArn
         PlannerHarnessId: !ImportValue Factorial-PlannerHarnessId
