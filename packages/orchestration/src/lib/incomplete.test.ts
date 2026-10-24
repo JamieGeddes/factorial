@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { INCOMPLETE_EXIT_CODE } from './incomplete.js';
+import { INCOMPLETE_EXIT_CODE } from './incomplete.ts';
 
 test('INCOMPLETE_EXIT_CODE matches the invoker', () => {
   const role = readFileSync(new URL('../../../invoker/src/role.ts', import.meta.url), 'utf8');
