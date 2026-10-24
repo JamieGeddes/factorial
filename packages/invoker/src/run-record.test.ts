@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { modelIdOf, usageRecord } from './run-record.ts';
+import { modelIdOf, runtimeInfoOf, usageRecord } from './run-record.ts';
 import { addCallUsage, emptyRunUsage } from './usage.ts';
 
 describe('modelIdOf', () => {
@@ -50,4 +50,25 @@ describe('usageRecord', () => {
   it('says error when the stream failed before a stop reason arrived', () => {
     assert.equal(usageRecord({ ...base, stopReason: undefined, interrupted: false, error: 'boom' }).stopReason, 'error');
   });
+});
+
+it("reads a runtime version's model and limits from its environment", () => {
+  assert.deepEqual(
+    runtimeInfoOf({
+      FACTORIAL_ROLE: 'builder',
+      FACTORIAL_MODEL: 'eu.anthropic.claude-sonnet-5-5',
+      FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
+      FACTORIAL_MAX_TURNS: '150',
+      FACTORIAL_MAX_BUDGET_USD: '10',
+      FACTORIAL_MAX_DURATION_SECONDS: '6600',
+    }),
+    {
+      modelId: 'eu.anthropic.claude-sonnet-5-5',
+      exploreModelId: 'eu.anthropic.claude-haiku-5-5',
+      maxTurns: 150,
+      maxBudgetUsd: 10,
+      maxDurationSeconds: 6600,
+    },
+  );
+  assert.deepEqual(runtimeInfoOf(undefined), {});
 });

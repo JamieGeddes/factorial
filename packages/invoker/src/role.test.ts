@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ROLE_STAGES, harnessTarget, incompleteReason, outcomeAttributes, parseSensitivePaths } from './role.ts';
+import { ROLE_STAGES, agentTarget, harnessTarget, incompleteReason, outcomeAttributes, parseSensitivePaths } from './role.ts';
 
 const env = {
   ROLE: 'builder',
@@ -129,4 +129,44 @@ test('treats a builder that stopped before end_turn as incomplete', () => {
 test('leaves the planner and the reviewer to their Collect steps', () => {
   assert.equal(incompleteReason('planner', 'max_iterations_exceeded'), undefined);
   assert.equal(incompleteReason('reviewer', 'timeout_exceeded'), undefined);
+});
+
+const runtimeEnv = {
+  ROLE: 'builder',
+  TARGET: 'runtime',
+  RUNTIME_ARN: 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_builder-NTDenOHhba',
+  RUNTIME_QUALIFIER: 'live',
+};
+
+test('targets the harness unless told otherwise', () => {
+  assert.equal(agentTarget(env).kind, 'harness');
+  assert.equal(agentTarget({ ...env, TARGET: 'harness' }).kind, 'harness');
+  assert.throws(() => agentTarget({ ...env, TARGET: 'lambda' }), /Unknown target "lambda"/);
+});
+
+test('reads the role and its runtime from the task input', () => {
+  assert.deepEqual(agentTarget(runtimeEnv), {
+    kind: 'runtime',
+    role: 'builder',
+    runtimeArn: runtimeEnv.RUNTIME_ARN,
+    runtimeId: 'factorial_builder-NTDenOHhba',
+    qualifier: 'live',
+  });
+});
+
+test("refuses a runtime that is not the role's", () => {
+  assert.throws(() => agentTarget({ ...runtimeEnv, ROLE: 'reviewer' }), /does not name the reviewer runtime/);
+  assert.throws(
+    () => agentTarget({ ...runtimeEnv, RUNTIME_ARN: 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/other_builder-abc' }),
+    /does not name the builder runtime/,
+  );
+  assert.throws(() => agentTarget({ ...runtimeEnv, RUNTIME_ARN: `${runtimeEnv.RUNTIME_ARN}/runtime-endpoint/live` }), /does not name/);
+  assert.throws(() => agentTarget({ ...runtimeEnv, RUNTIME_QUALIFIER: undefined }), /RUNTIME_QUALIFIER/);
+});
+
+test("treats the Agent SDK's success as a finished build and its limits as incomplete", () => {
+  assert.equal(incompleteReason('builder', 'success'), undefined);
+  assert.match(incompleteReason('builder', 'error_max_turns') ?? '', /stopped with error_max_turns/);
+  assert.match(incompleteReason('builder', 'error_max_budget_usd') ?? '', /error_max_budget_usd/);
+  assert.match(incompleteReason('builder', 'max_duration') ?? '', /max_duration/);
 });

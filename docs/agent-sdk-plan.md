@@ -138,6 +138,13 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 - Outcome mapping: `success` is complete; `error_max_turns` and `error_max_budget_usd` are incomplete (the rounds path, as `max_iterations_exceeded` is today); `error_during_execution` is a failure. `incompleteReason` gains the SDK subtypes.
 - The invoker role (`templates/30-orchestration.yml`) gains `bedrock-agentcore:InvokeAgentRuntime` on `Factorial-BuilderRuntimeArn` and its endpoints, and `GetAgentRuntime` and `GetAgentRuntimeEndpoint` for the record.
 
+**Recorded with PR 5 (2026-10-24):**
+
+- **Phase 0 closed by PR 4's hand invocation (2026-10-23).** Sonnet 5.5 streamed under `factorial-agent-builder` and the agent boundary: success in 3 turns for $0.041, with 9,633 cache-read tokens, so prompt caching works on Bedrock in `eu-west-1` (open question 3, first half). `status`, `attach` and the second-run 409 behaved as designed on the deployed runtime.
+- **Usage accounting (open question 7).** Summed streamed assistant messages undercount: a message carries its usage from the start of the response, before the output is counted (47 output tokens summed against 806 in `modelUsage` on a run with an `explore` call). The ledger's totals therefore come from the result's `modelUsage`, which covers subagents; the streamed calls give the call count and per-call input sizes, and are the fallback for a run stopped before its result.
+- **Reconnect checked live.** A first stream cut after three messages was re-attached with `after: 3`; all 19 messages arrived once, in order.
+- The invoker reads `TARGET` (`harness` by default) with `RUNTIME_ARN` and `RUNTIME_QUALIFIER`, and refuses a runtime that is not `factorial_<role>-…`. Stop reasons on a runtime are the result subtype, `max_duration` or `host_error`; `success` is complete, a turn, budget or time limit is incomplete (exit code 3, the rounds path), and anything else is an error. The host's `status` decides when it can be read.
+
 **1.6 The orchestrator** (`packages/orchestration/`)
 
 - `session.ts`: the target for a role comes from `BUILDER_RUNTIME_ARN` when `BUILDER_TARGET=runtime`, otherwise from `HARNESS_ARN` as now. One place, no other call site changes.

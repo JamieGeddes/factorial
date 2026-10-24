@@ -457,6 +457,27 @@ Resources:
                   - !Sub
                     - ${HarnessArn}/harness-endpoint/*
                     - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
+              # The builder on AgentCore Runtime (docs/agent-sdk-plan.md),
+              # invoked when the state machine sets TARGET=runtime: the run,
+              # attach and status actions, and which version live serves.
+              - Sid: InvokeRuntimes
+                Effect: Allow
+                Action: bedrock-agentcore:InvokeAgentRuntime
+                Resource:
+                  - !ImportValue Factorial-BuilderRuntimeArn
+                  - !Sub
+                    - ${RuntimeArn}/runtime-endpoint/*
+                    - RuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
+              - Sid: ReadRuntimeVersions
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:GetAgentRuntime
+                  - bedrock-agentcore:GetAgentRuntimeEndpoint
+                Resource:
+                  - !ImportValue Factorial-BuilderRuntimeArn
+                  - !Sub
+                    - ${RuntimeArn}/runtime-endpoint/*
+                    - RuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
