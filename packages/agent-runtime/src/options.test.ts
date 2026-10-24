@@ -20,6 +20,7 @@ const config = readConfig({
 const parts = {
   hostEnv: {},
   preToolUse: [],
+  stop: [],
   abortController: new AbortController(),
   stderr: () => {},
 };

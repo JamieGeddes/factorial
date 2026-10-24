@@ -8,6 +8,7 @@ import { createLogger } from '@factorial/log';
 import { readConfig } from './config.ts';
 import { preToolUseHooks } from './hooks.ts';
 import { queryOptions } from './options.ts';
+import { stopHooks } from './report.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
@@ -31,6 +32,7 @@ function startQuery(request: RunRequest): AsyncIterable<unknown> {
   const options = queryOptions(config, {
     hostEnv: process.env,
     preToolUse: preToolUseHooks(config.workspace, (toolName, reason) => log.info('tool use denied', { toolName, reason })),
+    stop: stopHooks(config.workspace, (reason) => log.info('report incomplete; builder sent back', { reason })),
     webSearch: config.webSearchGatewayUrl
       ? webSearchServer(signedGatewayCall(config.webSearchGatewayUrl, config.region))
       : undefined,
