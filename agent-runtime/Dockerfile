@@ -2,8 +2,9 @@
 # is Factorial's host process around the Claude Agent SDK (packages/agent-runtime).
 # Built for linux/arm64 only (AgentCore Runtime requirement).
 #
-# The toolchain matches agent-environment/ so the orchestrator's session
-# commands and the agent's shell see the same tools. The image holds no
+# The toolchain is agent-environment/'s, plus python3 and cfn-lint so the
+# builder can run the repository's full checks (npm run ci ends with
+# cfn-lint). The image holds no
 # credentials and no credential helpers: the model is reached through Bedrock
 # with the execution role, and the orchestrator does all GitHub access.
 #
@@ -35,7 +36,20 @@ RUN apt-get update \
       jq \
       less \
       procps \
+      python3 \
+      python3-venv \
  && rm -rf /var/lib/apt/lists/*
+
+# cfn-lint at CI's version (.github/workflows/ci.yml), with every dependency
+# pinned by hash in cfn-lint-requirements.txt, generated from cfn-lint.in with
+# pip-compile --generate-hashes on python:3.11-slim-bookworm (Debian
+# bookworm's python3 is 3.11).
+COPY cfn-lint-requirements.txt /tmp/
+RUN python3 -m venv /opt/cfn-lint \
+ && /opt/cfn-lint/bin/pip install --no-cache-dir --require-hashes -r /tmp/cfn-lint-requirements.txt \
+ && ln -s /opt/cfn-lint/bin/cfn-lint /usr/local/bin/cfn-lint \
+ && chmod -R go-w /opt/cfn-lint \
+ && rm /tmp/cfn-lint-requirements.txt
 
 # GitHub CLI (read-only use without a token), verified against the release checksum.
 RUN curl -fsSL -o /tmp/gh.deb "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_arm64.deb" \

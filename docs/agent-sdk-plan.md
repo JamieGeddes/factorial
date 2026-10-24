@@ -153,6 +153,12 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 - Collect does not read `/var/lib/factorial`: the invoker gets the run from the stream and `status`, so nothing outside the host reads the record.
 - `BuilderTarget` (a template Mapping since the spike's first flip: as a parameter, the deploy kept the stack's existing `harness` and ignored the new default) reaches the Lambdas as `BUILDER_TARGET` and the Build state as `TARGET`, `RUNTIME_ARN` and `RUNTIME_QUALIFIER`. The session-command policy gains `InvokeAgentRuntimeCommand` (only) on the builder Runtime and its endpoints.
 
+**Recorded with the first spike item (#108, PR #113, 2026-10-24):**
+
+- Sonnet 5.5 finished in one session: 12 turns, 131 seconds, $0.081, 89% of input tokens from cache, one stream with no re-attach. The pull request was accepted.
+- The report was the weak part: the builder never read `plan.json` or `notes.md`, and wrote a one-line `summary.md` with no `## Plan steps`, although both prompts ask for it. A `Stop` hook in the host (`packages/agent-runtime/src/report.ts`) now sends the builder back, at most twice, until the section has a line for every step id in the plan; the host reads the two files without following links, capped, and returns only step ids. Checked locally on Haiku 5.5: a run told to write "Done." was sent back once and then reported each step, including one it skipped.
+- The builder could not run `cfn-lint`, the last step of `npm run ci`, and had no `python3`. The image now has both, `cfn-lint` at CI's version with every dependency pinned by hash (about 200 MB more).
+
 **1.6 The orchestrator** (`packages/orchestration/`)
 
 - `session.ts`: the target for a role comes from `BUILDER_RUNTIME_ARN` when `BUILDER_TARGET=runtime`, otherwise from `HARNESS_ARN` as now. One place, no other call site changes.

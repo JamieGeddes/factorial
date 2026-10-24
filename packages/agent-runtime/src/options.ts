@@ -17,6 +17,7 @@ export const BUILDER_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', '
 export interface OptionParts {
   hostEnv: NodeJS.ProcessEnv;
   preToolUse: HookCallbackMatcher[];
+  stop: HookCallbackMatcher[];
   webSearch: McpSdkServerConfigWithInstance | undefined;
   abortController: AbortController;
   stderr: (data: string) => void;
@@ -32,7 +33,7 @@ export function queryOptions(config: Config, parts: OptionParts): Options {
     mcpServers: parts.webSearch ? { [SERVER_NAME]: parts.webSearch } : {},
     strictMcpConfig: true,
     agents: builderAgents(config),
-    hooks: { PreToolUse: parts.preToolUse },
+    hooks: { PreToolUse: parts.preToolUse, Stop: parts.stop },
     settingSources: [],
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,
