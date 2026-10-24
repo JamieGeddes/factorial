@@ -1,7 +1,7 @@
 /**
  * Recognising a builder that stopped before finishing. The invoker exits
- * with INCOMPLETE_EXIT_CODE when the builder's run ends with any stop reason
- * but end_turn (its iteration or time limit), and the ECS task's failure
+ * with INCOMPLETE_EXIT_CODE when the builder stops for any reason other than
+ * a finished run (end_turn on the harness, success on the Runtime), and the ECS task's failure
  * cause carries that code. Collect uses it to decide whether the build
  * continues in another round; Report uses it to say what happened.
  */

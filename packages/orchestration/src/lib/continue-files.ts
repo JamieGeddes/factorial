@@ -15,7 +15,7 @@ export const MAX_NOTES_ARTEFACT_BYTES = 64 * 1024;
 /**
  * The builder's session id for a round. Round 1 is the work item id, as
  * every role's first session is; later rounds add a suffix, so each round
- * is a new session on the same harness.
+ * is a new session on the same agent.
  */
 export function builderSessionId(workItemId: string, round: number): string {
   if (!Number.isInteger(round) || round < 1) throw new Error(`round ${round} is not a positive integer`);
