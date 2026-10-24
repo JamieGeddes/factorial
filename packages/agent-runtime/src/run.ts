@@ -161,6 +161,16 @@ export class Run {
         this.finish('finished');
         return;
       }
+      // After an error result (a turn or budget limit), the SDK also throws
+      // "Claude Code returned an error result". The result already says how
+      // the run ended, so the throw is not a second, different ending: on
+      // #120 recording it made the stream disagree with status, and a turn
+      // limit failed the build instead of continuing it. A throw after a
+      // success result, or with no result, still fails the run.
+      if (isResult(this.result) && this.result.subtype !== 'success') {
+        this.finish('finished');
+        return;
+      }
       this.error = error instanceof Error ? error.message : String(error);
       this.record({ type: HOST_ERROR, error: this.error });
       this.finish('failed');

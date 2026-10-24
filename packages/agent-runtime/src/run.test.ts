@@ -117,6 +117,39 @@ describe('Run', () => {
   });
 });
 
+describe('Run after an error result', () => {
+  it('lets the result decide when the SDK throws after it', async () => {
+    const limited = { type: 'result', subtype: 'error_max_turns', num_turns: 4 };
+    const run = new Run(directory(), async function* () {
+      yield { type: 'system', subtype: 'init' };
+      yield limited;
+      throw new Error('Claude Code returned an error result: Reached maximum number of turns (3)');
+    });
+    run.start({ prompt: 'go', round: 1 });
+    await tick();
+    await tick();
+    const status = run.status();
+    assert.equal(status.state, 'finished');
+    assert.equal(status.outcome, 'incomplete');
+    assert.equal(status.error, undefined);
+    const messages: unknown[] = [];
+    run.subscribe(0, (entry) => messages.push(entry.message), () => {});
+    assert.deepEqual(messages.map((message) => (message as { type: string }).type), ['system', 'result']);
+  });
+
+  it('still fails when the SDK throws after a success result', async () => {
+    const run = new Run(directory(), async function* () {
+      yield result;
+      throw new Error('late failure');
+    });
+    run.start({ prompt: 'go', round: 1 });
+    await tick();
+    await tick();
+    assert.equal(run.status().state, 'failed');
+    assert.equal(run.status().error, 'late failure');
+  });
+});
+
 describe('Run time limit', () => {
   it('stops the run at its limit and reports it as incomplete', async () => {
     let aborted = false;
