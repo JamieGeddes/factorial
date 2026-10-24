@@ -83,13 +83,22 @@ export async function handOverWorkspace(target: SessionTarget): Promise<void> {
   await mustRun(target, `chown -R ${AGENT_USER}:${AGENT_USER} /workspace`, 120);
 }
 
+/**
+ * The command string to send. A harness runs it through a shell. A Runtime
+ * splits it into words as a shell would, honouring quotes, but runs the first
+ * word as a program, so `set -e` or a pipeline fails unless bash is named.
+ */
+export function commandFor(target: SessionTarget, script: string): string {
+  return target.kind === 'runtime' ? `bash -c ${shellQuote(script)}` : script;
+}
+
 export async function runCommand(target: SessionTarget, command: string, timeoutSeconds = 300): Promise<CommandResult> {
   const response = await client.send(
     new InvokeAgentRuntimeCommandCommand({
       agentRuntimeArn: target.arn,
       qualifier: target.qualifier,
       runtimeSessionId: target.sessionId,
-      body: { command, timeout: timeoutSeconds },
+      body: { command: commandFor(target, command), timeout: timeoutSeconds },
     }),
   );
 
