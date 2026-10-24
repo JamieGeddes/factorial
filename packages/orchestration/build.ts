@@ -1,7 +1,9 @@
 /**
  * Bundle each Lambda entry point separately into dist/<name>/index.mjs so each
- * function's CodeUri is its own directory. The AWS SDK is provided by the
- * nodejs22.x runtime and left external.
+ * function's CodeUri is its own directory. The AWS SDK is bundled
+ * too, not taken from the nodejs22.x runtime: the runtime's copy changes with
+ * AWS's runtime updates, and on 2026-10-24 one shipped an AgentCore client
+ * without InvokeAgentRuntimeCommand, which failed Prepare at load.
  */
 import { build } from 'esbuild';
 
@@ -18,7 +20,6 @@ await Promise.all(
       target: 'node22',
       format: 'esm',
       sourcemap: true,
-      external: ['@aws-sdk/*'],
       banner: {
         js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
       },
