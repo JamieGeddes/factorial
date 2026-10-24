@@ -1,6 +1,7 @@
 /**
- * Bundle the adapter into a single ESM file for Lambda. The AWS SDK is provided
- * by the nodejs22.x runtime, so it is left external.
+ * Bundle the adapter into a single ESM file for Lambda, the AWS SDK included:
+ * the nodejs22.x runtime's copy changes with AWS's runtime updates
+ * (packages/orchestration/build.ts has the incident).
  */
 import { build } from 'esbuild';
 
@@ -12,7 +13,6 @@ await build({
   target: 'node22',
   format: 'esm',
   sourcemap: true,
-  external: ['@aws-sdk/*'],
   // Bundled CommonJS dependencies may call require(); give them a working one.
   banner: {
     js: "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url);",
