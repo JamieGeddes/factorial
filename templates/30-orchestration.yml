@@ -27,6 +27,13 @@ Parameters:
     Type: Number
     Default: 7200
     Description: Upper bound for one round of the agent build step, including the harness's own timeout.
+  BuilderTarget:
+    Type: String
+    Default: harness
+    AllowedValues:
+      - harness
+      - runtime
+    Description: Where the builder runs, its harness or Factorial's host on the builder Runtime. Its session commands, its clean room and its invocation follow it; the planner and reviewer stay on their harnesses.
   MaxBuildRounds:
     Type: Number
     Default: 6
@@ -67,6 +74,8 @@ Globals:
         PLANNER_HARNESS_ARN: !ImportValue Factorial-PlannerHarnessArn
         REVIEWER_HARNESS_ARN: !ImportValue Factorial-ReviewerHarnessArn
         HARNESS_QUALIFIER: live
+        BUILDER_TARGET: !Ref BuilderTarget
+        BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
         GITHUB_PRIVATE_KEY_SECRET: factorial/github/app-private-key
@@ -521,8 +530,10 @@ Resources:
           # Time to store the transcript and usage after ECS sends SIGTERM.
           StopTimeout: 120
           # The role and its harness (ROLE, HARNESS_ARN, HARNESS_ID,
-          # HARNESS_QUALIFIER) come from the state machine's container
-          # overrides, so this one task definition serves every agent role.
+          # HARNESS_QUALIFIER), and for the builder its target (TARGET,
+          # RUNTIME_ARN, RUNTIME_QUALIFIER), come from the state machine's
+          # container overrides, so this one task definition serves every
+          # agent role.
           Environment:
             - Name: TABLE_NAME
               Value: !Ref WorkItemsTable
@@ -825,6 +836,16 @@ Resources:
                 - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
+          # The builder's Runtime, for when BuilderTarget is runtime: commands
+          # only, since the invoker runs the agent.
+          - Effect: Allow
+            Action:
+              - bedrock-agentcore:InvokeAgentRuntimeCommand
+            Resource:
+              - !ImportValue Factorial-BuilderRuntimeArn
+              - !Sub
+                - ${RuntimeArn}/runtime-endpoint/*
+                - RuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
 
   # Only orchestrator functions, outside the agent sandbox, may read the App
   # key and mint tokens.
@@ -1019,6 +1040,8 @@ Resources:
         TaskDefinitionArn: !Ref InvokerTaskDefinition
         BuilderHarnessArn: !ImportValue Factorial-BuilderHarnessArn
         BuilderHarnessId: !ImportValue Factorial-BuilderHarnessId
+        BuilderTarget: !Ref BuilderTarget
+        BuilderRuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
         PlannerHarnessArn: !ImportValue Factorial-PlannerHarnessArn
         PlannerHarnessId: !ImportValue Factorial-PlannerHarnessId
         ReviewerHarnessArn: !ImportValue Factorial-ReviewerHarnessArn
@@ -1181,6 +1204,9 @@ Resources:
                         { "Name": "HARNESS_ARN", "Value": "${BuilderHarnessArn}" },
                         { "Name": "HARNESS_ID", "Value": "${BuilderHarnessId}" },
                         { "Name": "HARNESS_QUALIFIER", "Value": "live" },
+                        { "Name": "TARGET", "Value": "${BuilderTarget}" },
+                        { "Name": "RUNTIME_ARN", "Value": "${BuilderRuntimeArn}" },
+                        { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "BUILD_ROUND", "Value": "{% $string($buildRound) %}" },
                         { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
                         { "Name": "SESSION_ID", "Value": "{% $buildSession %}" },

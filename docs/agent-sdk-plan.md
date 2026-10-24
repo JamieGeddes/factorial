@@ -145,6 +145,13 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 - **Reconnect checked live.** A first stream cut after three messages was re-attached with `after: 3`; all 19 messages arrived once, in order.
 - The invoker reads `TARGET` (`harness` by default) with `RUNTIME_ARN` and `RUNTIME_QUALIFIER`, and refuses a runtime that is not `factorial_<role>-…`. Stop reasons on a runtime are the result subtype, `max_duration` or `host_error`; `success` is complete, a turn, budget or time limit is incomplete (exit code 3, the rounds path), and anything else is an error. The host's `status` decides when it can be read.
 
+**Recorded with PR 6 (2026-10-24):**
+
+- `sessionTarget` sends the builder's commands, and its clean room, to `BUILDER_RUNTIME_ARN` when `BUILDER_TARGET=runtime`; the planner and reviewer stay on their harnesses. CollectPlan and ContinueBuild hand `/workspace` to `agent` after their last seeding write.
+- Collect's inspection, leftover commit, bundle and session-file export all run as `agent`, through `setpriv` with the wrapper's restrictions rather than `runuser` (no PAM, and the same drop as the host's). Reading the files as `agent` goes beyond 1.6, which kept them root: a planted symlink then reaches only what the model could already read. Checked in the image: no `safe.directory` complaint (open question 4), and the leftover commit's objects stay agent-owned.
+- Collect does not read `/var/lib/factorial`: the invoker gets the run from the stream and `status`, so nothing outside the host reads the record.
+- `BuilderTarget` reaches the Lambdas as `BUILDER_TARGET` and the Build state as `TARGET`, `RUNTIME_ARN` and `RUNTIME_QUALIFIER`. The session-command policy gains `InvokeAgentRuntimeCommand` (only) on the builder Runtime and its endpoints.
+
 **1.6 The orchestrator** (`packages/orchestration/`)
 
 - `session.ts`: the target for a role comes from `BUILDER_RUNTIME_ARN` when `BUILDER_TARGET=runtime`, otherwise from `HARNESS_ARN` as now. One place, no other call site changes.

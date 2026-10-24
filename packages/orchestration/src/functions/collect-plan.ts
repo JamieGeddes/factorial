@@ -15,7 +15,7 @@ import type { WorkContext } from '../lib/context.ts';
 import { logged, runKey } from '../lib/log.ts';
 import { planSize } from '../lib/plan-size.ts';
 import { checkPlanFiles, parsePlanRead, planDigest, readPlanScript, rejectionNotesScript, seedPlanScript, type PlanDigest } from '../lib/plan-files.ts';
-import { mustRun, sessionTarget } from '../lib/session.ts';
+import { handOverWorkspace, mustRun, sessionTarget } from '../lib/session.ts';
 import { recordProgress } from '../lib/table.ts';
 
 import { seedSession } from './prepare.ts';
@@ -82,7 +82,9 @@ export const handler = logged('collect-plan', (input: CollectPlanInput) => runKe
     at: ctx.baseCommit,
     ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}),
   });
-  await mustRun(sessionTarget(ctx.sessionId, 'builder'), seedPlanScript(checked.markdown, checked.json), 60);
+  const builder = sessionTarget(ctx.sessionId, 'builder');
+  await mustRun(builder, seedPlanScript(checked.markdown, checked.json), 60);
+  await handOverWorkspace(builder);
 
   await recordProgress(ctx.workItem.id, 'plan-accepted', { planAttempts: planAttempt, planSteps: checked.plan.steps.length, planSize: size });
   log.info('plan accepted', { planAttempt, size });

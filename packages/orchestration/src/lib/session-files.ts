@@ -4,11 +4,12 @@
  * `/workspace/logs`. The session is hostile by this point, so everything read
  * from it is untrusted: names are checked before they reach a shell, only
  * regular files are read (never symlinks), sizes are capped by the read
- * itself, and every file is redacted on upload.
+ * itself, and every file is redacted on upload. On the Runtime the reads run
+ * as the user the model ran as, so a planted link reaches nothing it could not.
  */
 import { putArtefact, putJsonArtefact } from '@factorial/artefacts';
 
-import { mustRun, type SessionTarget } from './session.ts';
+import { asAgent, mustRun, type SessionTarget } from './session.ts';
 import { shellQuote } from './shell.ts';
 
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -184,13 +185,13 @@ export interface ExportSummary {
  * skipped.
  */
 export async function exportSessionFiles(target: SessionTarget, prefix: string): Promise<ExportSummary> {
-  const listing = await mustRun(target, listScript(), 120);
+  const listing = await mustRun(target, asAgent(target, listScript()), 120);
   const { files, rejected } = parseListing(listing.stdout);
   const plan = planExport(files);
   const stored: Array<{ name: string; path: string; bytes: number; storedBytes: number; truncated: boolean }> = [];
   const gone: string[] = [];
   for (const group of batches(plan.fetch)) {
-    const result = await mustRun(target, fetchScript(group), 300);
+    const result = await mustRun(target, asAgent(target, fetchScript(group)), 300);
     const contents = parseFetch(result.stdout, group.length);
     for (const [i, file] of group.entries()) {
       const fetched = contents[i];

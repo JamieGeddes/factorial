@@ -1,14 +1,17 @@
 /**
- * Run deterministic shell commands inside a harness session, with no model
+ * Run deterministic shell commands inside an agent's session, with no model
  * involved. The session is identified by the WorkItem id and must always be
  * addressed through the same endpoint qualifier as the agent invocation,
- * otherwise it is a different microVM.
+ * otherwise it is a different microVM. Commands run as root. On the builder's
+ * Runtime the model runs as the `agent` user, so the workspace is handed to
+ * it after seeding and git runs as it once the model has had the repository.
  */
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand } from '@aws-sdk/client-bedrock-agentcore';
 
 import { redactSecrets } from '@factorial/artefacts';
 
 import { requireEnv } from './env.ts';
+import { shellQuote } from './shell.ts';
 
 export interface CommandResult {
   stdout: string;
@@ -17,9 +20,12 @@ export interface CommandResult {
 }
 
 export interface SessionTarget {
-  harnessArn: string;
+  /** The harness or Runtime ARN. */
+  arn: string;
   qualifier: string;
   sessionId: string;
+  /** A harness's agent runs as root; Factorial's Runtime host runs it as `agent`. */
+  kind: 'harness' | 'runtime';
 }
 
 const client = new BedrockAgentCoreClient({});
@@ -33,18 +39,54 @@ const HARNESS_ARN_ENV: Record<SessionRole, string> = {
   reviewer: 'REVIEWER_HARNESS_ARN',
 };
 
+/**
+ * The builder runs on its harness or, when BUILDER_TARGET is `runtime`, on
+ * Factorial's host on BUILDER_RUNTIME_ARN. The planner and reviewer stay on
+ * their harnesses. Both kinds are addressed through the `live` qualifier.
+ */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
-  return {
-    harnessArn: requireEnv(HARNESS_ARN_ENV[role]),
-    qualifier: requireEnv('HARNESS_QUALIFIER'),
-    sessionId,
-  };
+  const qualifier = requireEnv('HARNESS_QUALIFIER');
+  const builderTarget = process.env.BUILDER_TARGET || 'harness';
+  if (builderTarget !== 'harness' && builderTarget !== 'runtime') throw new Error(`Unknown BUILDER_TARGET "${builderTarget}"`);
+  if (role === 'builder' && builderTarget === 'runtime') {
+    return { arn: requireEnv('BUILDER_RUNTIME_ARN'), qualifier, sessionId, kind: 'runtime' };
+  }
+  return { arn: requireEnv(HARNESS_ARN_ENV[role]), qualifier, sessionId, kind: 'harness' };
+}
+
+/** The user the Runtime host runs the model as, and its home. */
+const AGENT_USER = 'agent';
+const AGENT_HOME = '/home/agent';
+
+/**
+ * A script to run as the user the model runs as, so that root never runs git
+ * or reads files in a workspace the model controls: whatever the model
+ * planted there acts with no more than its own privileges. The same drop as
+ * the host's `claude-as-agent` wrapper. On a harness the model is root, and
+ * the script runs unchanged.
+ */
+export function asAgent(target: SessionTarget, script: string): string {
+  if (target.kind === 'harness') return script;
+  return [
+    `exec setpriv --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs --bounding-set=-all -- \\`,
+    `  env HOME=${AGENT_HOME} bash -c ${shellQuote(script)}`,
+  ].join('\n');
+}
+
+/**
+ * Give the seeded workspace to the user the model runs as. The seeding
+ * commands run as root, and the session is new, so nothing the model left can
+ * be in the tree yet. Call it after the last seeding write.
+ */
+export async function handOverWorkspace(target: SessionTarget): Promise<void> {
+  if (target.kind === 'harness') return;
+  await mustRun(target, `chown -R ${AGENT_USER}:${AGENT_USER} /workspace`, 120);
 }
 
 export async function runCommand(target: SessionTarget, command: string, timeoutSeconds = 300): Promise<CommandResult> {
   const response = await client.send(
     new InvokeAgentRuntimeCommandCommand({
-      agentRuntimeArn: target.harnessArn,
+      agentRuntimeArn: target.arn,
       qualifier: target.qualifier,
       runtimeSessionId: target.sessionId,
       body: { command, timeout: timeoutSeconds },
@@ -84,7 +126,8 @@ export async function mustRun(target: SessionTarget, command: string, timeoutSec
 /**
  * A second, pristine session for operations that need credentials. It shares
  * nothing with the agent's session: no files, no git configuration, no hooks,
- * no background processes. Same qualifier, different session id.
+ * no background processes. Same qualifier, different session id. No model
+ * ever runs in it, so on the Runtime it stays root's.
  */
 export function cleanRoomTarget(workItemId: string): SessionTarget {
   return sessionTarget(`${workItemId}-push`);

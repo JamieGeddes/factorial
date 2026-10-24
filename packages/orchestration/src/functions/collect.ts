@@ -16,7 +16,7 @@ import { type WorkContext, reworkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
-import { cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
+import { asAgent, cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
 import { exportSessionFiles } from '../lib/session-files.ts';
 import {
   HARDENED_GIT_ENV,
@@ -208,9 +208,11 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
   const { salvage = false, builderSessionId, failure, ...ctx } = input;
   const incomplete = salvage && builderIncomplete(failure);
   const agentSession = sessionTarget(builderSessionId ?? ctx.sessionId);
+  // Inspecting and bundling run git in the model's repository, so they run
+  // as the user the model ran as (asAgent).
   const inspection = await runCommand(
     agentSession,
-    inspectScript(ctx.baseCommit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE),
+    asAgent(agentSession, inspectScript(ctx.baseCommit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE)),
     300,
   );
   if (inspection.exitCode !== 0) {
@@ -225,7 +227,7 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     return { pushed: false, commitCount, headSha, summary, incomplete };
   }
 
-  const bundle = await mustRun(agentSession, bundleScript(ctx.baseCommit, headSha), 300);
+  const bundle = await mustRun(agentSession, asAgent(agentSession, bundleScript(ctx.baseCommit, headSha)), 300);
   const bundleBase64 = bundle.stdout.trim();
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');
