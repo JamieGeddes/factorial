@@ -159,6 +159,11 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 - The report was the weak part: the builder never read `plan.json` or `notes.md`, and wrote a one-line `summary.md` with no `## Plan steps`, although both prompts ask for it. A `Stop` hook in the host (`packages/agent-runtime/src/report.ts`) now sends the builder back, at most twice, until the section has a line for every step id in the plan; the host reads the two files without following links, capped, and returns only step ids. Checked locally on Haiku 5.5: a run told to write "Done." was sent back once and then reported each step, including one it skipped.
 - The builder could not run `cfn-lint`, the last step of `npm run ci`, and had no `python3`. The image now has both, `cfn-lint` at CI's version with every dependency pinned by hash (about 200 MB more).
 
+**Recorded with the forced-rounds runs (#116, #120, 2026-10-24):**
+
+- At 10 turns, #116 finished in 5 (PR #118); Sonnet batches its work heavily, so forcing a round needed a limit of 3.
+- At 3, #120 stopped at its limit with the work committed, but failed instead of continuing. At a turn or budget limit the SDK delivers its `error_max_turns` result and then throws ("Claude Code returned an error result"). The host recorded the throw as a host error, so the stream said `host_error` while `status` said `incomplete`, and the invoker's agreement check failed closed (`outcome_mismatch`, exit 1, no ContinueBuild). The host now lets an error result decide the outcome when the SDK throws after it. A throw after `success`, or with no result, still fails.
+
 **1.6 The orchestrator** (`packages/orchestration/`)
 
 - `session.ts`: the target for a role comes from `BUILDER_RUNTIME_ARN` when `BUILDER_TARGET=runtime`, otherwise from `HARNESS_ARN` as now. One place, no other call site changes.
