@@ -29,7 +29,7 @@ Parameters:
     Description: Upper bound for one round of the agent build step, including the harness's own timeout.
   BuilderTarget:
     Type: String
-    Default: harness
+    Default: runtime
     AllowedValues:
       - harness
       - runtime
