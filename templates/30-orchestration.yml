@@ -1071,6 +1071,7 @@ Resources:
                 "plan": null,
                 "buildRound": 1,
                 "buildSession": null,
+                "buildStart": null,
                 "reviewPrep": null,
                 "reviewError": null,
                 "review": null
@@ -1233,7 +1234,7 @@ Resources:
               "Type": "Task",
               "Comment": "The build stopped. Push whatever the agent committed, and anything it left uncommitted, so the work is not lost. If the builder merely ran out of steps or time, the build continues in a fresh session; otherwise the failure is reported, with no tests and no pull request.",
               "Resource": "arn:aws:states:::lambda:invoke",
-              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true, 'builderSessionId': $buildSession, 'failure': $failure }]) %}" },
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true, 'builderSessionId': $buildSession, 'roundStart': $buildStart, 'failure': $failure }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
@@ -1258,6 +1259,7 @@ Resources:
               "Assign": {
                 "buildSession": "{% $states.result.Payload.sessionId %}",
                 "buildRound": "{% $states.result.Payload.round %}",
+                "buildStart": "{% $states.result.Payload.roundStart %}",
                 "failure": null,
                 "collect": null
               },
@@ -1278,7 +1280,7 @@ Resources:
             "Collect": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
-              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'builderSessionId': $buildSession }]) %}" },
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'builderSessionId': $buildSession, 'roundStart': $buildStart }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [

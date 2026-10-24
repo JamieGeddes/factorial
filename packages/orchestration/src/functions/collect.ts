@@ -192,6 +192,33 @@ async function storeBundle(ctx: WorkContext, bundleBase64: string, log: Logger):
   }
 }
 
+/**
+ * Where a build round started: the commit its session was seeded at, whether
+ * the work branch already existed on the remote then, and whether this item
+ * has pushed to it in an earlier round. ContinueBuild returns it for rounds 2
+ * onwards; round 1's comes from the work context.
+ */
+export interface RoundStart {
+  commit: string;
+  existing: boolean;
+  pushed: boolean;
+}
+
+/**
+ * The round's start. Round 1 starts at the work context's base commit, on an
+ * existing branch only for rework or a resumed attempt. A later round starts
+ * where the previous round's push left the branch, so its bundle and push
+ * cover only its own commits, onto the branch as it now is.
+ */
+export function roundStartFor(ctx: WorkContext, start: RoundStart | null | undefined): RoundStart {
+  if (start) return { ...start, commit: assertCommitSha(start.commit, 'round start commit') };
+  return {
+    commit: ctx.baseCommit,
+    existing: reworkContext(ctx.workItem) !== undefined || ctx.resumedFrom !== undefined,
+    pushed: false,
+  };
+}
+
 export interface CollectInput extends WorkContext {
   /**
    * Set when the build failed: push whatever the agent left so the work is
@@ -202,17 +229,20 @@ export interface CollectInput extends WorkContext {
   builderSessionId?: string;
   /** The Build state's failure, when salvaging: says whether the builder merely ran out. */
   failure?: StepFailure | null;
+  /** Where this round started, from ContinueBuild; absent or null in round 1. */
+  roundStart?: RoundStart | null;
 }
 
 export const handler = logged('collect', (input: CollectInput) => runKey(input), async (input, log): Promise<CollectResult> => {
-  const { salvage = false, builderSessionId, failure, ...ctx } = input;
+  const { salvage = false, builderSessionId, failure, roundStart, ...ctx } = input;
   const incomplete = salvage && builderIncomplete(failure);
+  const start = roundStartFor(ctx, roundStart);
   const agentSession = sessionTarget(builderSessionId ?? ctx.sessionId);
   // Inspecting and bundling run git in the model's repository, so they run
   // as the user the model ran as (asAgent).
   const inspection = await runCommand(
     agentSession,
-    asAgent(agentSession, inspectScript(ctx.baseCommit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE)),
+    asAgent(agentSession, inspectScript(start.commit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE)),
     300,
   );
   if (inspection.exitCode !== 0) {
@@ -221,13 +251,19 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
   const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
   await storeSessionFiles(agentSession, ctx, log);
 
+  if (commitCount === 0 && start.pushed) {
+    // Nothing new this round, but earlier rounds' work is on the branch: that
+    // pushed head is what is tested.
+    log.info('no new commits this round; the branch keeps the earlier rounds\' work', { incomplete, headSha: start.commit });
+    return { pushed: true, commitCount, headSha: start.commit, summary, incomplete };
+  }
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
     log.info('agent made no commits', { incomplete });
     return { pushed: false, commitCount, headSha, summary, incomplete };
   }
 
-  const bundle = await mustRun(agentSession, asAgent(agentSession, bundleScript(ctx.baseCommit, headSha)), 300);
+  const bundle = await mustRun(agentSession, asAgent(agentSession, bundleScript(start.commit, headSha)), 300);
   const bundleBase64 = bundle.stdout.trim();
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');
@@ -257,9 +293,9 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
       name: repo.name,
       branch: ctx.branch,
       baseBranch: ctx.baseBranch,
-      baseCommit: ctx.baseCommit,
+      baseCommit: start.commit,
       headSha,
-      existingBranch: reworkContext(ctx.workItem) !== undefined,
+      existingBranch: start.existing,
       token,
       bundleBase64,
       identity,

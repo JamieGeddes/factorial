@@ -11,7 +11,7 @@
  */
 import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
 
-import type { WorkContext } from '../lib/context.ts';
+import { reworkContext, type WorkContext } from '../lib/context.ts';
 import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId, continuingSection, seedRoundScript } from '../lib/continue-files.ts';
 import { logged, runKey } from '../lib/log.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
@@ -19,6 +19,7 @@ import { handOverWorkspace, mustRun, sessionTarget } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
+import type { RoundStart } from './collect.ts';
 import { initialNotes, seedSession } from './prepare.ts';
 
 interface ContinueBuildInput {
@@ -32,6 +33,8 @@ interface ContinueBuildInput {
 export interface ContinueBuildResult {
   sessionId: string;
   round: number;
+  /** Where the round starts, for Collect to bundle and push from. */
+  roundStart: RoundStart;
 }
 
 async function artefact(ctx: WorkContext, path: string, maxBytes: number): Promise<string | undefined> {
@@ -77,5 +80,6 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
   await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0 });
   await recordProgress(ctx.workItem.id, 'build-continuing', { buildRounds: round, buildSessionId: sessionId });
   log.info('build continues in a new session', { round, sessionId, from: at, pushed });
-  return { sessionId, round };
+  const existing = pushed || ctx.resumedFrom !== undefined || reworkContext(ctx.workItem) !== undefined;
+  return { sessionId, round, roundStart: { commit: at, existing, pushed } };
 });
