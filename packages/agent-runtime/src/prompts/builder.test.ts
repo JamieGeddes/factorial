@@ -10,4 +10,9 @@ describe('builder prompt', () => {
     for (const heading of HEADINGS) assert.ok(builderPrompt.includes(`\`${heading}\``), heading);
     assert.ok(builderPrompt.includes('`- <id>: done|skipped|changed: <why, when not done as planned>`'));
   });
+
+  it('describes WebFetch as lossy and its results as untrusted', () => {
+    assert.ok(builderPrompt.includes('WebFetch'));
+    assert.ok(builderPrompt.includes('lossy'));
+  });
 });
