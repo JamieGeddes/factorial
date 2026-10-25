@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-23. **Status:** proposed. **Starting point:** tag `stage-0-harness` (the last commit on `main` before this work).
 
-This plan turns the option evaluated in `docs/harness-vs-runtime.md` into a sequence of pull requests. It is deliberately conservative: the Harness stays deployed and remains the default until the Runtime has proved itself on a measured run, every phase is deployable on its own, and the builder is moved first, the reviewer second, and the planner last. The spine (triggers, the state machine, the orchestrator Lambdas, the clean-room push, the trusted test workflow, the artefact store and the ledger) is not changed by this plan except where a stage has to address a Runtime instead of a Harness.
+This plan turns the option evaluated in `docs/harness-vs-runtime.md` into a sequence of pull requests. It is deliberately conservative: the Harness stays deployed and remains the default until the Runtime has proved itself on a measured run, every phase is deployable on its own, and the builder is moved first, the planner second, and the reviewer last. The spine (triggers, the state machine, the orchestrator Lambdas, the clean-room push, the trusted test workflow, the artefact store and the ledger) is not changed by this plan except where a stage has to address a Runtime instead of a Harness.
 
 ## 1. Target shape
 
@@ -198,24 +198,27 @@ With everything above deployed and `BuilderTarget` still `harness`:
 - `CLAUDE.md` **Current stage** and the **Agent roles**, **Secrets** and **Language** conventions, `docs/current-stage.md` and `docs/system-diagram.md` are updated in the same pull request, as the stage rule requires. The **Language** convention becomes: TypeScript for all code Factorial owns, including the agent host process; the agent's loop is the SDK's, and its definition (prompt, tools, subagents, limits, model) is versioned by the Runtime version.
 - `docs/harness-vs-runtime.md` status line changes to "superseded for the builder; see `docs/agent-sdk-plan.md`".
 
-### Phase 3: the reviewer Runtime and the planner subagent
+### Phase 3: the planner subagent, then the reviewer Runtime
 
-**3.1 Reviewer** (first, because it is the smaller change and keeps the trust boundary explicit)
+The planner moves before the reviewer (changed 2026-10-25; the first version of this plan had it last). The spike runs a Sonnet builder from a plan written by GLM 5.3 Flash on the Harness, so the gate measures the builder alone, with a planner that can only hold it back. The full benefit needs the plan in the builder's session: no separate stage, no second clone, no wait of several minutes before the build starts, and the context gathered while planning kept for the build instead of read back from `plan.json`. The reviewer is advisory, so moving it changes no outcome and can wait.
 
-- `FACTORIAL_ROLE=reviewer` on a second Runtime, `factorial_reviewer`, from the same image, with role `factorial-agent-reviewer` re-created for the Runtime trust, and a `live` endpoint.
-- Tools: `Read`, `Grep`, `Glob` and `Bash`; a `PreToolUse` hook denies every `Edit` and `Write` except `/workspace/review.json`, and denies `Bash` commands that write (`>`, `tee`, `git commit`, `git checkout`, `npm install`). The reviewer's system prompt is ported from its harness block.
-- The state machine's Review state passes `TARGET=runtime` and the reviewer's Runtime ARN; PrepareReview and CollectReview address the Runtime through `session.ts`. The reviewer Harness block and the reviewer's model key go.
-- The reviewer is advisory, so this phase has no gate beyond a review that validates against `contracts/review/v1/` on a real item.
-
-**3.2 Planner into the builder**
+**3.1 Planner into the builder** (straight after phase 2)
 
 - `agents.plan` in the host process: `Read`, `Grep`, `Glob` only, no `Bash`, `maxTurns` 40, `model` inherits. The builder's system prompt says to run it first and write `/workspace/plan.json` and `/workspace/plan.md` from its report before any edit; the prompt for the plan subagent is ported from the planner's harness block.
 - A `PostToolUse` hook on `Write` to `/workspace/plan.json` validates it with `@factorial/plan` and, if invalid, returns the errors so the builder re-plans; after two failures the hook stops the run with `decision: "block"` and a reason, which the invoker reports as `invalid-plan`.
 - `collect.ts` reads `plan.json` and `plan.md` out of the builder's session, validates again with the same package, stores them under `plan/` and records `planSize`, so the artefacts and the ledger fields are unchanged. A stored plan that fails validation ends the run as `invalid-plan` whatever happened in the session.
 - The state machine loses `Plan`, `CollectPlan` and `PlanAccepted`; `Prepare` goes straight to `Build`. `ContinueBuild` reads the plan from the artefact store as it does now. The `planAttempt` variable goes. The lineage fields stay for the later feature where one trigger fans out into child items; that will need a plan state again and is out of scope here.
-- The planner Harness block, its role, the LiteLLM configuration and the `ModelApiKey` credential provider are removed; the web search gateway stays. `MaxIterations` goes with the last Harness.
+- The planner Harness block, its role and the planner's share of the LiteLLM configuration are removed; the web search gateway stays.
 
-**Gate:** two real items through the merged graph, each producing a valid stored plan, a tested branch and a review.
+**Gate:** two real items through the merged graph, each producing a valid stored plan, a tested branch and a review. One of them is #87 again, recorded beside the spike's run and the Harness's #92, so the record shows what moving the planner added.
+
+**3.2 Reviewer**
+
+- `FACTORIAL_ROLE=reviewer` on a second Runtime, `factorial_reviewer`, from the same image, with role `factorial-agent-reviewer` re-created for the Runtime trust, and a `live` endpoint.
+- Tools: `Read`, `Grep`, `Glob` and `Bash`; a `PreToolUse` hook denies every `Edit` and `Write` except `/workspace/review.json`, and denies `Bash` commands that write (`>`, `tee`, `git commit`, `git checkout`, `npm install`). The reviewer's system prompt is ported from its harness block.
+- The state machine's Review state passes `TARGET=runtime` and the reviewer's Runtime ARN; PrepareReview and CollectReview address the Runtime through `session.ts`. The reviewer Harness block, the LiteLLM configuration and the `ModelApiKey` credential provider go; `MaxIterations` goes with this last Harness.
+
+**Gate:** a review that validates against `contracts/review/v1/` on a real item; the reviewer is advisory, so nothing more.
 
 ### Phase 4: retire the Harness and tidy the record
 
@@ -237,8 +240,8 @@ With everything above deployed and `BuilderTarget` still `harness`:
 | 6 | 1 | Orchestrator session targeting, `chown` and `runuser` in Prepare, ContinueBuild and Collect; state machine `BuilderTarget` parameter | 5 | Default `harness`: the existing pipeline is unchanged on a real item |
 | 7 | 1 | Spike runs; **Spike results** in the record; gate decision | 6 | Numbers recorded; decision written |
 | 8 | 2 | Builder cut-over; Harness builder block removed; docs and `CLAUDE.md` stage update | 7 passed | A real item through the Runtime by default |
-| 9 | 3 | Reviewer Runtime; reviewer Harness removed | 8 | A real review validated from the Runtime |
-| 10 | 3 | Plan subagent, plan hook, Collect validation; Plan states removed; planner Harness, key, LiteLLM and gateway removed | 9 | Two real items through the merged graph |
+| 9 | 3 | Plan subagent, plan hook, Collect validation; Plan states removed; planner Harness removed | 8 | Two real items through the merged graph, one of them #87 |
+| 10 | 3 | Reviewer Runtime; reviewer Harness, model key and LiteLLM removed | 9 | A real review validated from the Runtime |
 | 11 | 4 | Harness code paths and image removed; foundation clean-up (human); docs rewrite; tag `stage-1-agent-sdk` | 10 | `npm run ci`; deploy; record updated |
 
 Pull requests 3 to 6 can be reviewed independently but deploy in order; each is small enough to read in one sitting. Nothing before 8 changes what a work item sees.
