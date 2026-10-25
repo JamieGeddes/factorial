@@ -207,7 +207,7 @@ With everything above deployed and `BuilderTarget` still `harness`:
 
 ### Phase 3: the planner subagent, then the reviewer Runtime
 
-The planner moves before the reviewer (changed 2026-10-25; the first version of this plan had it last). The spike runs a Sonnet builder from a plan written by GLM 5.3 Flash on the Harness, so the gate measures the builder alone, with a planner that can only hold it back. The full benefit needs the plan in the builder's session: no separate stage, no second clone, no wait of several minutes before the build starts, and the context gathered while planning kept for the build instead of read back from `plan.json`. The reviewer is advisory, so moving it changes no outcome and can wait.
+The planner moves before the reviewer (changed 2026-10-25; the first version of this plan had it last). The spike runs a Sonnet builder from a plan written by GLM 5.3 Flash on the Harness, so the gate measures the builder alone, with a planner that can only hold it back. The full benefit needs the plan in the builder's session: no separate stage, no second clone and no wait of several minutes before the build starts. The plan is a subagent, so what it reads stays in its own context and only its reply reaches the builder; the builder still works from `plan.json`, and its window is not filled by the planner's reading. The SDK's `plan` permission mode, which is how Claude Code plans locally with the main agent restricted to read-only tools, would carry the planner's context into the build; it is not used here, and would be the change to make if that proves to matter. The reviewer is advisory, so moving it changes no outcome and can wait.
 
 **3.1 Planner into the builder** (straight after phase 2)
 
@@ -226,6 +226,13 @@ The planner moves before the reviewer (changed 2026-10-25; the first version of 
 - **The invoker's planner role goes in 9a**, with `planPrompt` and `PLAN_ATTEMPT`, since nothing starts it once the Plan states are gone.
 
 **Gate:** two real items through the merged graph, each producing a valid stored plan, a tested branch and a review. One of them is #87 again, recorded beside the spike's run and the Harness's #92, so the record shows what moving the planner added.
+
+**Consequences (2026-10-25).** Planning inside the builder's session is consistent with `docs/security.md` section 3.4 (roles may share a session when neither judges or ships the other's output) and matches how Claude Code plans locally, with a read-only plan step before edits in one session. It also narrows four things, recorded here so they are decided rather than discovered:
+
+- **The plan is the builder's claim.** The builder writes the subagent's reply to `plan.json`, so the stored plan is what the builder chose to write, not evidence of what the planner said. The transcript under `/var/lib/factorial` holds both.
+- **Planning is no longer a role with its own provider.** The plan subagent runs on a Bedrock model the SDK can call, on the builder's execution role. A different Bedrock profile for planning is one value in `agents.plan` plus an IAM statement, and would also make the planner's cost visible on its own in `usage.json`, which `model: inherit` hides inside the builder's. A planner on another provider, as the Harness allowed through LiteLLM, is not available without a separate role.
+- **No pause between plan and build.** A human or requester approval of the plan before building (Claude Code's local gate) would mean ending the session after the plan and re-seeding it through ContinueBuild, which works, rather than holding a Runtime session open.
+- **Decomposition needs a plan stage again.** Planning before any one repository or branch exists (one trigger fanning out into child items, the lineage fields' purpose) cannot run inside a builder session. `contracts/plan/v1/` serves both that stage and the subagent, so it must not acquire in-session assumptions.
 
 **3.2 Reviewer**
 
