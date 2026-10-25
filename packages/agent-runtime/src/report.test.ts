@@ -25,6 +25,8 @@ describe('reportProblem', () => {
   it('asks for the section, naming the steps, when it is missing', () => {
     const problem = reportProblem('Added a test. All steps done.', ['add-test', 'reword']);
     assert.match(problem ?? '', /no "## Plan steps" section.*add-test, reword/);
+    assert.match(problem ?? '', /<id>: done\|skipped\|changed:/);
+    assert.match(problem ?? '', /## Behaviour impact/);
   });
 
   it('names only the steps without a line, and ignores lines outside the section', () => {

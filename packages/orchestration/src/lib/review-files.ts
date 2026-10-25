@@ -236,6 +236,9 @@ export function checkReviewFile(file: { text: string; size: number } | undefined
   return { ok: true, review: result.value, json };
 }
 
+/** How the orchestrator's guard findings begin, so the pull request can tell them from the reviewer's own. */
+export const GUARD_FINDING_PREFIX = 'Added by the orchestrator: ';
+
 /**
  * Add a high-severity finding for every sensitive change, ahead of the
  * reviewer's own findings. This is a reminder for the human reviewer, not a
@@ -248,7 +251,7 @@ export function withGuardFindings(review: Review, changes: readonly SensitiveCha
   const guard: ReviewFinding[] = changes.map((change) => ({
       path: change.path,
       severity: 'high',
-      body: `Added by the orchestrator: this ${change.reason}. Review it with particular care; the automated review cannot clear it.`,
+      body: `${GUARD_FINDING_PREFIX}this ${change.reason}. Review it with particular care; the automated review cannot clear it.`,
     }));
   // The contract allows at most 50 findings; the reviewer's least important go first.
   const findings = [...guard, ...review.findings].slice(0, 50);

@@ -3,7 +3,11 @@ import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
 
-import { closingReference, planSection, pullRequestBody, reviewSection, splitPlanSteps } from './pr-body.ts';
+import type { Plan } from '@factorial/plan';
+
+import type { PrFacts } from '../lib/pr-facts.ts';
+
+import { agentText, closingReference, pullRequestBody, type BodyExtras } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -25,24 +29,354 @@ const ctx: WorkContext = {
   artefactPrefix: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c/1/',
 };
 
-describe('pullRequestBody', () => {
-  it('leads with the summary and ends with the evidence table', () => {
-    const body = pullRequestBody(ctx, '# Done\n\nFixed it.', { runUrl: 'https://x/run/1', outcome: 'success' }, 'f'.repeat(40));
-    assert.ok(body.startsWith('# Done\n\nFixed it.'));
-    assert.match(body, /\| Work item \| \[github-issue 7\]\(https:\/\/github\.com\/JamieGeddes\/factorial\/issues\/7\) \|/);
-    assert.match(body, /\| Requested by \| @JamieGeddes \|/);
-    assert.match(body, /\| Tests \| \[success\]\(https:\/\/x\/run\/1\) \|/);
-    assert.match(body, /\| Head \| `ffffffffffff` \|/);
-    assert.match(body, /\| Built by \| Factorial `0123456789ab` \|/);
-    assert.match(body, /\| Artefacts \| `7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c\/1\/` \|/);
-    // the closing reference sits between the summary and the evidence
-    assert.match(body, /Fixed it\.\n\nCloses #7\n\n---\n/);
+const HEAD = 'f'.repeat(40);
+const PASS: { runUrl?: string; outcome?: string } = { runUrl: 'https://x/run/1', outcome: 'success' };
+
+const SECTIONS = ['## Summary', '## Impact', '## Review focus', '## Automated review', '## Tests', '## Plan', '<summary>Run details</summary>'];
+
+const plan: Plan = {
+  schemaVersion: 1,
+  summary: 'Do the thing.',
+  steps: [
+    { id: 'one', description: 'First step, described in full\nover two lines.', files: [], verification: 'v' },
+    { id: 'two', description: 'Second step.', files: [], verification: 'v' },
+  ],
+  tests: { run: [], add: ['Test the thing.'] },
+  risks: [],
+  openQuestions: ['Is X acceptable?'],
+};
+
+const noFacts: PrFacts = { sensitive: [], contracts: [], testFiles: [], dependencies: [], deploy: { configured: true, notes: [], humanSteps: [] } };
+
+const summaryMd = (steps = '- one: done\n- two: done'): string =>
+  [
+    '## Summary',
+    'Adds the thing so operators can see it.',
+    '',
+    '## Behaviour impact',
+    'Operators now see the thing.',
+    '',
+    '## Breaking changes',
+    'None.',
+    '',
+    '## Uncertainties',
+    '- Assumed the thing is wanted.',
+    '',
+    '## Not tested',
+    '- The live deploy.',
+    '',
+    '## Plan steps',
+    steps,
+  ].join('\n');
+
+const render = (summary: string, extras: BodyExtras = { fullPlan: plan, facts: noFacts, review: undefined }, test = PASS): string =>
+  pullRequestBody(ctx, summary, test, HEAD, extras);
+
+/** Section headings appear in the fixed order, once each. */
+function assertOrder(body: string): void {
+  let last = -1;
+  for (const marker of SECTIONS) {
+    const at = body.indexOf(marker);
+    assert.ok(at > last, `${marker} should come after the previous section`);
+    assert.equal(body.indexOf(marker, at + 1), -1, `${marker} appears once`);
+    last = at;
+  }
+}
+
+const section = (body: string, heading: string): string => {
+  const start = body.indexOf(heading);
+  const next = body.slice(start + heading.length).search(/\n## |\n<details>\n<summary>Run details/);
+  return body.slice(start, next === -1 ? undefined : start + heading.length + next).trimEnd();
+};
+
+describe('pullRequestBody: a plain code change', () => {
+  const body = render(summaryMd());
+
+  it('has every section in order, with the closing reference under the summary', () => {
+    assertOrder(body);
+    assert.match(section(body, '## Summary'), /Adds the thing so operators can see it\.\n\nCloses #7$/);
   });
 
-  it('says so when the agent wrote no summary and tests did not run', () => {
-    const body = pullRequestBody(ctx, '   ', {}, 'a'.repeat(40));
-    assert.match(body, /_The agent did not write a summary\._/);
-    assert.match(body, /\| Tests \| not run \|/);
+  it('fills every impact bullet, with None where nothing applies', () => {
+    const impact = section(body, '## Impact');
+    assert.match(impact, /- \*\*Behaviour:\*\* Operators now see the thing\./);
+    assert.match(impact, /- \*\*Deploy:\*\* None/);
+    assert.match(impact, /- \*\*Contracts:\*\* None/);
+    assert.match(impact, /- \*\*Dependencies:\*\* None/);
+    assert.match(impact, /- \*\*Breaking changes or migration:\*\* None\./);
+  });
+
+  it('ranks the builder uncertainties and plan questions in review focus', () => {
+    assert.match(section(body, '## Review focus'), /1\. Builder was unsure: Assumed the thing is wanted\.\n2\. Open question in the plan: Is X acceptable\?$/);
+  });
+
+  it('shows the test result, and the plan only as planned', () => {
+    const tests = section(body, '## Tests');
+    assert.match(tests, /- \*\*Result:\*\* \[success\]\(https:\/\/x\/run\/1\)/);
+    assert.match(tests, /- \*\*Test files added or changed:\*\* none among the changed files/);
+    assert.match(tests, /- \*\*Not tested:\*\* The live deploy\./);
+    assert.match(tests, /Planned tests \(from the plan, not a report of what was added\)/);
+  });
+
+  it('says every step was done and lists the steps once, untruncated, in details', () => {
+    const planPart = section(body, '## Plan');
+    assert.match(planPart, /Every step was done as planned \(2 steps\)\./);
+    assert.match(planPart, /<summary>All plan steps<\/summary>/);
+    assert.equal(body.split('`one`').length, 2);
+    assert.match(planPart, /First step, described in full over two lines\./);
+  });
+
+  it('puts the metadata table in details at the end, without the test row', () => {
+    const details = body.slice(body.indexOf('<summary>Run details</summary>'));
+    assert.match(details, /\| Work item \| \[github-issue 7\]\(https:\/\/github\.com\/JamieGeddes\/factorial\/issues\/7\) \|/);
+    assert.match(details, /\| Requested by \| @JamieGeddes \|/);
+    assert.match(details, /\| Head \| `ffffffffffff` \|/);
+    assert.match(details, /\| Built by \| Factorial `0123456789ab` \|/);
+    assert.match(details, /\| Artefacts \| `7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c\/1\/` \|/);
+    assert.doesNotMatch(details, /\| Tests \|/);
+    assert.ok(details.trimEnd().endsWith('</details>'));
+  });
+
+  it('says tests did not run when there is no run', () => {
+    assert.match(render(summaryMd(), undefined, {}), /- \*\*Result:\*\* not run/);
+  });
+
+  it('keeps the part above the details short', () => {
+    assert.ok(body.split('\n').length < 70);
+  });
+});
+
+describe('pullRequestBody: a new dependency', () => {
+  it('names the package, where it was added and its licence; removals too', () => {
+    const facts: PrFacts = {
+      ...noFacts,
+      dependencies: [
+        { name: 'left-pad', change: 'added', version: '^1.3.0', dev: false, file: 'packages/a/package.json', licence: 'MIT' },
+        { name: 'old', change: 'removed', version: '1', dev: true, file: 'package.json' },
+      ],
+    };
+    const body = render(summaryMd(), { fullPlan: plan, facts });
+    assertOrder(body);
+    assert.match(section(body, '## Impact'), /- \*\*Dependencies:\*\* added `left-pad` `\^1\.3\.0` in `packages\/a\/package\.json`, licence per the lockfile: `MIT`; removed `old` \(dev\) from `package\.json`/);
+  });
+
+  it('keeps values the branch controls inside their code spans', () => {
+    const facts: PrFacts = {
+      ...noFacts,
+      testFiles: ['a`</details>\n## Pwned.test.ts'],
+      dependencies: [{ name: 'x`y', change: 'added', version: '1`\n# Heading', dev: false, file: 'package.json', licence: 'MIT` [link](https://e.x)' }],
+    };
+    const body = render(summaryMd(), { fullPlan: plan, facts });
+    assertOrder(body);
+    assert.ok(!/^#+ (Heading|Pwned)/m.test(body));
+    assert.match(section(body, '## Impact'), /added `x y` `1 # Heading` in `package\.json`, licence per the lockfile: `MIT  \[link\]\(https:\/\/e\.x\)`/);
+    assert.match(section(body, '## Tests'), /`a <\/details> ## Pwned\.test\.ts`/);
+  });
+});
+
+describe('pullRequestBody: a workflow or foundation change', () => {
+  const facts: PrFacts = {
+    ...noFacts,
+    sensitive: [
+      { path: '.github/workflows/ci.yml', reason: 'changes GitHub Actions, which run with the repository secrets' },
+      { path: 'templates/00-foundation.yml', reason: 'changes the foundation stack' },
+    ],
+    contracts: ['contracts/a.json'],
+    deploy: { configured: true, notes: ['CloudFormation templates change: `templates/00-foundation.yml`'], humanSteps: ['Deploy the foundation stack by hand: `templates/00-foundation.yml`'] },
+  };
+  const review = {
+    ok: true as const,
+    review: {
+      verdict: 'comment' as const,
+      scores: { correctness: 4, completeness: 4, tests: 3, safety: 3 },
+      summary: 's',
+      findings: [
+        { path: '.github/workflows/ci.yml', severity: 'high' as const, body: 'Added by the orchestrator: this changes GitHub Actions.' },
+        { path: 'src/a.ts', line: 3, severity: 'high' as const, body: 'Unchecked input.' },
+      ],
+      totalFindings: 2,
+    },
+  };
+  const body = render(summaryMd(), { fullPlan: plan, facts, review });
+
+  it('puts sensitive paths first in review focus, then the reviewer, and does not repeat the guard finding', () => {
+    assertOrder(body);
+    const focus = section(body, '## Review focus');
+    assert.match(focus, /^## Review focus\n\n1\. `\.github\/workflows\/ci\.yml`: changes GitHub Actions/);
+    assert.match(focus, /2\. `templates\/00-foundation\.yml`: changes the foundation stack\./);
+    assert.match(focus, /3\. `contracts\/a\.json`: changes a contract/);
+    assert.match(focus, /4\. `src\/a\.ts:3`: Unchecked input\./);
+    assert.equal(focus.split('\n').filter((l) => /^\d\./.test(l)).length, 5);
+    assert.doesNotMatch(section(body, '## Automated review'), /Added by the orchestrator/);
+  });
+
+  it('states the deploy impact and the human step, and lists the contract', () => {
+    const impact = section(body, '## Impact');
+    assert.match(impact, /- \*\*Deploy:\*\* CloudFormation templates change: `templates\/00-foundation\.yml`\. \*\*Human step needed:\*\* Deploy the foundation stack by hand/);
+    assert.match(impact, /- \*\*Contracts:\*\* `contracts\/a\.json`/);
+  });
+
+  it('caps review focus at five items', () => {
+    const many: PrFacts = { ...noFacts, sensitive: Array.from({ length: 9 }, (_, i) => ({ path: `p${i}`, reason: 'r' })) };
+    const focus = section(render(summaryMd(), { fullPlan: plan, facts: many }), '## Review focus');
+    assert.equal(focus.split('\n').filter((l) => /^\d\./.test(l)).length, 5);
+  });
+});
+
+describe('pullRequestBody: package files that could not be read', () => {
+  it('says dependencies are not determined rather than None', () => {
+    const body = render(summaryMd(), { fullPlan: plan, facts: { ...noFacts, dependenciesUnknown: true } });
+    assert.match(section(body, '## Impact'), /- \*\*Dependencies:\*\* Not determined \(the package files could not be read\)/);
+  });
+});
+
+describe('pullRequestBody: deploy impact without settings', () => {
+  it('says it is not determined rather than guessing, and when facts are missing', () => {
+    const unconfigured: PrFacts = { ...noFacts, deploy: { configured: false, notes: [], humanSteps: [] } };
+    assert.match(section(render(summaryMd(), { fullPlan: plan, facts: unconfigured }), '## Impact'), /- \*\*Deploy:\*\* Not determined \(no `\.factorial\/pr-body\.json`/);
+    const impact = section(render(summaryMd(), { fullPlan: plan, facts: null }), '## Impact');
+    assert.match(impact, /- \*\*Deploy:\*\* Not determined \(the review stage did not run\)/);
+    assert.match(impact, /- \*\*Dependencies:\*\* Not determined/);
+  });
+});
+
+describe('pullRequestBody: plan departures', () => {
+  const body = render(summaryMd('- one: changed: split into two commits\n- two: skipped: already there'));
+
+  it('lists only the departures in the open, with the builder note', () => {
+    assertOrder(body);
+    const planPart = section(body, '## Plan');
+    const open = planPart.slice(0, planPart.indexOf('<details>'));
+    assert.match(open, /2 of 2 steps departed from the plan or were not reported:/);
+    assert.match(open, /- `one`: changed: split into two commits/);
+    assert.match(open, /- `two`: skipped: already there/);
+    assert.doesNotMatch(open, /Every step was done/);
+  });
+
+  it('does not read a status from elsewhere in a line', () => {
+    const odd = render(summaryMd('- one: all good, nothing skipped\n- two: done'));
+    assert.match(section(odd, '## Plan'), /- `one`: not reported/);
+  });
+
+  it('says so when the builder reported no steps', () => {
+    assert.match(section(render('## Summary\nx'), '## Plan'), /_The builder did not report on the plan\'s 2 steps\._/);
+  });
+
+  it('falls back to the digest when the full plan is not available', () => {
+    const body = render(summaryMd(), { plan: { summary: 's', steps: [{ id: 'one', description: 'cut…' }, { id: 'two', description: 'b' }] }, facts: noFacts });
+    assert.match(section(body, '## Plan'), /`one` \(done\): cut…/);
+  });
+
+  it('says there was no plan for older runs', () => {
+    assert.match(section(render(summaryMd(), { facts: noFacts }), '## Plan'), /_There was no plan for this run\._/);
+  });
+});
+
+describe('pullRequestBody: review', () => {
+  const digest = {
+    verdict: 'request-changes' as const,
+    scores: { correctness: 2, completeness: 3, tests: 2, safety: 4 },
+    summary: 'The check runs after the write.',
+    findings: [
+      { path: 'src/a.ts', line: 18, severity: 'high' as const, body: 'Move the check\nabove the write.' },
+      { path: 'src/b.ts', severity: 'medium' as const, body: 'Assert nothing is written.' },
+      { path: 'src/c.ts', severity: 'low' as const, body: 'Naming.' },
+    ],
+    totalFindings: 3,
+  };
+  const body = render(summaryMd(), { fullPlan: plan, facts: noFacts, review: { ok: true, review: digest } });
+
+  it('shows verdict and four scores on one line, high findings in the open, the rest collapsed', () => {
+    assertOrder(body);
+    const review = section(body, '## Automated review');
+    assert.match(review, /^## Automated review\n\n\*\*Request changes\*\* · correctness 2\/5 · completeness 3\/5 · tests 2\/5 · safety 4\/5/);
+    assert.match(review, /\*\*High severity\*\*\n\n- `src\/a\.ts:18`: Move the check above the write\./);
+    assert.match(review, /<summary>2 other findings<\/summary>\n\n- \*\*medium\*\* `src\/b\.ts`: Assert nothing is written\./);
+  });
+
+  it('feeds high and medium findings into review focus, not low ones', () => {
+    const focus = section(body, '## Review focus');
+    assert.match(focus, /1\. `src\/a\.ts:18`: Move the check above the write\.\n2\. `src\/b\.ts`: Assert nothing is written\./);
+    assert.doesNotMatch(focus, /Naming/);
+  });
+
+  it('says how many findings were left out of the digest', () => {
+    const more = render(summaryMd(), { fullPlan: plan, review: { ok: true, review: { ...digest, totalFindings: 25 } } });
+    assert.match(more, /_22 more findings in `review\/review\.json` in the artefacts\._/);
+  });
+
+  it('has no findings lists when there are none', () => {
+    const clean = render(summaryMd(), { fullPlan: plan, review: { ok: true, review: { ...digest, verdict: 'approve', findings: [], totalFindings: 0 } } });
+    const review = section(clean, '## Automated review');
+    assert.match(review, /\*\*Approve\*\*/);
+    assert.doesNotMatch(review, /High severity|<details>|more finding/);
+  });
+});
+
+describe('pullRequestBody: a failed review', () => {
+  it('says the review did not complete, without quoting its errors', () => {
+    for (const review of [null, { ok: false as const, errors: ['review.json /x has unexpected property "@everyone"'] }]) {
+      const body = render(summaryMd(), { fullPlan: plan, facts: noFacts, review });
+      assertOrder(body);
+      assert.match(section(body, '## Automated review'), /_The automated review did not complete\. It is advisory/);
+      assert.doesNotMatch(body, /everyone/);
+    }
+  });
+
+  it('says no review ran for runs before the stage', () => {
+    assert.match(section(render(summaryMd()), '## Automated review'), /_No automated review ran for this pull request\._/);
+  });
+});
+
+describe('pullRequestBody: a summary with missing sections', () => {
+  it('uses placeholders for sections that are missing or empty', () => {
+    const body = render('## Summary\n\n## Behaviour impact\n   \n## Plan steps\n- one: done');
+    assertOrder(body);
+    assert.match(section(body, '## Summary'), /_The builder did not write a summary\._/);
+    const impact = section(body, '## Impact');
+    assert.match(impact, /- \*\*Behaviour:\*\* _Not reported by the builder\._/);
+    assert.match(impact, /- \*\*Breaking changes or migration:\*\* None/);
+    assert.match(section(body, '## Tests'), /- \*\*Not tested:\*\* _Not reported by the builder\._/);
+    assert.match(section(body, '## Review focus'), /Open question in the plan: Is X acceptable\?/);
+  });
+
+  it('shows a free-form summary in the summary slot, capped, with no headings of its own', () => {
+    const body = render(`# Big heading\n\n${'word '.repeat(400)}`);
+    assertOrder(body);
+    const summary = section(body, '## Summary');
+    assert.doesNotMatch(summary, /# Big heading/);
+    assert.ok(summary.length < 900 + 40);
+    assert.match(summary, /…/);
+    assert.match(section(body, '## Impact'), /- \*\*Behaviour:\*\* _Not reported by the builder\._/);
+    assert.match(section(body, '## Impact'), /- \*\*Breaking changes or migration:\*\* _Not reported by the builder\._/);
+  });
+
+  it('says nothing was written for an empty summary, and says nothing needs attention when it is so', () => {
+    const body = pullRequestBody(ctx, '   ', {}, HEAD);
+    assertOrder(body);
+    assert.match(body, /_The builder did not write a summary\._/);
+    assert.match(section(body, '## Review focus'), /Nothing needs particular attention\./);
+  });
+});
+
+describe('length caps and dashes', () => {
+  it('cuts each builder section to its cap and drops em and en dashes', () => {
+    const long = 'x'.repeat(2000);
+    const body = render(`## Summary\n${long} — end\n## Behaviour impact\n${long}\n## Breaking changes\n${long}\n## Uncertainties\n${[1, 2, 3, 4, 5, 6, 7].map((i) => `- ${long} ${i}`).join('\n')}\n## Plan steps\n- one: changed: ${long} – x`);
+    assert.doesNotMatch(body, /[—–]/);
+    assert.ok(section(body, '## Summary').length < 800 + 40);
+    const impact = section(body, '## Impact');
+    assert.ok(impact.split('\n').find((l) => l.startsWith('- **Behaviour'))!.length < 600 + 40);
+    assert.ok(impact.split('\n').find((l) => l.startsWith('- **Breaking'))!.length < 600 + 60);
+    const focus = section(body, '## Review focus');
+    assert.equal(focus.split('\n').filter((l) => /^\d\./.test(l)).length, 5);
+    for (const line of focus.split('\n').filter((l) => /^\d\./.test(l))) assert.ok(line.length < 300);
+    assert.ok(body.split('\n').find((l) => l.startsWith('- `one`'))!.length < 400);
+  });
+
+  it('keeps agent text from closing the own blocks of the body or adding headings', () => {
+    const text = agentText('## Heading\n</details> <summary>x</summary>', 200);
+    assert.doesNotMatch(text, /<\/?details|<\/?summary|^#/);
   });
 });
 
@@ -59,126 +393,5 @@ describe('closingReference', () => {
   it('is absent for other triggers or an unrecognised url', () => {
     assert.equal(closingReference({ ...ctx.workItem, source: { type: 'jira-ticket', id: 'FAC-1', url: 'https://x.atlassian.net/browse/FAC-1' } }), undefined);
     assert.equal(closingReference({ ...ctx.workItem, source: { ...ctx.workItem.source, url: 'https://evil.example/JamieGeddes/factorial/issues/7' } }), undefined);
-  });
-});
-
-describe('plan in the pull request body', () => {
-  const plan = {
-    summary: 'Reject bad quantities.',
-    steps: [
-      { id: 'validate-quantity', description: 'Check quantity is a positive integer.' },
-      { id: 'handler-tests', description: 'Add tests.' },
-    ],
-  };
-
-  it("takes the builder's step report out of the summary", () => {
-    const summary = '# Done\n\nAdded validation.\n\n## Plan steps\n\n- validate-quantity: done\n- handler-tests: changed, reason\n\n## Verification\n\nnpm test';
-    const { rest, steps } = splitPlanSteps(summary);
-    assert.equal(steps, '- validate-quantity: done\n- handler-tests: changed, reason');
-    assert.equal(rest, '# Done\n\nAdded validation.\n\n## Verification\n\nnpm test');
-  });
-
-  it('leaves a summary without a step report unchanged', () => {
-    assert.deepEqual(splitPlanSteps('# Done'), { rest: '# Done' });
-  });
-
-  it('lists the plan steps and says when the builder did not report on them', () => {
-    const section = planSection(plan, undefined);
-    assert.match(section, /^## Plan\n\nReject bad quantities\.\n\n1\. `validate-quantity`: Check quantity/);
-    assert.match(section, /_The builder did not report on the plan's steps\._/);
-  });
-
-  it('matches the builder\u0027s reported lines to the plan steps by id', () => {
-    const section = planSection(plan, '- validate-quantity: done\n- `handler-tests`: changed, reason');
-    assert.match(section, /1\. `validate-quantity`: Check quantity is a positive integer\.\n   - validate-quantity: done/);
-    assert.match(section, /2\. `handler-tests`: Add tests\.\n   - `handler-tests`: changed, reason/);
-  });
-
-  it('lists reported lines that match no plan step id', () => {
-    const section = planSection(plan, '- validate-quantity: done\n- mystery-step: done');
-    assert.match(section, /not in the plan: - mystery-step: done/);
-  });
-
-  it('shows each reported line once', () => {
-    const section = planSection(plan, '- validate-quantity: done\n- handler-tests: done');
-    assert.equal(section.match(/validate-quantity: done/g)?.length, 1);
-    assert.doesNotMatch(section, /How the builder followed it|not in the plan/);
-  });
-
-  it("shows the builder's report as written when no line matches a step", () => {
-    const section = planSection(plan, 'Steps 1 and 2 done.');
-    assert.match(section, /### How the builder followed it\n\nSteps 1 and 2 done\./);
-    assert.doesNotMatch(section, /not in the plan/);
-  });
-
-  it('puts the plan after the summary and before the evidence table', () => {
-    const body = pullRequestBody(ctx, '# Done\n\n## Plan steps\n\n- validate-quantity: done', {}, 'f'.repeat(40), plan);
-    assert.ok(body.indexOf('# Done') < body.indexOf('## Plan'));
-    assert.ok(body.indexOf('## Plan') < body.indexOf('| Work item |'));
-    assert.match(body, /1\. `validate-quantity`: Check quantity is a positive integer\.\n   - validate-quantity: done/);
-    assert.equal(body.match(/## Plan steps/g), null);
-  });
-
-  it('lists what the planner judged to belong in a separate item, and nothing when there is none', () => {
-    const section = planSection({ ...plan, followUp: ['Validate the update handler too.'] }, '- validate-quantity: done\n- handler-tests: done');
-    assert.match(section, /\*\*For a separate work item\*\*.*\n\n- Validate the update handler too\./);
-    assert.doesNotMatch(planSection(plan, undefined), /For a separate work item/);
-  });
-
-  it('has no plan section without a plan', () => {
-    assert.doesNotMatch(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40)), /## Plan/);
-  });
-});
-
-describe('review in the pull request body', () => {
-  const digest = {
-    verdict: 'request-changes' as const,
-    scores: { correctness: 2, completeness: 3, tests: 2, safety: 4 },
-    summary: 'The check runs after the write.',
-    findings: [
-      { path: '.github/workflows/ci.yml', severity: 'high' as const, body: 'Added by the orchestrator: this changes a workflow.' },
-      { path: 'src/a.ts', line: 18, severity: 'high' as const, body: 'Move the check\nabove the write.' },
-      { path: 'src/a.test.ts', severity: 'medium' as const, body: 'Assert nothing is written.' },
-    ],
-    totalFindings: 3,
-  };
-
-  it('shows the verdict and scores on one line, then the summary', () => {
-    const section = reviewSection({ ok: true, review: digest });
-    assert.match(section, /^## Automated review\n\n\*\*Request changes\*\* · correctness 2\/5 · completeness 3\/5 · tests 2\/5 · safety 4\/5\n\nThe check runs after the write\./);
-    assert.match(section, /_Advisory: the review does not block this pull request\._$/);
-  });
-
-  it('lists high-severity findings in the open, on one line each, and collapses the rest', () => {
-    const section = reviewSection({ ok: true, review: digest });
-    assert.match(section, /\*\*High severity\*\*\n\n- `\.github\/workflows\/ci\.yml`: Added by the orchestrator/);
-    assert.match(section, /- `src\/a\.ts:18`: Move the check above the write\./);
-    assert.match(section, /<details>\n<summary>1 other finding<\/summary>\n\n- \*\*medium\*\* `src\/a\.test\.ts`: Assert nothing is written\.\n\n<\/details>/);
-  });
-
-  it('says how many findings were left out of the digest', () => {
-    assert.match(reviewSection({ ok: true, review: { ...digest, totalFindings: 25 } }), /_22 more findings in `review\/review\.json` in the artefacts\._/);
-  });
-
-  it('has no findings lists when there are none', () => {
-    const section = reviewSection({ ok: true, review: { ...digest, verdict: 'approve', findings: [], totalFindings: 0 } });
-    assert.match(section, /\*\*Approve\*\*/);
-    assert.doesNotMatch(section, /High severity|<details>|more finding/);
-  });
-
-  it('says the review did not complete, without quoting its errors', () => {
-    for (const outcome of [null, { ok: false as const, errors: ['review.json /x has unexpected property "@everyone"'] }]) {
-      const section = reviewSection(outcome);
-      assert.match(section, /_The automated review did not complete\. It is advisory, so the pull request was opened anyway/);
-      assert.doesNotMatch(section, /everyone/);
-    }
-  });
-
-  it('puts the review after the plan, and leaves it out for runs before the Review stage', () => {
-    const body = pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40), undefined, { ok: true, review: digest });
-    assert.ok(body.indexOf('# Done') < body.indexOf('## Automated review'));
-    assert.ok(body.indexOf('## Automated review') < body.indexOf('| Work item |'));
-    assert.doesNotMatch(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40)), /Automated review/);
-    assert.match(pullRequestBody(ctx, '# Done', {}, 'f'.repeat(40), undefined, null), /did not complete/);
   });
 });

@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "deploy": {
+    "paths": [
+      {
+        "prefix": "templates/",
+        "note": "CloudFormation templates change and are deployed from main by GitHub Actions"
+      }
+    ],
+    "humanSteps": [
+      {
+        "prefix": "templates/00-",
+        "note": "The foundation stack is deployed by a human, not by the pipeline (docs/bootstrap.md)"
+      }
+    ]
+  }
+}

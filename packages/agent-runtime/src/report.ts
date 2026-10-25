@@ -69,16 +69,16 @@ function reportsStep(line: string, id: string): boolean {
 /** What the report lacks, as an instruction to the model, or undefined if it is complete. */
 export function reportProblem(summary: string | undefined, stepIds: string[] | undefined): string | undefined {
   if (summary === undefined || summary.trim() === '') {
-    return 'Before you finish, write /workspace/summary.md as your instructions describe: what changed and why, how you verified it, what a reviewer should look at, and a "## Plan steps" section.';
+    return 'Before you finish, write /workspace/summary.md as your instructions describe: with the headings your instructions name: Summary, Behaviour impact, Breaking changes, Uncertainties, Not tested and Plan steps.';
   }
   if (stepIds === undefined || stepIds.length === 0) return undefined;
   const section = planStepsSection(summary);
   if (section === undefined) {
-    return `/workspace/summary.md has no "## Plan steps" section. Read /workspace/plan.json and add the section: one line per step, starting with its id (${stepIds.join(', ')}), then done, skipped or changed, and why for any not done as planned. Make sure the rest of the summary says what changed, how you verified it and what a reviewer should look at.`;
+    return `/workspace/summary.md has no "## Plan steps" section. Read /workspace/plan.json and add the section: one line per step, starting with its id (${stepIds.join(', ')}), in the form \`- <id>: done|skipped|changed: <why, when not done as planned>\`. Make sure the summary also has the \`## Summary\` and \`## Behaviour impact\` sections.`;
   }
   const missing = stepIds.filter((id) => !section.some((line) => reportsStep(line, id)));
   if (missing.length === 0) return undefined;
-  return `The "## Plan steps" section of /workspace/summary.md has no line for ${missing.join(', ')}. Add one line per missing step, starting with its id, then done, skipped or changed, and why.`;
+  return `The "## Plan steps" section of /workspace/summary.md has no line for ${missing.join(', ')}. Add one line per missing step in the form \`- <id>: done|skipped|changed: <why, when not done as planned>\`.`;
 }
 
 /** The Stop hook: send the builder back while its report is incomplete, at most MAX_REPORT_CHECKS times. */

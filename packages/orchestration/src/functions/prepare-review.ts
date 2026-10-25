@@ -26,6 +26,17 @@ import {
   sensitiveRules,
   type SensitiveChange,
 } from '../lib/review-files.ts';
+import {
+  contractChanges,
+  dependencyChanges,
+  depsScript,
+  deployImpact,
+  parseDeploySettings,
+  parseDeps,
+  prFactsDigest,
+  testFileChanges,
+  type PrFacts,
+} from '../lib/pr-facts.ts';
 import { mustRun, sessionTarget } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
@@ -42,6 +53,8 @@ export interface PrepareReviewResult {
   sensitive: SensitiveChange[];
   /** The sensitive paths and reasons as a JSON array, for the invoker's SENSITIVE_PATHS. */
   sensitivePathsJson: string;
+  /** What the orchestrator computed for the pull request: contracts, dependencies, deploy impact. */
+  prFacts: PrFacts;
 }
 
 async function planArtefact(ctx: WorkContext, path: string): Promise<string> {
@@ -71,14 +84,39 @@ export const handler = logged('prepare-review', (input: PrepareReviewInput) => r
     : parseContentMatches((await mustRun(sessionTarget(ctx.sessionId, 'reviewer'), contentMatchScript({ baseBranch: ctx.baseBranch, patterns }), 300)).stdout, patterns.length);
   const sensitive = sensitiveChanges(seed.changedPaths, rules, contentMatches);
 
+  // Package files and the target's PR settings, both read from git in this fresh session. A failure
+  // here must not lose the review: the facts say the dependencies are unknown instead.
+  let dependencies: PrFacts['dependencies'] = [];
+  let dependenciesUnknown = false;
+  let settingsText: string | undefined;
+  try {
+    const deps = parseDeps((await mustRun(sessionTarget(ctx.sessionId, 'reviewer'), depsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
+    dependencies = dependencyChanges(deps.files, deps.lockText);
+    settingsText = deps.settingsText;
+  } catch (error) {
+    dependenciesUnknown = true;
+    log.error('could not read the package files for the pull request', { error });
+  }
+  const deploySettings = parseDeploySettings(settingsText);
+  if (deploySettings.problems.length > 0) log.error("ignoring the repository's pull request settings", { problems: deploySettings.problems });
+  const prFacts = prFactsDigest({
+    sensitive,
+    contracts: contractChanges(seed.changedPaths),
+    testFiles: testFileChanges(seed.changedPaths),
+    dependencies,
+    ...(dependenciesUnknown ? { dependenciesUnknown } : {}),
+    deploy: deployImpact(deploySettings.settings, seed.changedPaths),
+  });
+
   await putJsonArtefact(ctx.artefactPrefix, 'review/prepared.json', {
     headSha,
     changedPaths: seed.changedPaths,
     rules,
     ...(problems.length > 0 ? { rulesProblems: problems } : {}),
     sensitive,
+    prFacts,
   });
   await recordProgress(ctx.workItem.id, 'review-prepared', { reviewHeadSha: headSha });
   log.info('review session prepared', { changedPaths: seed.changedPaths.length, sensitive: sensitive.length });
-  return { changedPaths: seed.changedPaths.length, sensitive, sensitivePathsJson: sensitivePathsJson(sensitive) };
+  return { changedPaths: seed.changedPaths.length, sensitive, sensitivePathsJson: sensitivePathsJson(sensitive), prFacts };
 });
