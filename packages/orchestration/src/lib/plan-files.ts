@@ -1,9 +1,10 @@
 /**
- * Moving the plan between sessions. The planner's session is hostile once the
- * planner has run, so only /workspace/plan.md and /workspace/plan.json are
- * read out of it: regular files only (never symlinks), capped in size by the
- * read itself, redacted, and the JSON validated against the plan contract.
- * What the builder's session receives is exactly what was validated.
+ * Reading the plan out of the builder's session. The builder writes
+ * /workspace/plan.md and /workspace/plan.json from its plan subagent, and the
+ * session is hostile once the model has run, so only those two files are
+ * read: regular files only (never symlinks), capped in size by the read
+ * itself, redacted, and the JSON validated against the plan contract. What
+ * is stored, and seeded into a later round, is exactly what was validated.
  */
 import { redactSecrets } from '@factorial/artefacts';
 import { parsePlanJson, type Plan } from '@factorial/plan';
@@ -13,7 +14,7 @@ import { shellQuote } from './shell.ts';
 export const MAX_PLAN_FILE_BYTES = 64 * 1024;
 const SECTION = '\n===FACTORIAL-PLAN===\n';
 const FILES = ['plan.md', 'plan.json'] as const;
-/** At most this many validation errors are kept, each cut to ERROR_CHARS. */
+/** At most this many validation errors are kept, each cut to ERROR_CHARS (the host's plan hook cuts the same). */
 const MAX_ERRORS = 10;
 const ERROR_CHARS = 300;
 
@@ -88,28 +89,12 @@ export function checkPlanFiles(files: RawPlanFiles): CheckedPlan {
   return { ok: true, plan: result.value, markdown, json };
 }
 
-/** Append the rejection to the planner's notes, where its prompt says to look on a retry. */
-export function rejectionNotesScript(planAttempt: number, errors: readonly string[]): string {
-  const section = [
-    '',
-    `# Plan rejected (attempt ${planAttempt})`,
-    '',
-    'The orchestrator rejected /workspace/plan.md and /workspace/plan.json. Fix each problem, then write both files again:',
-    '',
-    ...errors.map((e) => `- ${e}`),
-    '',
-  ].join('\n');
-  return ['set -euo pipefail', `printf '%s' ${shellQuote(Buffer.from(section, 'utf8').toString('base64'))} | base64 -d >> /workspace/notes.md`].join('\n');
-}
-
-/** Write the validated plan into the builder's session. */
-export function seedPlanScript(markdown: string, json: string): string {
-  const encode = (text: string): string => shellQuote(Buffer.from(text, 'utf8').toString('base64'));
-  return [
-    'set -euo pipefail',
-    `printf '%s' ${encode(markdown)} | base64 -d > /workspace/plan.md`,
-    `printf '%s' ${encode(json)} | base64 -d > /workspace/plan.json`,
-  ].join('\n');
+/** The plan was missing or invalid when the build ended: reported to the requester, with nothing pushed. */
+export class InvalidPlanError extends Error {
+  constructor(errors: readonly string[]) {
+    super(`The builder did not produce a valid plan:\n${errors.map((e) => `- ${e}`).join('\n')}`);
+    this.name = 'InvalidPlan';
+  }
 }
 
 /** The plan as the state machine carries it to the pull request: small, whatever the plan's size. */

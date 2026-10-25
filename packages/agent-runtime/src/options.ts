@@ -11,12 +11,13 @@ import { agentEnvironment } from './environment.ts';
 import { builderPrompt } from './prompts/builder.ts';
 import { TOOL_NAME, SERVER_NAME } from './web-search.ts';
 
-/** The built-in tools the builder may use. `Agent` starts the subagents in agents.ts. */
+/** The built-in tools the builder may use. `Agent` starts the subagents in agents.ts (explore and plan). */
 export const BUILDER_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'Agent'];
 
 export interface OptionParts {
   hostEnv: NodeJS.ProcessEnv;
   preToolUse: HookCallbackMatcher[];
+  postToolUse: HookCallbackMatcher[];
   stop: HookCallbackMatcher[];
   webSearch: McpSdkServerConfigWithInstance | undefined;
   abortController: AbortController;
@@ -33,7 +34,7 @@ export function queryOptions(config: Config, parts: OptionParts): Options {
     mcpServers: parts.webSearch ? { [SERVER_NAME]: parts.webSearch } : {},
     strictMcpConfig: true,
     agents: builderAgents(config),
-    hooks: { PreToolUse: parts.preToolUse, Stop: parts.stop },
+    hooks: { PreToolUse: parts.preToolUse, PostToolUse: parts.postToolUse, Stop: parts.stop },
     settingSources: [],
     permissionMode: 'bypassPermissions',
     allowDangerouslySkipPermissions: true,

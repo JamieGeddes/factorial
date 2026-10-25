@@ -1,5 +1,5 @@
 /**
- * Prepare: accept the WorkItem exactly once, then set up the planner's session
+ * Prepare: accept the WorkItem exactly once, then set up the builder's session
  * deterministically: clone the repository, put the session on the work branch
  * (a fresh branch off the default head, or the existing rework branch), and
  * leave the WorkItem on disk for the agent to read, with the request copied to
@@ -8,9 +8,9 @@
  * attempt's branch instead of starting afresh. For rework items, the
  * review details — including the failing checks' logs, fetched here with a
  * short-lived read-only token and redacted — are left at /workspace/rework.md.
- * No model is involved. The builder's session is set up the same way, by
- * `seedSession`, once the plan is accepted (CollectPlan): sessions close when
- * idle, so it cannot wait through planning.
+ * No model is involved. The builder plans in this session with its plan
+ * subagent, so no plan is written here; a later round (ContinueBuild) and the
+ * reviewer's session are set up the same way, by `seedSession`.
  *
  * The session is brand new at this point, so no agent code can be running.
  * The read-only token is sent as an HTTP header for the clone only and is not
@@ -24,7 +24,7 @@ import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.t
 import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
-import { mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
+import { handOverWorkspace, mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
   assertCommitSha,
@@ -97,11 +97,9 @@ export function initialNotes(
   options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole } = {},
 ): string {
   const planSection =
-    options.role === 'planner'
-      ? '_Your plan goes in /workspace/plan.md and /workspace/plan.json, not here. Keep working notes under # Notes._'
-      : options.role === 'reviewer'
-        ? "_The plan the builder was given is /workspace/plan.json, with the planner's explanation in /workspace/plan.md. Your review goes in /workspace/review.json, not here. Keep working notes under # Notes._"
-        : "_The planner's plan is in /workspace/plan.json: follow its steps in order by `id`. /workspace/plan.md is the planner's explanation, for context. Note here any step you change or skip, and why._";
+    options.role === 'reviewer'
+      ? '_The plan the builder followed is /workspace/plan.json, with its explanation in /workspace/plan.md. Your review goes in /workspace/review.json, not here. Keep working notes under # Notes._'
+      : '_Your plan, from the plan subagent, goes in /workspace/plan.json and /workspace/plan.md: follow its steps in order by `id`. Keep a line here per step (done, part done, not started), and note any step you change or skip, and why._';
   return [
     '# Task',
     '',
@@ -291,11 +289,12 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
 
   const branch = resumedFrom?.branch ?? workBranchFor(workItem);
   const { baseCommit, baseBranch } = await seedSession({
-    role: 'planner',
+    role: 'builder',
     workItem,
     branch,
     ...(resumedFrom ? { resumedFrom } : {}),
   });
+  await handOverWorkspace(sessionTarget(workItem.id, 'builder'));
 
   await putJsonArtefact(prefix, 'prepare/branch.json', {
     branch,

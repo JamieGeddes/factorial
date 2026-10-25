@@ -27,7 +27,7 @@ describe('continuingSection', () => {
   const base = 'b'.repeat(40);
 
   it('tells the new session the round, what is on the branch and how to pick up', () => {
-    const text = continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 3 });
+    const text = continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 3, planned: true });
     assert.match(text, /^\n# Continuing \(round 2\)\n/);
     assert.match(text, /Its 3 commits are on this branch\./);
     assert.match(text, /Save work in progress after the build failed/);
@@ -36,20 +36,33 @@ describe('continuingSection', () => {
   });
 
   it('uses the singular for one commit and says when nothing was committed', () => {
-    assert.match(continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 1 }), /Its commit is on this branch\./);
-    const none = continuingSection({ round: 3, baseCommit: base, pushed: false, commitCount: 0 });
+    assert.match(continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 1, planned: true }), /Its commit is on this branch\./);
+    const none = continuingSection({ round: 3, baseCommit: base, pushed: false, commitCount: 0, planned: true });
     assert.match(none, /It committed nothing, so the branch is as it was at the start\./);
     assert.doesNotMatch(none, /Save work in progress/);
+  });
+
+  it('checks the steps against an existing plan, or says to plan first when there is none', () => {
+    const planned = continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 2, planned: true });
+    assert.match(planned, /Check each step in \/workspace\/plan\.json against the commits/);
+    const unplanned = continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 2, planned: false });
+    assert.match(unplanned, /left no valid plan, so there is no \/workspace\/plan\.json\. Plan first/);
   });
 });
 
 describe('seedRoundScript', () => {
   it('writes the plan files and the notes, encoded, never as shell text', () => {
-    const script = seedRoundScript({ planJson: '{"a":1}', planMarkdown: '# Plan', notes: "# Task\n'; touch /x; '" });
+    const script = seedRoundScript({ plan: { json: '{"a":1}', markdown: '# Plan' }, notes: "# Task\n'; touch /x; '" });
     assert.match(script, /> \/workspace\/plan\.json/);
     assert.match(script, /> \/workspace\/plan\.md/);
     assert.match(script, /> \/workspace\/notes\.md/);
     assert.doesNotMatch(script, /touch \/x/);
     assert.equal(script.match(/base64 -d/g)?.length, 3);
+  });
+
+  it('writes only the notes when there is no valid plan', () => {
+    const script = seedRoundScript({ notes: '# Task' });
+    assert.doesNotMatch(script, /plan\./);
+    assert.equal(script.match(/base64 -d/g)?.length, 1);
   });
 });

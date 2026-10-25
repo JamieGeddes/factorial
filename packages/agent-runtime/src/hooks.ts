@@ -8,6 +8,8 @@ import path from 'node:path';
 
 import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 
+import { PLAN_GATE_CLOSED } from './report.ts';
+
 export type Decision = { allow: true } | { allow: false; reason: string };
 
 /** The SDK's own files inside the workspace (CLAUDE_CONFIG_DIR). */
@@ -79,16 +81,24 @@ export function toHookOutput(decision: Decision): SyncHookJSONOutput {
   };
 }
 
+/**
+ * `planGateClosed` is the plan hook's verdict (report.ts): once the plan has
+ * been invalid twice, every tool call is denied, so the run ends as a
+ * finished one and Collect reports the invalid plan.
+ */
 export function preToolUseHooks(
   workspace: string,
   onDenied: (toolName: string, reason: string) => void,
+  planGateClosed: () => boolean = () => false,
 ): HookCallbackMatcher[] {
   return [
     {
       hooks: [
         async (input: HookInput) => {
           if (input.hook_event_name !== 'PreToolUse') return {};
-          const decision = decideToolUse(workspace, input.tool_name, input.tool_input);
+          const decision: Decision = planGateClosed()
+            ? { allow: false, reason: PLAN_GATE_CLOSED }
+            : decideToolUse(workspace, input.tool_name, input.tool_input);
           if (!decision.allow) onDenied(input.tool_name, decision.reason);
           return toHookOutput(decision);
         },

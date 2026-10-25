@@ -56,7 +56,7 @@ Each layer is independent: it stops a class of attack on its own, and it does no
 
   | Step | Token permissions |
   |---|---|
-  | Prepare, CollectPlan (clone) | `contents: read` |
+  | Prepare, ContinueBuild, PrepareReview (clone) | `contents: read` |
   | Prepare (fetch failing-check logs for rework) | `contents: read`, `actions: read` |
   | Collect (clean-room push) | `contents: write`, plus `workflows: write` only when the change edits a workflow |
   | OpenPullRequest | `contents: read`, `pull_requests: write`, `issues: write` |
@@ -80,7 +80,7 @@ Each layer is independent: it stops a class of attack on its own, and it does no
 
 This is the layer that makes the hostile-session rule real.
 
-- **One harness per role.** The planner and the builder are separate harnesses with separate runtimes, sessions and IAM roles. They never share a filesystem. The planner's output (`plan.md`, `plan.json`) is read out by the orchestrator, validated against the plan contract, stored, and only then written into a fresh builder session cloned at the same commit. An invalid plan is retried once by the orchestrator, then the run ends; the model never decides that.
+- **One session per trust boundary.** The builder and the reviewer are separate, with separate runtimes, sessions and IAM roles, and never share a filesystem. Since phase 3.1 of `docs/agent-sdk-plan.md` (2026-10-25) the planner is the builder's read-only `plan` subagent (Read, Grep and Glob only), inside the builder's trust boundary (rule 6, section 9): the plan is the builder's own claim, like its summary. Collect reads `plan.md` and `plan.json` out of the session as the `agent` user, validates the JSON against the plan contract and stores both; a build without a valid plan pushes nothing and ends as `invalid-plan`. The reviewer and a later round receive the stored, validated copy. Until then (tag `stage-0-harness`) the planner was a separate harness whose validated plan was written into a fresh builder session.
 - **The builder's output leaves as a bundle.** After the build, the orchestrator exports the new commits as a git bundle and stores the session's files. It does not push from the builder's session.
 - **The push happens in a clean room.** A separate session, which no model has run in, clones the repository afresh with hooks disabled, imports the bundle and checks that the imported head is exactly the commit the orchestrator expected, that the base commit is its ancestor, and that there are no merge commits. It then re-creates every commit with the App's bot identity, which discards whatever author, committer, signature or extra object the agent produced, and pushes a fast-forward to a `factorial/*` branch. A new branch must not already exist; a rework branch must still be at the head the session started from. No force push is ever issued.
 - **Why the split matters.** A single container running every stage, with sub-agents sharing a filesystem, would let anything the builder planted (a git hook, a modified tool on `PATH`, a shell profile, a doctored test fixture) act on the stages after it, including a reviewer whose verdict the orchestrator trusts. Separate sessions make each role's input a stored artefact a human can read, and keep each role's tools and model enforceable by the harness version rather than by code running inside the sandbox. Roles may share a session only when neither of them can write: a read-only explorer and a planner, for example, but never the builder and anything that judges or ships its output.

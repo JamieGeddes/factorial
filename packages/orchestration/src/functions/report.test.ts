@@ -139,20 +139,20 @@ describe('invalid-plan report', () => {
   it('says nothing was built and lists the problems from the cause', () => {
     const cause = JSON.stringify({
       errorType: 'InvalidPlan',
-      errorMessage: 'The planner did not produce a valid plan in 2 attempts:\n- /workspace/plan.json is missing\n- `x` ghs_abcdefghijklmnopqrstuvwxyz0123456789',
+      errorMessage: 'The builder did not produce a valid plan:\n- /workspace/plan.json is missing\n- `x` ghs_abcdefghijklmnopqrstuvwxyz0123456789',
     });
     const message = reportMessage({ status: 'invalid-plan', error: { Error: 'InvalidPlan', Cause: cause } });
-    assert.match(message, /did not produce a valid plan after two attempts, so nothing was built/);
+    assert.match(message, /did not produce a valid plan, so nothing was pushed/);
     assert.match(message, /- `\/workspace\/plan\.json is missing`/);
     assert.doesNotMatch(message, /ghs_abcdefghijklmnopqrstuvwxyz0123456789/);
     assert.match(message, /- ` x  ghs_\*\*\*`/);
   });
 
-  it('shows what the planner wrote only as inline code, and drops JSON snippets', () => {
+  it('shows what the builder wrote only as inline code, and drops JSON snippets', () => {
     const cause = JSON.stringify({
       errorType: 'InvalidPlan',
       errorMessage: [
-        'The planner did not produce a valid plan in 2 attempts:',
+        'The builder did not produce a valid plan:',
         '- plan.json (root) has unexpected property "@someone [x](https://evil.example)"',
         '- plan.json (root) is not valid JSON: Unexpected token, "@team see https://evil.example" is not valid JSON',
       ].join('\n'),
@@ -165,7 +165,7 @@ describe('invalid-plan report', () => {
   it('records the outcome in report.json', () => {
     assert.deepEqual(reportArtefact({ status: 'invalid-plan' }), {
       outcome: 'invalid-plan',
-      reason: 'The planner did not produce a valid plan after two attempts.',
+      reason: 'The builder did not produce a valid plan.',
     });
   });
 });

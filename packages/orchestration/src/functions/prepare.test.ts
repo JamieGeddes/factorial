@@ -92,7 +92,7 @@ describe('cloneScript pinned to a commit', () => {
     at: 'a'.repeat(40),
   };
 
-  it('creates a new branch at the commit the planner saw', () => {
+  it('creates a new branch at a commit another session fixed', () => {
     assert.match(cloneScript(params), new RegExp(`git checkout --quiet -b 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' '${'a'.repeat(40)}'`));
   });
 
@@ -155,15 +155,14 @@ describe('initialNotes', () => {
     assert.doesNotMatch(initialNotes(workItem), /Previous attempt/);
   });
 
-  it("points the builder at the planner's plan, and the planner at its plan files", () => {
-    assert.match(initialNotes(workItem), /The planner's plan is in \/workspace\/plan\.json: follow its steps in order by `id`/);
-    assert.match(initialNotes(workItem), /plan\.md is the planner's explanation, for context/);
-    assert.match(initialNotes(workItem, { role: 'planner' }), /Your plan goes in \/workspace\/plan\.md and \/workspace\/plan\.json/);
+  it('tells the builder where its plan goes and to keep a line per step', () => {
+    assert.match(initialNotes(workItem), /Your plan, from the plan subagent, goes in \/workspace\/plan\.json and \/workspace\/plan\.md: follow its steps in order by `id`/);
+    assert.match(initialNotes(workItem), /Keep a line here per step/);
   });
 
   it('tells the reviewer where the plan is and that its review goes elsewhere', () => {
     const notes = initialNotes(workItem, { role: 'reviewer' });
-    assert.match(notes, /The plan the builder was given is \/workspace\/plan\.json/);
+    assert.match(notes, /The plan the builder followed is \/workspace\/plan\.json/);
     assert.match(notes, /Your review goes in \/workspace\/review\.json, not here/);
     assert.doesNotMatch(notes, /follow its steps/);
   });

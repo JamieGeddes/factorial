@@ -19,8 +19,17 @@ describe('builderAgents', () => {
   const agents = builderAgents(config);
   const explore = agents.explore;
 
-  it('returns exactly one agent, explore', () => {
-    assert.deepEqual(Object.keys(agents), ['explore']);
+  it('returns exactly two agents, explore and plan', () => {
+    assert.deepEqual(Object.keys(agents), ['explore', 'plan']);
+  });
+
+  it('gives plan only the read-only tools, the builder model and a turn bound', () => {
+    const plan = agents.plan;
+    assert.ok(plan);
+    assert.deepEqual(plan.tools, ['Read', 'Grep', 'Glob']);
+    assert.equal(plan.model, 'inherit');
+    assert.equal(plan.maxTurns, 40);
+    assert.match(plan.prompt, /```json fenced block/);
   });
 
   it('gives explore only the read-only tools', () => {

@@ -53,11 +53,11 @@ export function reportMessage(input: ReportInput): string {
       return `Factorial's change did not pass the repository's checks${runUrl ? ` ([run](${runUrl}))` : ''}, so no pull request was opened. The branch \`${input.ctx?.branch ?? ''}\` is left for inspection.`;
     }
     case 'invalid-plan': {
-      // The problems are the validator's messages about the planner's
+      // The problems are the validator's messages about the builder's plan
       // files, redacted with the cause, and useful to whoever relabels.
       const problems = invalidPlanProblems(input.error?.Cause);
       return [
-        `Factorial's planner did not produce a valid plan after two attempts, so nothing was built. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.`,
+        `Factorial's builder did not produce a valid plan, so nothing was pushed. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.`,
         ...(problems.length > 0 ? ['', '**Problems with the last plan:**', '', ...problems.map((p) => `- ${p}`)] : []),
       ].join('\n');
     }
@@ -80,7 +80,7 @@ export function reportArtefact(input: Pick<ReportInput, 'status' | 'error' | 'sa
     failed: builderIncomplete(input.error)
       ? 'The builder reached its iteration or time limit before finishing.'
       : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
-    'invalid-plan': 'The planner did not produce a valid plan after two attempts.',
+    'invalid-plan': 'The builder did not produce a valid plan.',
   };
   return {
     outcome: input.status,

@@ -2,14 +2,18 @@
  * ContinueBuild: the builder stopped at its iteration or time limit before
  * finishing the plan, and Collect has saved its work to the branch. Set up
  * the next round: a fresh builder session (a new session id on the same
- * agent) cloned at the branch head, with the validated plan read back from
- * the artefact store, the previous round's notes (the builder's own memory,
- * stored by Collect before the push) and a section saying where it stands. The state machine then runs the builder again.
+ * agent) cloned at the branch head, with the plan read back from the
+ * artefact store and validated again, the previous round's notes (the
+ * builder's own memory, stored by Collect before the push) and a section
+ * saying where it stands. A round that ended before the builder wrote a valid
+ * plan leaves none to seed, and the new round plans first. The state machine
+ * then runs the builder again.
  *
  * The old session is discarded. Nothing is read out of it here: what the
  * new round receives came from the artefact store or the branch.
  */
 import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
+import { parsePlanJson } from '@factorial/plan';
 
 import { reworkContext, type WorkContext } from '../lib/context.ts';
 import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId, continuingSection, seedRoundScript } from '../lib/continue-files.ts';
@@ -52,7 +56,9 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
     artefact(ctx, 'plan/plan.md', MAX_PLAN_ARTEFACT_BYTES),
     artefact(ctx, 'build/notes.md', MAX_NOTES_ARTEFACT_BYTES),
   ]);
-  if (planJson === undefined || planMarkdown === undefined) throw new Error('the plan is not in the artefact store');
+  // Collect stores the plan valid or not, so it is checked again here.
+  const plan = planJson !== undefined && planMarkdown !== undefined && parsePlanJson(planJson).ok ? { json: planJson, markdown: planMarkdown } : undefined;
+  if (plan === undefined) log.info('no valid plan in the artefact store; the round plans first');
   if (previousNotes === undefined) log.error('previous notes not in the artefact store; starting the round from the initial notes');
 
   // The branch head the new round starts from: the pushed head when the
@@ -72,12 +78,12 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
 
   const notes =
     (previousNotes ?? initialNotes(ctx.workItem, { role: 'builder', ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}) })) +
-    continuingSection({ round, baseCommit: ctx.baseCommit, pushed, commitCount: collect.commitCount ?? 0 });
+    continuingSection({ round, baseCommit: ctx.baseCommit, pushed, commitCount: collect.commitCount ?? 0, planned: plan !== undefined });
   const builder = sessionTarget(sessionId, 'builder');
-  await mustRun(builder, seedRoundScript({ planJson, planMarkdown, notes }), 60);
+  await mustRun(builder, seedRoundScript({ plan, notes }), 60);
   await handOverWorkspace(builder);
 
-  await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0 });
+  await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0, planned: plan !== undefined });
   await recordProgress(ctx.workItem.id, 'build-continuing', { buildRounds: round, buildSessionId: sessionId });
   log.info('build continues in a new session', { round, sessionId, from: at, pushed });
   const existing = pushed || ctx.resumedFrom !== undefined || reworkContext(ctx.workItem) !== undefined;

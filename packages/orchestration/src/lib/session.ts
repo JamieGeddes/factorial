@@ -31,22 +31,17 @@ export interface SessionTarget {
 const client = new BedrockAgentCoreClient({});
 
 /** Each agent role is its own runtime, so the same session id names a different session per role. */
-export type SessionRole = 'builder' | 'planner' | 'reviewer';
-
-const HARNESS_ARN_ENV: Record<Exclude<SessionRole, 'builder'>, string> = {
-  planner: 'PLANNER_HARNESS_ARN',
-  reviewer: 'REVIEWER_HARNESS_ARN',
-};
+export type SessionRole = 'builder' | 'reviewer';
 
 /**
- * The builder, and its clean room, run on Factorial's host on
- * BUILDER_RUNTIME_ARN; the planner and reviewer on their harnesses. Both
+ * The builder, which plans with its subagent, and its clean room run on
+ * Factorial's host on BUILDER_RUNTIME_ARN; the reviewer on its harness. Both
  * kinds are addressed through the `live` qualifier.
  */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
   const qualifier = requireEnv('HARNESS_QUALIFIER');
   if (role === 'builder') return { arn: requireEnv('BUILDER_RUNTIME_ARN'), qualifier, sessionId, kind: 'runtime' };
-  return { arn: requireEnv(HARNESS_ARN_ENV[role]), qualifier, sessionId, kind: 'harness' };
+  return { arn: requireEnv('REVIEWER_HARNESS_ARN'), qualifier, sessionId, kind: 'harness' };
 }
 
 /** The user the Runtime host runs the model as, and its home. */

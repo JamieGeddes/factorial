@@ -47,14 +47,8 @@ test('rejects a malformed qualifier', () => {
   assert.throws(() => harnessTarget({ ...env, HARNESS_QUALIFIER: 'live endpoint' }), /not an endpoint name/);
 });
 
-test('reads the planner role and its harness', () => {
-  const target = harnessTarget({
-    ...env,
-    ROLE: 'planner',
-    HARNESS_ID: 'factorial_planner-AbC123',
-    HARNESS_ARN: 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_planner-AbC123',
-  });
-  assert.equal(target.role, 'planner');
+test('refuses the planner, now the builder\'s subagent', () => {
+  assert.throws(() => harnessTarget({ ...env, ROLE: 'planner' }));
 });
 
 test("the builder's outcome keeps its existing ledger names", () => {
@@ -71,10 +65,10 @@ test("the builder's outcome keeps its existing ledger names", () => {
 
 test("another role's outcome sits under its stage and leaves the builder's fields alone", () => {
   const outcome = { stopReason: 'end_turn', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', record: { usageKey: 'p' } };
-  assert.deepEqual(outcomeAttributes('planner', outcome), {
-    plan: { stopReason: 'end_turn', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', usageKey: 'p' },
+  assert.deepEqual(outcomeAttributes('reviewer', outcome), {
+    review: { stopReason: 'end_turn', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', usageKey: 'p' },
   });
-  assert.deepEqual(ROLE_STAGES.planner, { stage: 'plan', running: 'planning', done: 'planned', failed: 'plan-error' });
+  assert.deepEqual(ROLE_STAGES.reviewer, { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' });
 });
 
 test('reads the reviewer role and its harness', () => {
@@ -126,8 +120,7 @@ test('treats a builder that stopped before end_turn as incomplete', () => {
   assert.match(incompleteReason('builder', undefined) ?? '', /no stop reason/);
 });
 
-test('leaves the planner and the reviewer to their Collect steps', () => {
-  assert.equal(incompleteReason('planner', 'max_iterations_exceeded'), undefined);
+test('leaves the reviewer to its Collect step', () => {
   assert.equal(incompleteReason('reviewer', 'timeout_exceeded'), undefined);
 });
 

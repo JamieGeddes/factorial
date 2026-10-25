@@ -4,16 +4,15 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { asAgent, cleanRoomTarget, commandFor, sessionTarget } from './session.ts';
 
-const HARNESS = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_planner-abc';
+const HARNESS = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_reviewer-abc';
 const RUNTIME = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_builder-abc';
-const NAMES = ['PLANNER_HARNESS_ARN', 'REVIEWER_HARNESS_ARN', 'HARNESS_QUALIFIER', 'BUILDER_RUNTIME_ARN'];
+const NAMES = ['REVIEWER_HARNESS_ARN', 'HARNESS_QUALIFIER', 'BUILDER_RUNTIME_ARN'];
 
 describe('sessionTarget', () => {
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
     saved = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));
     Object.assign(process.env, {
-      PLANNER_HARNESS_ARN: 'arn:planner',
       REVIEWER_HARNESS_ARN: 'arn:reviewer',
       HARNESS_QUALIFIER: 'live',
       BUILDER_RUNTIME_ARN: RUNTIME,
@@ -32,9 +31,8 @@ describe('sessionTarget', () => {
     assert.equal(cleanRoomTarget('w').sessionId, 'w-push');
   });
 
-  it('keeps the planner and reviewer on their harnesses', () => {
-    assert.equal(sessionTarget('s', 'planner').arn, 'arn:planner');
-    assert.equal(sessionTarget('s', 'reviewer').kind, 'harness');
+  it('keeps the reviewer on its harness', () => {
+    assert.deepEqual(sessionTarget('s', 'reviewer'), { arn: 'arn:reviewer', qualifier: 'live', sessionId: 's', kind: 'harness' });
   });
 
   it('refuses a missing Runtime ARN', () => {

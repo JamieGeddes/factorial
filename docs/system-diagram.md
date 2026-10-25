@@ -47,11 +47,11 @@ flowchart TB
     subgraph agent["Stack 20: factorial-agent"]
         direction TB
         modelkey["AgentCore Identity:<br/>factorial-model-api-key<br/>reads human-created secret"]
-        harness["AgentCore Runtime:<br/>factorial_builder<br/>host process + Claude Agent SDK,<br/>Sonnet 5.5 on Bedrock,<br/>immutable versions"]
+        harness["AgentCore Runtime:<br/>factorial_builder<br/>host process + Claude Agent SDK,<br/>plan and explore subagents,<br/>Sonnet 5.5 on Bedrock,<br/>immutable versions"]
         liveendpoint["Runtime endpoint 'live'<br/>(promoted by deploy workflow)"]
         agentrole["factorial-agent-builder role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents;<br/>named Bedrock profiles only)"]
         bedrock["Amazon Bedrock<br/>EU inference profiles"]
-        otherharnesses["AgentCore Harnesses:<br/>factorial_planner, factorial_reviewer<br/>GLM 5.3 Flash via Z.ai API"]
+        otherharnesses["AgentCore Harness:<br/>factorial_reviewer<br/>GLM 5.3 Flash via Z.ai API"]
         harness --- agentrole
         harness -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
         otherharnesses -->|"GetResourceApiKey<br/>(control)"| modelkey
@@ -82,7 +82,7 @@ flowchart TB
 
     prepare -->|"session command API:<br/>clone with token as header<br/>(data)"| harness
     invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| liveendpoint
-    invoker -->|"InvokeHarness: plan, review<br/>(control)"| otherharnesses
+    invoker -->|"InvokeHarness: review<br/>(control)"| otherharnesses
     collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| harness
     collect -->|"push branch with<br/>App installation token<br/>(data)"| github
     dispatch -->|"workflow_dispatch<br/>(control)"| testwf
@@ -106,9 +106,9 @@ flowchart TB
 1. **Trigger.** A human adds the `factorial` label to an issue. GitHub delivers a signed webhook to the adapter's function URL on its `live` alias.
 2. **Adapt.** The adapter verifies the HMAC signature, checks that both the issue author and the labeller are trusted user IDs, builds one `WorkItem` (contract v1) and puts it on the `factorial-work` bus.
 3. **Start.** The single bus rule matches `source: factorial.triggers` / `detail-type: WorkItem` and starts an execution of the `factorial-work` state machine on its `live` alias, passing the `WorkItem` as input.
-4. **Prepare** (Lambda, deterministic). Accepts the `WorkItem` exactly once in the ledger (idempotency guard), mints a read-only installation token, clones the repository into a fresh harness session by the session command API (token sent as a header, never written into the session), creates the work branch and leaves `workitem.json` on disk.
-5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` Runtime on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. Factorial's host process runs the Claude Agent SDK there, with the model as the unprivileged `agent` user; the agent edits the code inside the sandbox, which holds no credentials beyond the execution role's model access.
-6. **Collect** (Lambda, deterministic). Treats the session as hostile: commits anything uncommitted, exports the commits as a git bundle, and pushes the branch from a clean-room session with hooks disabled, using a fresh installation token.
+4. **Prepare** (Lambda, deterministic). Accepts the `WorkItem` exactly once in the ledger (idempotency guard), mints a read-only installation token, clones the repository into a fresh builder session by the session command API (token sent as a header, never written into the session), creates the work branch and leaves `workitem.json` on disk.
+5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` Runtime on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. Factorial's host process runs the Claude Agent SDK there, with the model as the unprivileged `agent` user. The builder first plans with its read-only plan subagent and writes `plan.json` and `plan.md`, which the host checks against the plan contract; the agent edits the code inside the sandbox, which holds no credentials beyond the execution role's model access.
+6. **Collect** (Lambda, deterministic). Treats the session as hostile: validates and stores the builder's plan (no valid plan → **report** `invalid-plan`), commits anything uncommitted, exports the commits as a git bundle, and pushes the branch from a clean-room session with hooks disabled, using a fresh installation token.
 7. **HasChanges** (Choice). No pushed commits → **report** (`no-changes`) and finish.
 8. **Test** (Lambda + callback). Dispatches `test.yml` on the default branch with the task token and the tested commit sha. The checks job runs the untrusted commit with no credentials; the report job assumes `factorial-test-callback` through OIDC (main only) and sends task success or failure. Failure → **report** (`tests-failed`) and fail.
 9. **OpenPullRequest** (Lambda). Confirms the branch head is still the tested commit, opens the PR attributed to `factorial[bot]`, and comments on the issue. A human reviews and approves.
@@ -119,7 +119,7 @@ Each part is independently versioned and referenced only through its `live` alia
 
 | Part | Versioned resource | `live` pointer |
 |---|---|---|
-| Agents | Runtime versions (builder), harness versions (planner, reviewer) | Endpoint named `live` |
+| Agents | Runtime versions (builder), harness versions (reviewer) | Endpoint named `live` |
 | State machine | Step Functions versions | Alias named `live` |
 | Adapters and Lambdas | Lambda versions | Alias named `live` |
 
