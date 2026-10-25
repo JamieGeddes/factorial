@@ -36,6 +36,7 @@ describe('queryOptions', () => {
     assert.equal(options.maxTurns, 150);
     assert.equal(options.maxBudgetUsd, 10);
     assert.deepEqual(options.tools, BUILDER_TOOLS);
+    assert.ok(BUILDER_TOOLS.includes('WebFetch'));
     assert.deepEqual(Object.keys(options.agents ?? {}), ['explore', 'plan']);
     assert.deepEqual(Object.keys(options.hooks ?? {}), ['PreToolUse', 'PostToolUse', 'Stop']);
     assert.deepEqual(options.agents?.explore?.tools, ['Read', 'Grep', 'Glob']);

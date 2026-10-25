@@ -23,10 +23,10 @@ describe('builderAgents', () => {
     assert.deepEqual(Object.keys(agents), ['explore', 'plan']);
   });
 
-  it('gives plan the read-only tools, Write, web search, the builder model and a turn bound', () => {
+  it('gives plan the read-only tools, Write, WebFetch, web search, the builder model and a turn bound', () => {
     const plan = agents.plan;
     assert.ok(plan);
-    assert.deepEqual(plan.tools, ['Read', 'Grep', 'Glob', 'Write', 'mcp__factorial__web_search']);
+    assert.deepEqual(plan.tools, ['Read', 'Grep', 'Glob', 'Write', 'WebFetch', 'mcp__factorial__web_search']);
     for (const tool of ['Bash', 'Edit', 'NotebookEdit', 'Agent']) assert.ok(!plan.tools?.includes(tool), `${tool} must not be allowed`);
     assert.equal(plan.model, 'inherit');
     assert.equal(plan.maxTurns, 40);
@@ -34,7 +34,7 @@ describe('builderAgents', () => {
   });
 
   it('leaves web search out of plan when the gateway is not configured', () => {
-    assert.deepEqual(builderAgents(config, false).plan?.tools, ['Read', 'Grep', 'Glob', 'Write']);
+    assert.deepEqual(builderAgents(config, false).plan?.tools, ['Read', 'Grep', 'Glob', 'Write', 'WebFetch']);
   });
 
   it('gives explore only the read-only tools', () => {

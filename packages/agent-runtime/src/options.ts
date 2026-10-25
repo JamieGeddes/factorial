@@ -11,8 +11,8 @@ import { agentEnvironment } from './environment.ts';
 import { builderPrompt } from './prompts/builder.ts';
 import { TOOL_NAME, SERVER_NAME } from './web-search.ts';
 
-/** The built-in tools the builder may use. `Agent` starts the subagents in agents.ts (explore and plan). */
-export const BUILDER_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'Agent'];
+/** The built-in tools the builder may use. `WebFetch` reads a page through the Claude Code subprocess (no permission rule: bypassPermissions skips its prompt; never add an `ask` rule). `Agent` starts the subagents in agents.ts (explore and plan). */
+export const BUILDER_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'Agent'];
 
 export interface OptionParts {
   hostEnv: NodeJS.ProcessEnv;

@@ -36,7 +36,8 @@ export const PLAN_AGENT = 'plan';
  * The planner, inside the builder's session since phase 3.1 of
  * docs/agent-sdk-plan.md, on the builder's own model: planning is where the
  * reasoning pays. It reads, searches the web like the planner harness did,
- * and writes the two plan files itself: the PreToolUse hook (hooks.ts) lets
+ * reads the pages it finds (WebFetch, as the builder does), and writes the
+ * two plan files itself: the PreToolUse hook (hooks.ts) lets
  * it write nothing else, and the plan hook (report.ts) sends it the
  * validation errors, so the planner fixes its own plan.
  */
@@ -45,7 +46,7 @@ export function plan(webSearch: boolean): AgentDefinition {
     description:
       'Planner. Run it once, before any change, with the request and anything already on the branch; it writes /workspace/plan.json and /workspace/plan.md and replies with a short summary.',
     prompt: planPrompt,
-    tools: [...READ_ONLY_TOOLS, 'Write', ...(webSearch ? [TOOL_NAME] : [])],
+    tools: [...READ_ONLY_TOOLS, 'Write', 'WebFetch', ...(webSearch ? [TOOL_NAME] : [])],
     model: 'inherit',
     maxTurns: 40,
   };
