@@ -11,6 +11,7 @@ export const SUMMARY_HEADINGS = {
   behaviour: '## Behaviour impact',
   breaking: '## Breaking changes',
   uncertainties: '## Uncertainties',
+  notTested: '## Not tested',
   planSteps: '## Plan steps',
 } as const;
 
@@ -21,6 +22,7 @@ export const SUMMARY_CAPS = {
   breaking: 600,
   uncertaintyBullets: 5,
   uncertainty: 200,
+  notTestedBullets: 3,
   stepNote: 300,
 } as const;
 
@@ -40,6 +42,8 @@ export interface BuilderSummary {
   behaviour?: string;
   breaking?: string;
   uncertainties: string[];
+  /** Undefined when the section is absent, so "not reported" differs from "nothing". */
+  notTested?: string[];
   steps: StepReport[];
 }
 
@@ -90,6 +94,7 @@ export function parseBuilderSummary(text: string): BuilderSummary | undefined {
     ...(body('behaviour') !== undefined ? { behaviour: body('behaviour')! } : {}),
     ...(body('breaking') !== undefined ? { breaking: body('breaking')! } : {}),
     uncertainties: lines('uncertainties').map(bulletText).filter((l) => l && !noneWord.test(l)),
+    ...(sections.has('notTested') ? { notTested: lines('notTested').map(bulletText).filter((l) => l && !noneWord.test(l)) } : {}),
     steps: lines('planSteps').map(parseStepLine),
   };
 }

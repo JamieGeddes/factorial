@@ -20,6 +20,7 @@ const MAX_LOCKFILE_BYTES = 4 * 1024 * 1024;
 const MAX_PACKAGE_FILES = 30;
 const MAX_DEPENDENCY_CHANGES = 20;
 const MAX_CONTRACTS = 20;
+const MAX_TEST_FILES = 20;
 const MAX_RULES = 20;
 const DIGEST_CHARS = 6000;
 const LINE_SEP = '\n';
@@ -60,6 +61,8 @@ export interface DeployImpact {
 export interface PrFacts {
   sensitive: SensitiveChange[];
   contracts: string[];
+  /** Changed files that look like tests, by name. */
+  testFiles: string[];
   dependencies: DependencyChange[];
   deploy: DeployImpact;
   /** Set when the digest had to drop entries to fit the state. */
@@ -125,6 +128,10 @@ export function deployImpact(settings: DeploySettings | undefined, changedPaths:
 /** Changed paths under contracts/. */
 export const contractChanges = (changedPaths: readonly string[]): string[] =>
   changedPaths.filter((p) => p.startsWith('contracts/')).slice(0, MAX_CONTRACTS);
+
+/** Changed files whose names say they are tests: *.test.* and *.spec.* files, or anything under a test, tests or __tests__ directory. */
+export const testFileChanges = (changedPaths: readonly string[]): string[] =>
+  changedPaths.filter((p) => /\.(test|spec)\.[A-Za-z0-9]+$/.test(p) || /(^|\/)(tests?|__tests__)\//.test(p)).slice(0, MAX_TEST_FILES);
 
 function declared(text: string | undefined): Map<string, { version: string; dev: boolean }> {
   const result = new Map<string, { version: string; dev: boolean }>();
@@ -242,11 +249,11 @@ export function parseDeps(stdout: string): { files: PackageFileVersions[]; lockT
 
 /** The facts as the state machine carries them to the pull request: entries dropped, last first, until the JSON fits. */
 export function prFactsDigest(facts: PrFacts): PrFacts {
-  const out: PrFacts = { ...facts, sensitive: [...facts.sensitive], contracts: [...facts.contracts], dependencies: [...facts.dependencies] };
+  const out: PrFacts = { ...facts, sensitive: [...facts.sensitive], contracts: [...facts.contracts], testFiles: [...facts.testFiles], dependencies: [...facts.dependencies] };
   const size = (): number => JSON.stringify(out).length;
   let cut = false;
   while (size() > DIGEST_CHARS) {
-    const list = [out.dependencies, out.contracts, out.sensitive].find((l) => l.length > 0);
+    const list = [out.dependencies, out.testFiles, out.contracts, out.sensitive].find((l) => l.length > 0);
     if (!list) {
       out.deploy = { ...out.deploy, notes: out.deploy.notes.slice(0, 3), humanSteps: out.deploy.humanSteps.slice(0, 3) };
       cut = true;

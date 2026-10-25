@@ -14,6 +14,7 @@ import {
   parseDeploySettings,
   parseDeps,
   prFactsDigest,
+  testFileChanges,
   type PrFacts,
 } from './pr-facts.ts';
 
@@ -85,7 +86,7 @@ describe('contractChanges', () => {
 
 describe('prFactsDigest', () => {
   it('keeps small facts and cuts big ones to the cap, marking them', () => {
-    const small: PrFacts = { sensitive: [], contracts: [], dependencies: [], deploy: { configured: false, notes: [], humanSteps: [] } };
+    const small: PrFacts = { sensitive: [], contracts: [], testFiles: [], dependencies: [], deploy: { configured: false, notes: [], humanSteps: [] } };
     assert.deepEqual(prFactsDigest(small), small);
     const big: PrFacts = { ...small, contracts: Array.from({ length: 20 }, (_, i) => `contracts/${'x'.repeat(400)}${i}.json`) };
     const digest = prFactsDigest(big);
@@ -123,5 +124,11 @@ describe('depsScript', () => {
 
   it('rejects output that is not the listing', () => {
     assert.throws(() => parseDeps('garbage line'));
+  });
+});
+
+describe('testFileChanges', () => {
+  it('picks test files by name', () => {
+    assert.deepEqual(testFileChanges(['a/b.test.ts', 'c.spec.js', 'tests/x.py', 'src/lib.ts', 'latest/y.ts']), ['a/b.test.ts', 'c.spec.js', 'tests/x.py']);
   });
 });

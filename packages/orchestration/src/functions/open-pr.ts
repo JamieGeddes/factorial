@@ -52,7 +52,7 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
 
   const pr = await client.createPullRequest(repo, {
     title: ctx.workItem.title,
-    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, input.plan ?? undefined, input.review),
+    body: pullRequestBody(ctx, input.collect.summary, input.test, headSha, { plan: input.plan, review: input.review }),
     head: ctx.branch,
     base: ctx.baseBranch,
   });
