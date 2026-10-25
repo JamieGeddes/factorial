@@ -8,6 +8,7 @@
  * and which of those need a human, come from the target's
  * .factorial/pr-body.json on the base branch, read like sensitive-paths.json.
  */
+import { codeSpan } from './builder-summary.ts';
 import { HARDENED_GIT_ENV, assertGitBranch, shellQuote } from './shell.ts';
 import type { SensitiveChange } from './review-files.ts';
 
@@ -25,7 +26,7 @@ const MAX_RULES = 20;
 const DIGEST_CHARS = 6000;
 const LINE_SEP = '\n';
 
-export const NO_LICENCE = 'licence not stated in the lockfile';
+export const NO_LICENCE = 'not stated in the lockfile';
 
 export interface DependencyChange {
   name: string;
@@ -35,7 +36,7 @@ export interface DependencyChange {
   dev: boolean;
   /** The package.json it appears in. */
   file: string;
-  /** For an added package, from the lockfile at the pushed head. */
+  /** For an added package, as the lockfile at the pushed head states it: the branch's claim, not a checked fact. */
   licence?: string;
 }
 
@@ -116,7 +117,7 @@ function matching(rules: readonly DeployRule[], changedPaths: readonly string[])
   for (const rule of rules) {
     const hits = changedPaths.filter((p) => p.startsWith(rule.prefix));
     if (hits.length === 0) continue;
-    const shown = hits.slice(0, 3).map((p) => `\`${p}\``).join(', ');
+    const shown = hits.slice(0, 3).map((p) => codeSpan(p)).join(', ');
     lines.push(`${rule.note}: ${shown}${hits.length > 3 ? ` and ${hits.length - 3} more` : ''}`);
   }
   return lines;
@@ -207,7 +208,8 @@ export function dependencyChanges(files: readonly PackageFileVersions[], lockTex
 export function depsScript(params: { baseBranch: string }): string {
   const base = `origin/${assertGitBranch(params.baseBranch, 'base branch')}`;
   const range = shellQuote(`${base}...HEAD`);
-  const b64 = (cmd: string, limit = MAX_DEP_FILE_BYTES): string => `${cmd} | head -c ${limit} | base64 -w0`;
+  // tr: some base64 builds end -w0 output with a newline, which would split the line.
+  const b64 = (cmd: string, limit = MAX_DEP_FILE_BYTES): string => `${cmd} | head -c ${limit} | base64 -w0 | tr -d '\\n'`;
   return [
     // No -e: head closing a pipe early makes git show fail, which is not an error here.
     'set -uo pipefail',

@@ -4,6 +4,7 @@ import type { Plan } from '@factorial/plan';
 
 import {
   SUMMARY_CAPS,
+  codeSpan,
   cutText,
   parseBuilderSummary,
   replaceEmDashes,
@@ -134,8 +135,8 @@ function dependencyLine(facts: PrFacts): string {
   return facts.dependencies
     .map((d) =>
       d.change === 'added'
-        ? `added \`${d.name}\` ${d.version}${d.dev ? ' (dev)' : ''} in \`${d.file}\`, licence: ${d.licence ?? 'unknown'}`
-        : `removed \`${d.name}\`${d.dev ? ' (dev)' : ''} from \`${d.file}\``,
+        ? `added ${codeSpan(d.name)} ${codeSpan(d.version, 60)}${d.dev ? ' (dev)' : ''} in ${codeSpan(d.file)}, licence per the lockfile: ${d.licence ? codeSpan(d.licence, 100) : 'unknown'}`
+        : `removed ${codeSpan(d.name)}${d.dev ? ' (dev)' : ''} from ${codeSpan(d.file)}`,
     )
     .join('; ');
 }
@@ -162,7 +163,7 @@ export function impactSection(summary: BuilderSummary | undefined, facts: PrFact
     '',
     `- **Behaviour:** ${behaviour}`,
     `- **Deploy:** ${facts ? deployLine(facts) : unknown}`,
-    `- **Contracts:** ${facts ? (facts.contracts.length ? facts.contracts.map((c) => `\`${c}\``).join(', ') : 'None') : unknown}`,
+    `- **Contracts:** ${facts ? (facts.contracts.length ? facts.contracts.map((c) => codeSpan(c)).join(', ') : 'None') : unknown}`,
     `- **Dependencies:** ${facts ? dependencyLine(facts) : unknown}`,
     `- **Breaking changes or migration:** ${breaking}`,
   ].join('\n');
@@ -180,16 +181,16 @@ export function reviewFocusSection(summary: BuilderSummary | undefined, facts: P
   const sensitive = new Set<string>();
   for (const change of facts?.sensitive ?? []) {
     sensitive.add(change.path);
-    items.push(`\`${change.path}\`: ${focusText(change.reason)}.`);
+    items.push(`${codeSpan(change.path)}: ${focusText(change.reason)}.`);
   }
   for (const path of facts?.contracts ?? []) {
-    if (!sensitive.has(path)) items.push(`\`${path}\`: changes a contract other components depend on.`);
+    if (!sensitive.has(path)) items.push(`${codeSpan(path)}: changes a contract other components depend on.`);
   }
   if (review?.ok) {
     for (const severity of ['high', 'medium'] as const) {
       for (const f of review.review.findings) {
         if (f.severity !== severity || f.body.startsWith(GUARD_FINDING_PREFIX)) continue;
-        items.push(`\`${f.line ? `${f.path}:${f.line}` : f.path}\`: ${focusText(f.body)}`);
+        items.push(`${codeSpan(f.line ? `${f.path}:${f.line}` : f.path)}: ${focusText(f.body)}`);
       }
     }
   }
@@ -214,7 +215,7 @@ const VERDICTS: Record<ReviewDigest['verdict'], string> = {
 
 function findingLine(finding: ReviewDigest['findings'][number], withSeverity: boolean): string {
   const where = finding.line ? `${finding.path}:${finding.line}` : finding.path;
-  return `- ${withSeverity ? `**${finding.severity}** ` : ''}\`${where}\`: ${agentText(finding.body, 600)}`;
+  return `- ${withSeverity ? `**${finding.severity}** ` : ''}${codeSpan(where)}: ${agentText(finding.body, 600)}`;
 }
 
 /**
@@ -251,13 +252,8 @@ export function reviewSection(outcome: ReviewOutcome): string {
   ].join('\n');
 }
 
-export interface TestResult {
-  runUrl?: string;
-  outcome?: string;
-}
-
 const listPaths = (paths: readonly string[]): string => {
-  const shown = paths.slice(0, MAX_LIST).map((p) => `\`${p}\``).join(', ');
+  const shown = paths.slice(0, MAX_LIST).map((p) => codeSpan(p)).join(', ');
   return paths.length > MAX_LIST ? `${shown} and ${paths.length - MAX_LIST} more` : shown;
 };
 

@@ -236,6 +236,9 @@ export function checkReviewFile(file: { text: string; size: number } | undefined
   return { ok: true, review: result.value, json };
 }
 
+/** How the orchestrator's guard findings begin, so the pull request can tell them from the reviewer's own. */
+export const GUARD_FINDING_PREFIX = 'Added by the orchestrator: ';
+
 /**
  * Add a high-severity finding for every sensitive change, ahead of the
  * reviewer's own findings. This is a reminder for the human reviewer, not a
@@ -244,9 +247,6 @@ export function checkReviewFile(file: { text: string; size: number } | undefined
  * text it reviews. It is added whatever the reviewer wrote about the same
  * path: a finding of its own, however worded, must never stand in for this.
  */
-/** How the orchestrator's guard findings begin, so the pull request can tell them from the reviewer's own. */
-export const GUARD_FINDING_PREFIX = 'Added by the orchestrator: ';
-
 export function withGuardFindings(review: Review, changes: readonly SensitiveChange[]): { review: Review; added: number } {
   const guard: ReviewFinding[] = changes.map((change) => ({
       path: change.path,

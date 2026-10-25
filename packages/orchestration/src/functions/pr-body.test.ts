@@ -157,7 +157,20 @@ describe('pullRequestBody: a new dependency', () => {
     };
     const body = render(summaryMd(), { fullPlan: plan, facts });
     assertOrder(body);
-    assert.match(section(body, '## Impact'), /- \*\*Dependencies:\*\* added `left-pad` \^1\.3\.0 in `packages\/a\/package\.json`, licence: MIT; removed `old` \(dev\) from `package\.json`/);
+    assert.match(section(body, '## Impact'), /- \*\*Dependencies:\*\* added `left-pad` `\^1\.3\.0` in `packages\/a\/package\.json`, licence per the lockfile: `MIT`; removed `old` \(dev\) from `package\.json`/);
+  });
+
+  it('keeps values the branch controls inside their code spans', () => {
+    const facts: PrFacts = {
+      ...noFacts,
+      testFiles: ['a`</details>\n## Pwned.test.ts'],
+      dependencies: [{ name: 'x`y', change: 'added', version: '1`\n# Heading', dev: false, file: 'package.json', licence: 'MIT` [link](https://e.x)' }],
+    };
+    const body = render(summaryMd(), { fullPlan: plan, facts });
+    assertOrder(body);
+    assert.ok(!/^#+ (Heading|Pwned)/m.test(body));
+    assert.match(section(body, '## Impact'), /added `x y` `1 # Heading` in `package\.json`, licence per the lockfile: `MIT  \[link\]\(https:\/\/e\.x\)`/);
+    assert.match(section(body, '## Tests'), /`a <\/details> ## Pwned\.test\.ts`/);
   });
 });
 

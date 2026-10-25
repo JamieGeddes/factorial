@@ -56,6 +56,15 @@ export function cutText(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1).trimEnd()}…` : clean;
 }
 
+/**
+ * A value the branch controls (a path, a package name, a version, a licence)
+ * as a code span: backticks and line breaks cannot end the span, so nothing in
+ * it is read as Markdown or HTML, and it is cut to `max`.
+ */
+export function codeSpan(text: string, max = 200): string {
+  return `\`${cutText(replaceEmDashes(text).replace(/[`\r\n]+/g, ' '), max)}\``;
+}
+
 const STEP_LINE = /^(?:[-*+]|\d+[.)])?\s*[`*_]*([A-Za-z0-9][A-Za-z0-9._-]{0,63}?)[`*_]*\s*:\s*(done|skipped|changed)\b\s*[:\-.]?\s*(.*)$/i;
 
 export function parseStepLine(line: string): StepReport {

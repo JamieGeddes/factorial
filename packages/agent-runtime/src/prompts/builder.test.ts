@@ -12,7 +12,7 @@ describe('builder prompt', () => {
     assert.ok(builderPrompt.includes('`- <id>: done|skipped|changed: <why, when not done as planned>`'));
   });
 
-  it('is the same wording as the harness copy in the agent template', () => {
+  it('names the same headings in the harness copy in the agent template', () => {
     const template = readFileSync(new URL('../../../../templates/20-agent.yml', import.meta.url), 'utf8');
     for (const heading of HEADINGS) assert.ok(template.includes(`\`${heading}\``), heading);
   });
