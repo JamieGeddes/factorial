@@ -4,22 +4,20 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 
 import { asAgent, cleanRoomTarget, commandFor, sessionTarget } from './session.ts';
 
-const HARNESS = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_builder-abc';
+const HARNESS = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_planner-abc';
 const RUNTIME = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_builder-abc';
-const NAMES = ['HARNESS_ARN', 'PLANNER_HARNESS_ARN', 'REVIEWER_HARNESS_ARN', 'HARNESS_QUALIFIER', 'BUILDER_TARGET', 'BUILDER_RUNTIME_ARN'];
+const NAMES = ['PLANNER_HARNESS_ARN', 'REVIEWER_HARNESS_ARN', 'HARNESS_QUALIFIER', 'BUILDER_RUNTIME_ARN'];
 
 describe('sessionTarget', () => {
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
     saved = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));
     Object.assign(process.env, {
-      HARNESS_ARN: HARNESS,
       PLANNER_HARNESS_ARN: 'arn:planner',
       REVIEWER_HARNESS_ARN: 'arn:reviewer',
       HARNESS_QUALIFIER: 'live',
       BUILDER_RUNTIME_ARN: RUNTIME,
     });
-    delete process.env.BUILDER_TARGET;
   });
   afterEach(() => {
     for (const [name, value] of Object.entries(saved)) {
@@ -28,27 +26,18 @@ describe('sessionTarget', () => {
     }
   });
 
-  it('targets the builder harness by default', () => {
-    assert.deepEqual(sessionTarget('s'), { arn: HARNESS, qualifier: 'live', sessionId: 's', kind: 'harness' });
-  });
-
-  it('targets the builder Runtime when BUILDER_TARGET is runtime, clean room included', () => {
-    process.env.BUILDER_TARGET = 'runtime';
-    assert.deepEqual(sessionTarget('s', 'builder'), { arn: RUNTIME, qualifier: 'live', sessionId: 's', kind: 'runtime' });
+  it('targets the builder Runtime, clean room included', () => {
+    assert.deepEqual(sessionTarget('s'), { arn: RUNTIME, qualifier: 'live', sessionId: 's', kind: 'runtime' });
     assert.equal(cleanRoomTarget('w').arn, RUNTIME);
     assert.equal(cleanRoomTarget('w').sessionId, 'w-push');
   });
 
   it('keeps the planner and reviewer on their harnesses', () => {
-    process.env.BUILDER_TARGET = 'runtime';
     assert.equal(sessionTarget('s', 'planner').arn, 'arn:planner');
     assert.equal(sessionTarget('s', 'reviewer').kind, 'harness');
   });
 
-  it('refuses an unknown target and a missing Runtime ARN', () => {
-    process.env.BUILDER_TARGET = 'elsewhere';
-    assert.throws(() => sessionTarget('s'), /Unknown BUILDER_TARGET/);
-    process.env.BUILDER_TARGET = 'runtime';
+  it('refuses a missing Runtime ARN', () => {
     delete process.env.BUILDER_RUNTIME_ARN;
     assert.throws(() => sessionTarget('s'), /BUILDER_RUNTIME_ARN/);
   });

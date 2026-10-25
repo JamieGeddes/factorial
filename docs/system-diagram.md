@@ -26,7 +26,7 @@ flowchart TB
         cfnrole["factorial-cloudformation role<br/>(scoped to factorial-* names)"]
         boundary["factorial-permissions-boundary<br/>and<br/>factorial-agent-permissions-boundary"]
         artefacts["S3 artefact bucket<br/>templates and Lambda bundles"]
-        ecr["ECR repositories<br/>factorial/agent-environment<br/>factorial/invoker"]
+        ecr["ECR repositories<br/>factorial/agent-environment<br/>factorial/agent-runtime<br/>factorial/invoker"]
     end
 
     deployrole -.->|"deploys all stacks<br/>(control)"| cfnrole
@@ -47,11 +47,14 @@ flowchart TB
     subgraph agent["Stack 20: factorial-agent"]
         direction TB
         modelkey["AgentCore Identity:<br/>factorial-model-api-key<br/>reads human-created secret"]
-        harness["AgentCore Harness:<br/>factorial_builder<br/>GLM 5.3 Flash via Z.ai API,<br/>immutable versions"]
-        liveendpoint["Harness endpoint 'live'<br/>(promoted by deploy workflow)"]
-        agentrole["factorial-agent role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents)"]
+        harness["AgentCore Runtime:<br/>factorial_builder<br/>host process + Claude Agent SDK,<br/>Sonnet 5.5 on Bedrock,<br/>immutable versions"]
+        liveendpoint["Runtime endpoint 'live'<br/>(promoted by deploy workflow)"]
+        agentrole["factorial-agent-builder role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents;<br/>named Bedrock profiles only)"]
+        bedrock["Amazon Bedrock<br/>EU inference profiles"]
+        otherharnesses["AgentCore Harnesses:<br/>factorial_planner, factorial_reviewer<br/>GLM 5.3 Flash via Z.ai API"]
         harness --- agentrole
-        harness -->|"GetResourceApiKey<br/>(control)"| modelkey
+        harness -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
+        otherharnesses -->|"GetResourceApiKey<br/>(control)"| modelkey
         liveendpoint --- harness
     end
 
@@ -61,7 +64,7 @@ flowchart TB
         ledger["DynamoDB:<br/>factorial-work-items<br/>(idempotency + progress)"]
         sfn["Step Functions: factorial-work<br/>(live alias)<br/>Prepare → Build → Collect →<br/>HasChanges → Test → OpenPullRequest"]
         prepare["Lambda: factorial-prepare<br/>(accepts WorkItem once,<br/>clones repo into session,<br/>creates work branch)"]
-        invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync, egress only)<br/>runs the harness to completion,<br/>streams transcript to logs"]
+        invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync, egress only)<br/>runs each agent to completion,<br/>streams transcript to logs"]
         collect["Lambda: factorial-collect<br/>(commits leftovers, exports git<br/>bundle from hostile session,<br/>pushes from clean-room session)"]
         dispatch["Lambda: factorial-dispatch-tests<br/>(dispatches test.yml on main<br/>with task token + tested sha)"]
         openpr["Lambda: factorial-open-pr<br/>(verifies head = tested sha,<br/>opens PR, comments on issue)"]
@@ -78,8 +81,8 @@ flowchart TB
     bus -->|"rule factorial-work-item<br/>StartExecution on live alias<br/>(control)"| sfn
 
     prepare -->|"session command API:<br/>clone with token as header<br/>(data)"| harness
-    invoker -->|"InvokeHarness<br/>qualifier 'live'<br/>(control)"| liveendpoint
-    harness -->|"model calls<br/>(data)"| agent
+    invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| liveendpoint
+    invoker -->|"InvokeHarness: plan, review<br/>(control)"| otherharnesses
     collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| harness
     collect -->|"push branch with<br/>App installation token<br/>(data)"| github
     dispatch -->|"workflow_dispatch<br/>(control)"| testwf
@@ -104,7 +107,7 @@ flowchart TB
 2. **Adapt.** The adapter verifies the HMAC signature, checks that both the issue author and the labeller are trusted user IDs, builds one `WorkItem` (contract v1) and puts it on the `factorial-work` bus.
 3. **Start.** The single bus rule matches `source: factorial.triggers` / `detail-type: WorkItem` and starts an execution of the `factorial-work` state machine on its `live` alias, passing the `WorkItem` as input.
 4. **Prepare** (Lambda, deterministic). Accepts the `WorkItem` exactly once in the ledger (idempotency guard), mints a read-only installation token, clones the repository into a fresh harness session by the session command API (token sent as a header, never written into the session), creates the work branch and leaves `workitem.json` on disk.
-5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` harness on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. The agent edits the code inside the sandbox, which holds no credentials.
+5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` Runtime on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. Factorial's host process runs the Claude Agent SDK there, with the model as the unprivileged `agent` user; the agent edits the code inside the sandbox, which holds no credentials beyond the execution role's model access.
 6. **Collect** (Lambda, deterministic). Treats the session as hostile: commits anything uncommitted, exports the commits as a git bundle, and pushes the branch from a clean-room session with hooks disabled, using a fresh installation token.
 7. **HasChanges** (Choice). No pushed commits → **report** (`no-changes`) and finish.
 8. **Test** (Lambda + callback). Dispatches `test.yml` on the default branch with the task token and the tested commit sha. The checks job runs the untrusted commit with no credentials; the report job assumes `factorial-test-callback` through OIDC (main only) and sends task success or failure. Failure → **report** (`tests-failed`) and fail.
@@ -116,8 +119,8 @@ Each part is independently versioned and referenced only through its `live` alia
 
 | Part | Versioned resource | `live` pointer |
 |---|---|---|
-| Agents | Harness versions | Harness endpoint named `live` |
+| Agents | Runtime versions (builder), harness versions (planner, reviewer) | Endpoint named `live` |
 | State machine | Step Functions versions | Alias named `live` |
 | Adapters and Lambdas | Lambda versions | Alias named `live` |
 
-The deploy workflow (GitHub Actions assuming `factorial-deploy`) is the only principal that promotes: it moves the harness `live` endpoint to the newest version as its final step, so the next `WorkItem` is handled by the newly deployed version. Lambda aliases and the state machine alias move during the deploy itself; separating all three promotions comes with the staging canary (a known Stage 0 gap).
+The deploy workflow (GitHub Actions assuming `factorial-deploy`) is the only principal that promotes: it moves every runtime's and harness's `live` endpoint to the newest version as its final step, so the next `WorkItem` is handled by the newly deployed version. Lambda aliases and the state machine alias move during the deploy itself; separating all three promotions comes with the staging canary (a known Stage 0 gap).

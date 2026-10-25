@@ -33,24 +33,19 @@ const client = new BedrockAgentCoreClient({});
 /** Each agent role is its own runtime, so the same session id names a different session per role. */
 export type SessionRole = 'builder' | 'planner' | 'reviewer';
 
-const HARNESS_ARN_ENV: Record<SessionRole, string> = {
-  builder: 'HARNESS_ARN',
+const HARNESS_ARN_ENV: Record<Exclude<SessionRole, 'builder'>, string> = {
   planner: 'PLANNER_HARNESS_ARN',
   reviewer: 'REVIEWER_HARNESS_ARN',
 };
 
 /**
- * The builder runs on its harness or, when BUILDER_TARGET is `runtime`, on
- * Factorial's host on BUILDER_RUNTIME_ARN. The planner and reviewer stay on
- * their harnesses. Both kinds are addressed through the `live` qualifier.
+ * The builder, and its clean room, run on Factorial's host on
+ * BUILDER_RUNTIME_ARN; the planner and reviewer on their harnesses. Both
+ * kinds are addressed through the `live` qualifier.
  */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
   const qualifier = requireEnv('HARNESS_QUALIFIER');
-  const builderTarget = process.env.BUILDER_TARGET || 'harness';
-  if (builderTarget !== 'harness' && builderTarget !== 'runtime') throw new Error(`Unknown BUILDER_TARGET "${builderTarget}"`);
-  if (role === 'builder' && builderTarget === 'runtime') {
-    return { arn: requireEnv('BUILDER_RUNTIME_ARN'), qualifier, sessionId, kind: 'runtime' };
-  }
+  if (role === 'builder') return { arn: requireEnv('BUILDER_RUNTIME_ARN'), qualifier, sessionId, kind: 'runtime' };
   return { arn: requireEnv(HARNESS_ARN_ENV[role]), qualifier, sessionId, kind: 'harness' };
 }
 
