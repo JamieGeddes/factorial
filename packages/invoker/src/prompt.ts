@@ -37,7 +37,7 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
       ? [`This is round ${round}: an earlier session did part of the work. Read the "# Continuing (round ${round})" section at the end of /workspace/notes.md first, and do what it says before changing anything.`]
       : []),
     'The planner has already decided what to change: its plan is /workspace/plan.json. Follow its `steps` in order, by `id`. /workspace/plan.md is the planner\'s explanation, read for context; where the two disagree, plan.json wins, and note the disagreement under "# Plan" in /workspace/notes.md. Read the plan before changing any code, and re-read the Task section before each commit and before writing the summary, checking the work against it.',
-    'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions, including a "## Plan steps" section: one line per plan step, each starting with the step\'s `id` from plan.json, then done, skipped or changed, and why for any not done as planned.',
+    'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions, including a "## Plan steps" section: one line per plan step, each starting with the step\'s `id` from plan.json, then done, skipped or changed, and why for any not done as planned. Use the summary.md headings and limits from your instructions.',
   ].join('\n');
 }
 
