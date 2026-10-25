@@ -19,24 +19,25 @@ describe('builderAgents', () => {
   const agents = builderAgents(config);
   const explore = agents.explore;
 
-  it('defines exactly one agent, explore', () => {
+  it('returns exactly one agent, explore', () => {
     assert.deepEqual(Object.keys(agents), ['explore']);
   });
 
   it('gives explore only the read-only tools', () => {
-    assert.deepEqual(explore?.tools, ['Read', 'Grep', 'Glob']);
+    assert.ok(explore);
+    assert.deepEqual(explore.tools, ['Read', 'Grep', 'Glob']);
     for (const tool of ['Bash', 'Edit', 'Write', 'NotebookEdit', 'Agent']) {
-      assert.ok(!explore?.tools?.includes(tool), `${tool} must not be allowed`);
+      assert.ok(!explore.tools?.includes(tool), `${tool} must not be allowed`);
     }
   });
 
-  it('uses the explore model, not the main model', () => {
+  it('runs explore on the explore model, not the builder model', () => {
     assert.notEqual(config.exploreModel, config.model);
     assert.equal(explore?.model, config.exploreModel);
     assert.notEqual(explore?.model, config.model);
   });
 
-  it('has a positive integer maxTurns', () => {
+  it('bounds explore with a positive integer maxTurns', () => {
     assert.ok(Number.isInteger(explore?.maxTurns));
     assert.ok((explore?.maxTurns ?? 0) > 0);
   });
