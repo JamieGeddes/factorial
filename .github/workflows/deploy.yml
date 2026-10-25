@@ -298,8 +298,10 @@ jobs:
             exit 0
           fi
           for harness_id in $harness_ids; do
+            # The CLI applies --query to each page separately, so list every
+            # version and take the highest here.
             latest=$(aws bedrock-agentcore-control list-harness-versions --harness-id "$harness_id" \
-              --query 'max_by(harnessVersions, &to_number(harnessVersion)).harnessVersion' --output text)
+              --query 'harnessVersions[].harnessVersion' --output text | tr -s '\t ' '\n' | sort -n | tail -n 1)
             # A freshly created endpoint reports no targetVersion yet; fall back
             # to the version actually serving traffic.
             current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
@@ -328,8 +330,9 @@ jobs:
             exit 0
           fi
           for runtime_id in $runtime_ids; do
+            # Paged as for harnesses (#132's deploy failed on page two).
             latest=$(aws bedrock-agentcore-control list-agent-runtime-versions --agent-runtime-id "$runtime_id" \
-              --query "max_by(agentRuntimes[?status=='READY'], &to_number(agentRuntimeVersion)).agentRuntimeVersion" --output text)
+              --query "agentRuntimes[?status=='READY'].agentRuntimeVersion" --output text | tr -s '\t ' '\n' | sort -n | tail -n 1)
             if [ -z "$latest" ] || [ "$latest" = "None" ]; then
               echo "::error::$runtime_id has no READY version to promote."
               exit 1
