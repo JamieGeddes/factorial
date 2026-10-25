@@ -802,7 +802,10 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: factorial-session-command
-      Description: Run deterministic commands in the agents' sessions.
+      # Out of date (it covers every role's session now) but kept: IAM cannot
+      # change a policy's description in place, so editing it replaces the
+      # policy, and the fixed name makes the replacement fail (#130's deploy).
+      Description: Run deterministic commands in the builder harness session.
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
