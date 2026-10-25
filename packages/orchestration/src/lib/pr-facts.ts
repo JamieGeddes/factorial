@@ -64,6 +64,8 @@ export interface PrFacts {
   /** Changed files that look like tests, by name. */
   testFiles: string[];
   dependencies: DependencyChange[];
+  /** Set when the package files could not be read, so an empty list does not mean "none". */
+  dependenciesUnknown?: boolean;
   deploy: DeployImpact;
   /** Set when the digest had to drop entries to fit the state. */
   truncated?: boolean;
@@ -198,6 +200,7 @@ export function dependencyChanges(files: readonly PackageFileVersions[], lockTex
  * Print, for each package.json the branch changed, its copy on the base
  * branch and at HEAD, then the root package-lock.json at HEAD. One line per
  * file: `F <base64 path> <base64 base or -> <base64 head or ->`, then
+ * `S <base64 settings file from the base branch or ->`, then
  * `L <base64 lockfile or ->`. Everything is base64 so no content can break
  * the format.
  */
@@ -219,6 +222,8 @@ export function depsScript(params: { baseBranch: string }): string {
     `  if git cat-file -e "HEAD:$f" 2>/dev/null; then ${b64('git show "HEAD:$f"')}; else printf -- '-'; fi`,
     `  printf '\\n'`,
     'done',
+    // The target's settings as the base branch has them, never as the branch under review does.
+    `if git cat-file -e ${shellQuote(`${base}:${PR_BODY_SETTINGS_FILE}`)} 2>/dev/null; then printf 'S '; ${b64(`git show ${shellQuote(`${base}:${PR_BODY_SETTINGS_FILE}`)}`, MAX_SETTINGS_BYTES + 1)}; printf '\\n'; else printf 'S -\\n'; fi`,
     `if git cat-file -e HEAD:package-lock.json 2>/dev/null; then printf 'L '; ${b64('git show HEAD:package-lock.json', MAX_LOCKFILE_BYTES)}; printf '\\n'; else printf 'L -\\n'; fi`,
   ].join(LINE_SEP);
 }
@@ -230,21 +235,24 @@ const decode = (field: string | undefined): string | undefined => {
 };
 
 /** Read depsScript's output. Throws on a malformed listing; the caller treats that as "not determined". */
-export function parseDeps(stdout: string): { files: PackageFileVersions[]; lockText: string | undefined } {
+export function parseDeps(stdout: string): { files: PackageFileVersions[]; lockText: string | undefined; settingsText: string | undefined } {
   const files: PackageFileVersions[] = [];
   let lockText: string | undefined;
+  let settingsText: string | undefined;
   for (const line of stdout.split('\n')) {
     if (!line.trim()) continue;
     const parts = line.trim().split(' ');
     if (parts[0] === 'F' && parts.length === 4) {
       files.push({ path: decode(parts[1])!, base: decode(parts[2]), head: decode(parts[3]) });
+    } else if (parts[0] === 'S' && parts.length === 2) {
+      settingsText = decode(parts[1]);
     } else if (parts[0] === 'L' && parts.length === 2) {
       lockText = decode(parts[1]);
     } else {
       throw new Error('dependency listing was not in the expected form');
     }
   }
-  return { files, lockText };
+  return { files, lockText, settingsText };
 }
 
 /** The facts as the state machine carries them to the pull request: entries dropped, last first, until the JSON fits. */

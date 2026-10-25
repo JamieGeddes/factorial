@@ -17,6 +17,9 @@ const full = [
   '- Assumed X.',
   '- Could not run Y.',
   '',
+  SUMMARY_HEADINGS.notTested,
+  '- The live deploy.',
+  '',
   SUMMARY_HEADINGS.planSteps,
   '- one: done',
   '- two: skipped: not needed',
@@ -30,6 +33,7 @@ describe('parseBuilderSummary', () => {
     assert.equal(parsed.behaviour, 'Operators see the thing.');
     assert.equal(parsed.breaking, 'None.');
     assert.deepEqual(parsed.uncertainties, ['Assumed X.', 'Could not run Y.']);
+    assert.deepEqual(parsed.notTested, ['The live deploy.']);
     assert.deepEqual(parsed.steps.map((s) => [s.id, s.status, s.note]), [
       ['one', 'done', ''],
       ['two', 'skipped', 'not needed'],

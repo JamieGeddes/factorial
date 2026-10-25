@@ -129,6 +129,7 @@ export function summarySection(summary: BuilderSummary | undefined, rawText: str
 }
 
 function dependencyLine(facts: PrFacts): string {
+  if (facts.dependenciesUnknown) return 'Not determined (the package files could not be read).';
   if (facts.dependencies.length === 0) return 'None';
   return facts.dependencies
     .map((d) =>

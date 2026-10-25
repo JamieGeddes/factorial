@@ -210,6 +210,13 @@ describe('pullRequestBody: a workflow or foundation change', () => {
   });
 });
 
+describe('pullRequestBody: package files that could not be read', () => {
+  it('says dependencies are not determined rather than None', () => {
+    const body = render(summaryMd(), { fullPlan: plan, facts: { ...noFacts, dependenciesUnknown: true } });
+    assert.match(section(body, '## Impact'), /- \*\*Dependencies:\*\* Not determined \(the package files could not be read\)/);
+  });
+});
+
 describe('pullRequestBody: deploy impact without settings', () => {
   it('says it is not determined rather than guessing, and when facts are missing', () => {
     const unconfigured: PrFacts = { ...noFacts, deploy: { configured: false, notes: [], humanSteps: [] } };

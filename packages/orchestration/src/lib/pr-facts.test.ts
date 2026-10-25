@@ -102,6 +102,9 @@ describe('depsScript', () => {
     git('init', '-q', '-b', 'main');
     git('config', 'user.email', 'a@b.c');
     git('config', 'user.name', 'n');
+    const settings = JSON.stringify({ schemaVersion: 1, deploy: { paths: [{ prefix: 'infra/', note: 'n' }] } });
+    mkdirSync(path.join(dir, '.factorial'));
+    writeFileSync(path.join(dir, '.factorial/pr-body.json'), settings);
     writeFileSync(path.join(dir, 'package.json'), pkg({ old: '1' }));
     mkdirSync(path.join(dir, 'packages/a'), { recursive: true });
     git('add', '-A');
@@ -113,10 +116,15 @@ describe('depsScript', () => {
     writeFileSync(path.join(dir, 'package-lock.json'), lock);
     git('add', '-A');
     git('commit', '-qm', 'work');
+    // The branch under review cannot change the settings that judge it.
+    writeFileSync(path.join(dir, '.factorial/pr-body.json'), '{}');
+    git('add', '-A');
+    git('commit', '-qm', 'tamper');
     // The script works in /workspace/repo; point it at the temporary repository instead.
     const script = depsScript({ baseBranch: 'main' }).replace('cd /workspace/repo', `cd ${dir}`);
     const stdout = execFileSync('bash', ['-c', script], { encoding: 'utf8' });
-    const { files, lockText } = parseDeps(stdout);
+    const { files, lockText, settingsText } = parseDeps(stdout);
+    assert.equal(parseDeploySettings(settingsText).settings?.paths[0]?.prefix, 'infra/');
     assert.deepEqual(files.map((f) => f.path).sort(), ['package.json', 'packages/a/package.json']);
     const changes = dependencyChanges(files, lockText);
     assert.deepEqual(changes.map((c) => `${c.change}:${c.name}:${c.licence ?? ''}`).sort(), ['added:left-pad:MIT', 'removed:old:']);
