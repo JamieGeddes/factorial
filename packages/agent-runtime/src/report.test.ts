@@ -7,9 +7,17 @@ import { describe, it } from 'node:test';
 
 import type { HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 
-import { MAX_REPORT_CHECKS, planBrief, planStepIds, readAgentFile, reportProblem, stopHooks } from './report.ts';
+import { MAX_PLAN_REJECTIONS, MAX_REPORT_CHECKS, PLAN_GATE_CLOSED, planBrief, planErrors, planHooks, planStepIds, readAgentFile, reportProblem, stopHooks } from './report.ts';
 
-const plan = JSON.stringify({ steps: [{ id: 'add-test' }, { id: 'reword' }] });
+const planStep = (id: string) => ({ id, description: `Do ${id}.`, files: ['src/a.ts'], verification: 'npm test passes' });
+const plan = JSON.stringify({
+  schemaVersion: 1,
+  summary: 'Add a test and reword.',
+  steps: [planStep('add-test'), planStep('reword')],
+  tests: { run: ['npm test'], add: [] },
+  risks: [],
+  openQuestions: [],
+});
 const report = (lines: string[]) => ['# Summary', '', 'Changed things.', '', '## Plan steps', ...lines, '', '## Notes', 'n'].join('\n');
 
 describe('reportProblem', () => {
@@ -71,6 +79,51 @@ describe('planBrief', () => {
   });
 });
 
+describe('planErrors', () => {
+  it('accepts a plan that meets the contract', () => {
+    assert.equal(planErrors(plan), undefined);
+  });
+
+  it('names what is wrong, a missing file included', () => {
+    assert.deepEqual(planErrors(undefined), ['/workspace/plan.json is missing']);
+    assert.match(planErrors('{')?.[0] ?? '', /^plan\.json \(root\) is not valid JSON/);
+    assert.ok(planErrors(JSON.stringify({ ...JSON.parse(plan), steps: [] }))?.some((e) => e.includes('/steps')));
+  });
+});
+
+describe('planHooks', () => {
+  const signal = new AbortController().signal;
+  const write = (workspace: string, file: string) =>
+    ({ hook_event_name: 'PostToolUse', tool_name: 'Write', tool_input: { file_path: path.join(workspace, file) }, tool_response: {}, tool_use_id: 't', session_id: 's', transcript_path: '', cwd: '/' }) as unknown as HookInput;
+
+  it('passes a valid plan and ignores other files', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'workspace-'));
+    writeFileSync(path.join(workspace, 'plan.json'), plan);
+    const [matcher] = planHooks(workspace, { closed: false }, () => assert.fail('rejected'));
+    assert.equal(matcher!.matcher, 'Write|Edit');
+    assert.deepEqual(await matcher!.hooks[0]!(write(workspace, 'plan.json'), undefined, { signal }), {});
+    writeFileSync(path.join(workspace, 'notes.md'), '{');
+    assert.deepEqual(await matcher!.hooks[0]!(write(workspace, 'notes.md'), undefined, { signal }), {});
+  });
+
+  it('sends an invalid plan back with its errors, then closes the gate', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'workspace-'));
+    writeFileSync(path.join(workspace, 'plan.json'), '{"steps":[]}');
+    const gate = { closed: false };
+    const rejected: boolean[] = [];
+    const [matcher] = planHooks(workspace, gate, (_errors, closed) => rejected.push(closed));
+    const first = (await matcher!.hooks[0]!(write(workspace, 'plan.json'), undefined, { signal })) as SyncHookJSONOutput;
+    assert.equal(first.decision, 'block');
+    assert.match(first.reason ?? '', /does not meet the plan contract[\s\S]*- plan\.json/);
+    assert.equal(gate.closed, false);
+    for (let i = 1; i < MAX_PLAN_REJECTIONS - 1; i += 1) await matcher!.hooks[0]!(write(workspace, 'plan.json'), undefined, { signal });
+    const last = (await matcher!.hooks[0]!(write(workspace, 'plan.json'), undefined, { signal })) as SyncHookJSONOutput;
+    assert.equal(gate.closed, true);
+    assert.equal(last.reason, PLAN_GATE_CLOSED);
+    assert.deepEqual(rejected.at(-1), true);
+  });
+});
+
 describe('readAgentFile', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'report-'));
 
@@ -97,7 +150,7 @@ describe('stopHooks', () => {
     writeFileSync(path.join(workspace, 'plan.json'), plan);
     writeFileSync(path.join(workspace, 'summary.md'), 'Done.');
     const blocked: string[] = [];
-    const [matcher] = stopHooks(workspace, (reason) => blocked.push(reason));
+    const [matcher] = stopHooks(workspace, { closed: false }, (reason) => blocked.push(reason));
     const hook = matcher!.hooks[0]!;
     const signal = new AbortController().signal;
     for (let i = 0; i < MAX_REPORT_CHECKS; i += 1) {
@@ -107,11 +160,26 @@ describe('stopHooks', () => {
     assert.equal(blocked.length, MAX_REPORT_CHECKS);
   });
 
+  it('blocks a run that has no valid plan', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'workspace-'));
+    writeFileSync(path.join(workspace, 'summary.md'), report(['- add-test: done']));
+    const [matcher] = stopHooks(workspace, { closed: false }, () => {});
+    const output = (await matcher!.hooks[0]!(stop, undefined, { signal: new AbortController().signal })) as SyncHookJSONOutput;
+    assert.equal(output.decision, 'block');
+    assert.match(output.reason ?? '', /plan\.json is missing/);
+  });
+
+  it('lets the run end once the plan gate has closed', async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'workspace-'));
+    const [matcher] = stopHooks(workspace, { closed: true }, () => assert.fail('blocked'));
+    assert.deepEqual(await matcher!.hooks[0]!(stop, undefined, { signal: new AbortController().signal }), {});
+  });
+
   it('lets a complete report end the run, and ignores other events', async () => {
     const workspace = mkdtempSync(path.join(tmpdir(), 'workspace-'));
     writeFileSync(path.join(workspace, 'plan.json'), plan);
     writeFileSync(path.join(workspace, 'summary.md'), report(['- add-test: done', '- reword: done']));
-    const [matcher] = stopHooks(workspace, () => assert.fail('blocked'));
+    const [matcher] = stopHooks(workspace, { closed: false }, () => assert.fail('blocked'));
     const signal = new AbortController().signal;
     assert.deepEqual(await matcher!.hooks[0]!(stop, undefined, { signal }), {});
     assert.deepEqual(await matcher!.hooks[0]!({ ...stop, hook_event_name: 'PreToolUse' } as HookInput, undefined, { signal }), {});

@@ -27,8 +27,8 @@ export function builderSessionId(workItemId: string, round: number): string {
  * the new session where it stands. The commit list is for the builder to
  * produce: it is the branch, not this text, that says what was done.
  */
-export function continuingSection(params: { round: number; baseCommit: string; pushed: boolean; commitCount: number }): string {
-  const { round, baseCommit, pushed, commitCount } = params;
+export function continuingSection(params: { round: number; baseCommit: string; pushed: boolean; commitCount: number; planned: boolean }): string {
+  const { round, baseCommit, pushed, commitCount, planned } = params;
   const state = pushed
     ? `Its ${commitCount === 1 ? 'commit is' : `${commitCount} commits are`} on this branch. If the last commit is "Save work in progress after the build failed", it holds whatever that session had not committed: check it, it may be unfinished.`
     : 'It committed nothing, so the branch is as it was at the start.';
@@ -40,7 +40,9 @@ export function continuingSection(params: { round: number; baseCommit: string; p
     '',
     'Before changing anything:',
     `1. Run \`git log --oneline ${baseCommit}..HEAD\` and \`git diff --stat ${baseCommit}...HEAD\` to see what is done.`,
-    '2. Check each step in /workspace/plan.json against the commits and the notes, and record under "# Plan" which steps are done, which are part done, and which are not started.',
+    planned
+      ? '2. Check each step in /workspace/plan.json against the commits and the notes, and record under "# Plan" which steps are done, which are part done, and which are not started.'
+      : '2. The previous session left no valid plan, so there is no /workspace/plan.json. Plan first, as your instructions describe, telling the plan subagent what the commits already do; then record under "# Plan" which of its steps are done, part done and not started.',
     '3. Carry on from the first step not done. Do not redo committed work.',
     '',
     'Commit after each step, and keep the step record under "# Plan" current: this session can end the same way, and the next one starts from the branch and this file.',
@@ -48,13 +50,17 @@ export function continuingSection(params: { round: number; baseCommit: string; p
   ].join('\n');
 }
 
-/** Write the plan and the notes into the new round's session, over the clone's initial notes. */
-export function seedRoundScript(params: { planJson: string; planMarkdown: string; notes: string }): string {
+/** Write the plan, when there is a valid one, and the notes into the new round's session, over the clone's initial notes. */
+export function seedRoundScript(params: { plan?: { json: string; markdown: string } | undefined; notes: string }): string {
   const encode = (text: string): string => shellQuote(Buffer.from(text, 'utf8').toString('base64'));
   return [
     'set -euo pipefail',
-    `printf '%s' ${encode(params.planJson)} | base64 -d > /workspace/plan.json`,
-    `printf '%s' ${encode(params.planMarkdown)} | base64 -d > /workspace/plan.md`,
+    ...(params.plan
+      ? [
+          `printf '%s' ${encode(params.plan.json)} | base64 -d > /workspace/plan.json`,
+          `printf '%s' ${encode(params.plan.markdown)} | base64 -d > /workspace/plan.md`,
+        ]
+      : []),
     `printf '%s' ${encode(params.notes)} | base64 -d > /workspace/notes.md`,
   ].join('\n');
 }

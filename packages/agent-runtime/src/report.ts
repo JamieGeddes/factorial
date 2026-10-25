@@ -5,18 +5,35 @@
  * summary without reading the plan. A Stop hook in the host sends it back,
  * at most MAX_REPORT_CHECKS times, until the section names every step.
  *
+ * The plan is checked too. Since phase 3.1 the builder writes
+ * /workspace/plan.json itself, from the plan subagent's reply: a PostToolUse
+ * hook validates it against the plan contract after every Write or Edit to
+ * it and sends the errors back, and the Stop hook will not let the run end
+ * without a valid plan. After MAX_PLAN_REJECTIONS invalid plans the gate
+ * closes: every further tool call is denied (hooks.ts) and the run may end,
+ * as a finished run, so Collect reports it as invalid-plan. Collect validates
+ * the plan again and is the gate; these only spare a build from an unusable
+ * plan.
+ *
  * The report stays the model's claim: this only makes it present. The host is
  * root and the files are the agent's, so they are opened without following a
  * link, must be regular files, and are read up to a cap. Nothing read from
- * them reaches the model except the plan: its step ids here, and its steps in
- * full at the start of the run (planBrief), which the model could read itself.
+ * them reaches the model except the plan, which the model wrote or could read
+ * itself: its step ids, its validation errors, and its steps in full at the
+ * start of a later round (planBrief).
  */
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
 
 import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
+import { parsePlanJson } from '@factorial/plan';
 
 export const MAX_REPORT_CHECKS = 2;
+/** Invalid plans written before the gate closes: the first is sent back to fix, the second ends the build. */
+export const MAX_PLAN_REJECTIONS = 2;
+/** Validation errors sent back, each cut to ERROR_CHARS, as Collect cuts them. */
+const MAX_ERRORS = 10;
+const ERROR_CHARS = 300;
 const MAX_FILE_BYTES = 256 * 1024;
 const STEP_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
@@ -102,6 +119,52 @@ export function planBrief(planJson: string | undefined): string | undefined {
   ].join('\n');
 }
 
+/** What is wrong with the plan, or undefined if it is valid. */
+export function planErrors(planJson: string | undefined): string[] | undefined {
+  if (planJson === undefined) return ['/workspace/plan.json is missing'];
+  const result = parsePlanJson(planJson);
+  if (result.ok) return undefined;
+  return result.errors.slice(0, MAX_ERRORS).map((e) => `plan.json ${e.length > ERROR_CHARS ? `${e.slice(0, ERROR_CHARS)}…` : e}`);
+}
+
+function planInstruction(errors: string[]): string {
+  return [
+    '/workspace/plan.json does not meet the plan contract. Fix each problem and write the file again, before changing anything else:',
+    ...errors.map((e) => `- ${e}`),
+  ].join('\n');
+}
+
+/** Closed once the plan has been invalid MAX_PLAN_REJECTIONS times; shared by the plan, tool and stop hooks. */
+export interface PlanGate {
+  closed: boolean;
+}
+
+export const PLAN_GATE_CLOSED = 'The plan was invalid twice, so nothing will be built and the orchestrator reports it. Make no more tool calls: end the session now with a one-line reply.';
+
+/** The PostToolUse hook: validate plan.json after each Write or Edit to it; close the gate at MAX_PLAN_REJECTIONS. */
+export function planHooks(workspace: string, gate: PlanGate, onRejected: (errors: string[], closed: boolean) => void): HookCallbackMatcher[] {
+  const file = path.join(workspace, 'plan.json');
+  let rejections = 0;
+  return [
+    {
+      matcher: 'Write|Edit',
+      hooks: [
+        async (input: HookInput): Promise<SyncHookJSONOutput> => {
+          if (input.hook_event_name !== 'PostToolUse') return {};
+          const target = (input.tool_input as { file_path?: unknown } | null)?.file_path;
+          if (typeof target !== 'string' || path.resolve(workspace, target) !== file) return {};
+          const errors = planErrors(readAgentFile(file));
+          if (errors === undefined) return {};
+          rejections += 1;
+          if (rejections >= MAX_PLAN_REJECTIONS) gate.closed = true;
+          onRejected(errors, gate.closed);
+          return { decision: 'block', reason: gate.closed ? PLAN_GATE_CLOSED : planInstruction(errors) };
+        },
+      ],
+    },
+  ];
+}
+
 /** The lines of the summary's `## Plan steps` section, or undefined if it has none. */
 function planStepsSection(summary: string): string[] | undefined {
   const lines = summary.split('\n');
@@ -132,18 +195,17 @@ export function reportProblem(summary: string | undefined, stepIds: string[] | u
   return `The "## Plan steps" section of /workspace/summary.md has no line for ${missing.join(', ')}. Add one line per missing step in the form \`- <id>: done|skipped|changed: <why, when not done as planned>\`.`;
 }
 
-/** The Stop hook: send the builder back while its report is incomplete, at most MAX_REPORT_CHECKS times. */
-export function stopHooks(workspace: string, onBlocked: (reason: string) => void): HookCallbackMatcher[] {
+/** The Stop hook: send the builder back while its plan is invalid or its report incomplete, at most MAX_REPORT_CHECKS times. */
+export function stopHooks(workspace: string, gate: PlanGate, onBlocked: (reason: string) => void): HookCallbackMatcher[] {
   let checks = 0;
   return [
     {
       hooks: [
         async (input: HookInput): Promise<SyncHookJSONOutput> => {
-          if (input.hook_event_name !== 'Stop' || checks >= MAX_REPORT_CHECKS) return {};
-          const reason = reportProblem(
-            readAgentFile(path.join(workspace, 'summary.md')),
-            planStepIds(readAgentFile(path.join(workspace, 'plan.json'))),
-          );
+          if (input.hook_event_name !== 'Stop' || checks >= MAX_REPORT_CHECKS || gate.closed) return {};
+          const planJson = readAgentFile(path.join(workspace, 'plan.json'));
+          const errors = planErrors(planJson);
+          const reason = errors ? planInstruction(errors) : reportProblem(readAgentFile(path.join(workspace, 'summary.md')), planStepIds(planJson));
           if (reason === undefined) return {};
           checks += 1;
           onBlocked(reason);

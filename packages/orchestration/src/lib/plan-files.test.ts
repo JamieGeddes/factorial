@@ -8,8 +8,7 @@ import {
   parsePlanRead,
   planDigest,
   readPlanScript,
-  rejectionNotesScript,
-  seedPlanScript,
+  InvalidPlanError,
 } from './plan-files.ts';
 
 const SECTION = '\n===FACTORIAL-PLAN===\n';
@@ -111,19 +110,11 @@ describe('checkPlanFiles', () => {
   });
 });
 
-describe('session scripts', () => {
-  it('appends the rejection to the planner notes', () => {
-    const script = rejectionNotesScript(1, ['/workspace/plan.json is missing']);
-    const encodedSection = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d >> \/workspace\/notes\.md/.exec(script)?.[1] ?? '';
-    const section = Buffer.from(encodedSection, 'base64').toString('utf8');
-    assert.match(section, /# Plan rejected \(attempt 1\)/);
-    assert.match(section, /- \/workspace\/plan\.json is missing/);
-  });
-
-  it('writes both plan files into the builder session', () => {
-    const script = seedPlanScript(md, validJson);
-    assert.match(script, /base64 -d > \/workspace\/plan\.md/);
-    assert.match(script, /base64 -d > \/workspace\/plan\.json/);
+describe('InvalidPlanError', () => {
+  it('is named for the state machine and lists the problems', () => {
+    const error = new InvalidPlanError(['/workspace/plan.json is missing']);
+    assert.equal(error.name, 'InvalidPlan');
+    assert.match(error.message, /did not produce a valid plan:\n- \/workspace\/plan\.json is missing/);
   });
 });
 

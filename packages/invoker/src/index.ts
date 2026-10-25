@@ -1,7 +1,7 @@
 /**
  * Agent invoker. Runs as a Fargate task started by Step Functions with
  * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes one agent
- * role (the planner, builder or reviewer; the role and its target come in the
+ * role (the builder or reviewer; the role and its target come in the
  * task input) once in the prepared session, on its harness or, with
  * TARGET=runtime, on Factorial's host on an AgentCore Runtime
  * (packages/agent-runtime), logs its progress as
@@ -20,7 +20,7 @@
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
  * `<stage>/transcript.jsonl` and `<stage>/usage.json` in the artefact store
- * (`plan/` for the planner, `build/` for the builder, `review/` for the reviewer;
+ * (`build/` for the builder, `review/` for the reviewer;
  * a build round after the first stores under `build/round-<n>/`, and the
  * ledger's `buildUsageTotal` sums the rounds).
  */
@@ -65,9 +65,6 @@ const branch = requireEnv('BRANCH');
 const baseBranch = requireEnv('BASE_BRANCH');
 const baseCommit = requireEnv('BASE_COMMIT');
 if (!/^[0-9a-f]{40}$/.test(baseCommit)) throw new Error('BASE_COMMIT is not a commit sha');
-// Which run of the planner this is: 2 when the first plan was rejected.
-const planAttempt = Number(process.env.PLAN_ATTEMPT ?? '1');
-if (!Number.isInteger(planAttempt) || planAttempt < 1) throw new Error('PLAN_ATTEMPT is not a positive integer');
 // The changes PrepareReview found to deployment and safety files, for the reviewer's prompt.
 const sensitivePaths = parseSensitivePaths(process.env.SENSITIVE_PATHS);
 // Which round of the build this is: 2 or more when continuing in a fresh session.
@@ -232,9 +229,9 @@ async function main(): Promise<number> {
   }
 
   const resumed = typeof row.Item?.resumedFrom === 'string';
-  const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths, buildRound, resumed });
+  const prompt = promptFor(role, workItem, branch, baseBranch, { sensitivePaths, buildRound, resumed });
   run.harness = await harnessInfo();
-  log.info('invoking agent', { role, target: target.kind, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
+  log.info('invoking agent', { role, target: target.kind, sessionId, qualifier, ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();

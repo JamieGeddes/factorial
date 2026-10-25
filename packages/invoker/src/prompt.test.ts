@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { buildPrompt, planPrompt, reviewPrompt } from './prompt.ts';
+import { buildPrompt, reviewPrompt } from './prompt.ts';
 
 const workItem = {
   schemaVersion: 1 as const,
@@ -33,12 +33,12 @@ describe('buildPrompt', () => {
     assert.match(prompt, /That file already starts with this request/);
   });
 
-  it("points at the planner's plan before any code, and asks for a report on each step", () => {
+  it('asks for a plan before any code, unless an earlier round left one, and a report on each step', () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
-    assert.match(prompt, /its plan is \/workspace\/plan\.json\. Follow its `steps` in order, by `id`/);
-    assert.match(prompt, /plan\.md is the planner.s explanation, read for context/);
-    assert.match(prompt, /where the two disagree, plan\.json wins/);
-    assert.match(prompt, /re-read the Task section before each commit and before writing the summary/);
+    assert.match(prompt, /Plan before changing any code: unless \/workspace\/plan\.json already exists from an earlier round, run the plan subagent/);
+    assert.match(prompt, /Then follow its `steps` in order, by `id`/);
+    assert.match(prompt, /where plan\.json and plan\.md disagree, plan\.json wins/);
+    assert.match(prompt, /Re-read the Task section before each commit and before writing the summary/);
     assert.match(prompt, /a "## Plan steps" section: one line per plan step, each starting with the step.s `id` from plan\.json/);
   });
 
@@ -107,38 +107,6 @@ describe('buildPrompt resumes', () => {
     assert.match(resumed, /This attempt resumes an earlier one/);
     assert.match(resumed, /git log --oneline origin\/HEAD\.\.HEAD/);
     assert.match(resumed, /do not rewrite it/);
-  });
-});
-
-describe('planPrompt', () => {
-  it('gives the request and asks for both plan files without changing the repository', () => {
-    const prompt = planPrompt(workItem, 'factorial/x', 'main', 1);
-    assert.match(prompt, /## Fix typo\n\nThe word "recieve" should be "receive"\./);
-    assert.match(prompt, /Read it; do not change it\./);
-    assert.match(prompt, /Write \/workspace\/plan\.md and \/workspace\/plan\.json/);
-    assert.match(prompt, /plan\.json is the plan the builder follows: every step, file and verification must be in it/);
-    assert.match(prompt, /plan\.md explains it for humans and must not add steps that are missing from plan\.json/);
-    assert.doesNotMatch(prompt, /rejected/);
-  });
-
-  it('on a retry, points at the rejection in the notes', () => {
-    assert.match(planPrompt(workItem, 'b', 'main', 2), /under "# Plan rejected \(attempt 1\)" in \/workspace\/notes\.md/);
-  });
-
-  it('mentions rework.md for rework items', () => {
-    const rework = {
-      ...workItem,
-      context: {
-        kind: 'rework' as const,
-        pullRequest: { number: 7, url: 'https://github.com/JamieGeddes/factorial/pull/7' },
-        branch: 'factorial/x',
-        baseBranch: 'main',
-        previousWorkItemId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-        cause: 'review' as const,
-        details: [],
-      },
-    };
-    assert.match(planPrompt(rework, 'b', 'main', 1), /\/workspace\/rework\.md lists every point the plan must address/);
   });
 });
 

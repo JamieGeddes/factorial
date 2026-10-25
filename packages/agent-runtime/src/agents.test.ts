@@ -16,11 +16,25 @@ const config = readConfig({
 });
 
 describe('builderAgents', () => {
-  const agents = builderAgents(config);
+  const agents = builderAgents(config, true);
   const explore = agents.explore;
 
-  it('returns exactly one agent, explore', () => {
-    assert.deepEqual(Object.keys(agents), ['explore']);
+  it('returns exactly two agents, explore and plan', () => {
+    assert.deepEqual(Object.keys(agents), ['explore', 'plan']);
+  });
+
+  it('gives plan the read-only tools, Write, web search, the builder model and a turn bound', () => {
+    const plan = agents.plan;
+    assert.ok(plan);
+    assert.deepEqual(plan.tools, ['Read', 'Grep', 'Glob', 'Write', 'mcp__factorial__web_search']);
+    for (const tool of ['Bash', 'Edit', 'NotebookEdit', 'Agent']) assert.ok(!plan.tools?.includes(tool), `${tool} must not be allowed`);
+    assert.equal(plan.model, 'inherit');
+    assert.equal(plan.maxTurns, 40);
+    assert.match(plan.prompt, /Write \/workspace\/plan\.json first, then \/workspace\/plan\.md/);
+  });
+
+  it('leaves web search out of plan when the gateway is not configured', () => {
+    assert.deepEqual(builderAgents(config, false).plan?.tools, ['Read', 'Grep', 'Glob', 'Write']);
   });
 
   it('gives explore only the read-only tools', () => {

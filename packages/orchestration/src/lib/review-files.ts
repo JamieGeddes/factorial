@@ -21,7 +21,7 @@ import {
 import { HARDENED_GIT_ENV, assertGitBranch, shellQuote } from './shell.ts';
 
 export const MAX_REVIEW_FILE_BYTES = 64 * 1024;
-/** The plan files are read back from the artefact store at most this large; CollectPlan capped them the same way. */
+/** The plan files are read back from the artefact store at most this large; Collect caps them the same way when it reads them from the session. */
 export const MAX_PLAN_ARTEFACT_BYTES = 64 * 1024;
 const SECTION = '\n===FACTORIAL-REVIEW===\n';
 /** At most this many validation errors are kept, each cut to ERROR_CHARS. */

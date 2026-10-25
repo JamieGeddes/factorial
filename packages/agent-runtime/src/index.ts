@@ -10,7 +10,7 @@ import { createLogger } from '@factorial/log';
 import { readConfig } from './config.ts';
 import { preToolUseHooks } from './hooks.ts';
 import { queryOptions } from './options.ts';
-import { planBrief, readAgentFile, stopHooks } from './report.ts';
+import { planBrief, planHooks, readAgentFile, stopHooks, type PlanGate } from './report.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
@@ -31,10 +31,12 @@ const { ping, setBusy } = pingTracker();
 
 function startQuery(request: RunRequest): AsyncIterable<unknown> {
   log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
+  const planGate: PlanGate = { closed: false };
   const options = queryOptions(config, {
     hostEnv: process.env,
-    preToolUse: preToolUseHooks(config.workspace, (toolName, reason) => log.info('tool use denied', { toolName, reason })),
-    stop: stopHooks(config.workspace, (reason) => log.info('report incomplete; builder sent back', { reason })),
+    preToolUse: preToolUseHooks(config.workspace, (toolName, reason) => log.info('tool use denied', { toolName, reason }), () => planGate.closed),
+    postToolUse: planHooks(config.workspace, planGate, (errors, closed) => log.info(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
+    stop: stopHooks(config.workspace, planGate, (reason) => log.info('report incomplete; builder sent back', { reason })),
     webSearch: config.webSearchGatewayUrl
       ? webSearchServer(signedGatewayCall(config.webSearchGatewayUrl, config.region))
       : undefined,

@@ -20,6 +20,7 @@ const config = readConfig({
 const parts = {
   hostEnv: {},
   preToolUse: [],
+  postToolUse: [],
   stop: [],
   abortController: new AbortController(),
   stderr: () => {},
@@ -35,7 +36,8 @@ describe('queryOptions', () => {
     assert.equal(options.maxTurns, 150);
     assert.equal(options.maxBudgetUsd, 10);
     assert.deepEqual(options.tools, BUILDER_TOOLS);
-    assert.deepEqual(Object.keys(options.agents ?? {}), ['explore']);
+    assert.deepEqual(Object.keys(options.agents ?? {}), ['explore', 'plan']);
+    assert.deepEqual(Object.keys(options.hooks ?? {}), ['PreToolUse', 'PostToolUse', 'Stop']);
     assert.deepEqual(options.agents?.explore?.tools, ['Read', 'Grep', 'Glob']);
     assert.equal(options.agents?.explore?.model, 'eu.anthropic.claude-haiku-5-5');
     assert.deepEqual(options.mcpServers, {});
@@ -46,6 +48,7 @@ describe('queryOptions', () => {
     const options = queryOptions(config, { ...parts, webSearch: webSearchServer(async () => ({})) });
     assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['factorial']);
     assert.deepEqual(options.allowedTools, [TOOL_NAME]);
+    assert.ok(options.agents?.plan?.tools?.includes(TOOL_NAME));
   });
 });
 

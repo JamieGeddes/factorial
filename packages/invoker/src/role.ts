@@ -5,16 +5,20 @@
  */
 import type { WorkItem } from '@factorial/workitem';
 
-import { buildPrompt, planPrompt, reviewPrompt } from './prompt.ts';
+import { buildPrompt, reviewPrompt } from './prompt.ts';
 
-/** Roles the invoker knows how to start; each has a harness `factorial_<role>`. */
-export const ROLES = ['builder', 'planner', 'reviewer'] as const;
+/**
+ * Roles the invoker knows how to start, each `factorial_<role>`: the builder
+ * on a Runtime, the reviewer on a harness. The planner is the builder's plan
+ * subagent since phase 3.1 of docs/agent-sdk-plan.md.
+ */
+export const ROLES = ['builder', 'reviewer'] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Where a role's run is recorded: its artefact folder, log stage and ledger statuses. */
 export interface RoleStage {
   /** The artefact folder under the attempt's prefix, and the log stage. */
-  stage: 'build' | 'plan' | 'review';
+  stage: 'build' | 'review';
   running: string;
   done: string;
   failed: string;
@@ -22,7 +26,6 @@ export interface RoleStage {
 
 export const ROLE_STAGES: Record<Role, RoleStage> = {
   builder: { stage: 'build', running: 'building', done: 'built', failed: 'build-error' },
-  planner: { stage: 'plan', running: 'planning', done: 'planned', failed: 'plan-error' },
   reviewer: { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' },
 };
 
@@ -36,8 +39,8 @@ export const INCOMPLETE_EXIT_CODE = 3;
 /**
  * Why a run that ended without an error is still incomplete, or undefined
  * if it is complete. Only the builder's run is judged here: a half-finished
- * build must not become a pull request, while CollectPlan and CollectReview
- * already check what the planner and the reviewer left behind.
+ * build must not become a pull request, while CollectReview already checks
+ * what the reviewer left behind.
  */
 export function incompleteReason(role: Role, stopReason: string | undefined): string | undefined {
   // end_turn is the harness's finished run; success is the Agent SDK's.
@@ -161,9 +164,8 @@ export interface SensitivePath {
   reason: string;
 }
 
-/** What a role's prompt needs beyond the work item: the planner's attempt, the reviewer's sensitive paths. */
+/** What a role's prompt needs beyond the work item: the builder's round, the reviewer's sensitive paths. */
 export interface PromptOptions {
-  planAttempt?: number;
   sensitivePaths?: SensitivePath[];
   /** The builder's round: 2 or more when continuing a build in a fresh session. */
   buildRound?: number;
@@ -176,8 +178,6 @@ export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBr
   switch (role) {
     case 'builder':
       return buildPrompt(workItem, branch, baseBranch, options.buildRound ?? 1, options.resumed ?? false);
-    case 'planner':
-      return planPrompt(workItem, branch, baseBranch, options.planAttempt ?? 1);
     case 'reviewer':
       return reviewPrompt(workItem, branch, baseBranch, options.sensitivePaths ?? []);
   }

@@ -4,18 +4,26 @@
  * Before pushing, it stores the session's files and the bundle in the
  * artefact store, so the record survives the session.
  *
+ * It also reads the plan the builder wrote with its plan subagent, validates
+ * it against the plan contract and stores it under `plan/`, as CollectPlan
+ * did while the planner was a separate stage. A build that ends without a
+ * valid plan pushes nothing and ends as InvalidPlan; a failed build's work
+ * is saved whatever the plan, and a valid plan is kept for the next round.
+ *
  * The agent's session is treated as hostile once the agent has run: it may
  * have planted git hooks, configuration or background processes. So no
  * credential ever enters it. The new commits leave the session as a git
  * bundle (pure data), and the push happens in a separate clean-room session
  * from a pristine clone, with hooks disabled and the token sent as a header.
  */
-import { putBinaryArtefact, redactSecrets } from '@factorial/artefacts';
+import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 
 import { type WorkContext, reworkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
+import { InvalidPlanError, checkPlanFiles, parsePlanRead, planDigest, readPlanScript, type CheckedPlan, type PlanDigest } from '../lib/plan-files.ts';
+import { planSize } from '../lib/plan-size.ts';
 import { asAgent, cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
 import { exportSessionFiles } from '../lib/session-files.ts';
 import {
@@ -36,6 +44,8 @@ export interface CollectResult {
   summary: string;
   /** True when the build stopped at the builder's limit rather than failing: the state machine may start another round. */
   incomplete: boolean;
+  /** The validated plan, as the state machine carries it to the pull request; absent when the plan was not valid. */
+  plan?: PlanDigest;
 }
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
@@ -184,6 +194,29 @@ async function storeSessionFiles(target: SessionTarget, ctx: WorkContext, log: L
   }
 }
 
+/**
+ * Read the builder's plan out of its session, check it and store it, valid
+ * or not, so a rejected plan can be read; versioning keeps earlier rounds'.
+ * Reading fails safe: anything unreadable is an invalid plan.
+ */
+async function collectPlan(target: SessionTarget, ctx: WorkContext, log: Logger): Promise<CheckedPlan> {
+  let checked: CheckedPlan;
+  try {
+    const read = await mustRun(target, asAgent(target, readPlanScript()), 120);
+    checked = checkPlanFiles(parsePlanRead(read.stdout));
+  } catch (error) {
+    log.error('plan not read from the session', { error });
+    return { ok: false, errors: ['the plan could not be read from the session'] };
+  }
+  if (checked.markdown !== undefined) await putArtefact(ctx.artefactPrefix, 'plan/plan.md', checked.markdown, 'text/markdown; charset=utf-8');
+  if (checked.json !== undefined) await putArtefact(ctx.artefactPrefix, 'plan/plan.json', checked.json, 'application/json');
+  await putJsonArtefact(ctx.artefactPrefix, 'plan/validation.json', {
+    valid: checked.ok,
+    ...(checked.ok ? { size: planSize(checked.plan) } : { errors: checked.errors }),
+  });
+  return checked;
+}
+
 async function storeBundle(ctx: WorkContext, bundleBase64: string, log: Logger): Promise<void> {
   try {
     await putBinaryArtefact(ctx.artefactPrefix, 'build/bundle.git', Buffer.from(bundleBase64, 'base64'), 'application/octet-stream');
@@ -251,16 +284,28 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
   const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
   await storeSessionFiles(agentSession, ctx, log);
 
+  const plan = await collectPlan(agentSession, ctx, log);
+  if (!plan.ok) {
+    log.error('plan invalid', { salvage, errors: plan.errors });
+    if (!salvage) {
+      await recordProgress(ctx.workItem.id, 'plan-rejected', { planErrors: plan.errors });
+      throw new InvalidPlanError(plan.errors);
+    }
+  }
+  // Recorded beside the builder's usage, so a plan's size can be set against what it cost.
+  const planFields = plan.ok ? { planSteps: plan.plan.steps.length, planSize: planSize(plan.plan) } : {};
+  const digest = plan.ok ? { plan: planDigest(plan.plan) } : {};
+
   if (commitCount === 0 && start.pushed) {
     // Nothing new this round, but earlier rounds' work is on the branch: that
     // pushed head is what is tested.
     log.info('no new commits this round; the branch keeps the earlier rounds\' work', { incomplete, headSha: start.commit });
-    return { pushed: true, commitCount, headSha: start.commit, summary, incomplete };
+    return { pushed: true, commitCount, headSha: start.commit, summary, incomplete, ...digest };
   }
   if (commitCount === 0) {
-    if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary });
+    if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary, ...planFields });
     log.info('agent made no commits', { incomplete });
-    return { pushed: false, commitCount, headSha, summary, incomplete };
+    return { pushed: false, commitCount, headSha, summary, incomplete, ...digest };
   }
 
   const bundle = await mustRun(agentSession, asAgent(agentSession, bundleScript(start.commit, headSha)), 300);
@@ -314,6 +359,7 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     editsWorkflows,
     summary,
     bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
+    ...planFields,
   });
   log.info(salvage ? 'work in progress saved from clean room' : 'branch pushed from clean room', {
     branch: ctx.branch,
@@ -321,5 +367,5 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     agentHeadSha: headSha,
     commitCount,
   });
-  return { pushed: true, commitCount, headSha: pushedSha, summary, incomplete };
+  return { pushed: true, commitCount, headSha: pushedSha, summary, incomplete, ...digest };
 });

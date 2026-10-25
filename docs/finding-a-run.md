@@ -14,7 +14,7 @@ Note `attempt`, `artefactPrefix`, `status` and, for a resumed or rework item, `r
 
 **Step Functions** → left nav **State machines** → **factorial-work** → **Executions** tab → search box: `<id>` → open the execution.
 
-Every state's output carries `workItemId` and `attempt`. **Plan**, **Build** and **Review** output `taskArn`; its last segment is the invoker task id for that run (the planner may run twice, shown by `planAttempt`).
+Every state's output carries `workItemId` and `attempt`. **Build** and **Review** output `taskArn`; its last segment is the invoker task id for that run. Runs before 2026-10-25's phase 3.1 also had **Plan** (twice when the first plan was rejected, shown by `planAttempt`) and **CollectPlan**.
 
 The execution log, with full state inputs and outputs, is the log group `/aws/vendedlogs/states/factorial-work`.
 
@@ -24,7 +24,6 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 
 - `/factorial/invoker`
 - `/aws/lambda/factorial-prepare`
-- `/aws/lambda/factorial-collect-plan`
 - `/aws/lambda/factorial-collect`
 - `/aws/lambda/factorial-dispatch-tests`
 - `/aws/lambda/factorial-prepare-review`
@@ -47,14 +46,14 @@ Add `| filter level = "error"` to see only failures. The invoker's own stream is
 
 **S3** → **Buckets** → `factorial-work-artefacts-<account id>` → open the folder `<id>/` → `<attempt>/` (the ledger's `artefactPrefix`).
 
-It holds `workitem.json`, `prepare/`, `plan/` (the plan as markdown and JSON, its validation result, and the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
+It holds `workitem.json`, `prepare/`, `plan/` (the builder's plan as markdown and JSON and its validation result; before phase 3.1 also the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
 
 ## 5. The AgentCore trace
 
 The invoker sends the session id, which is the work item id (with `-r<n>` for a later build round), as `session.id` in the `baggage` header of each invocation, with `factorial.workItemId` and `factorial.attempt`.
 
-**CloudWatch** → left nav **GenAI Observability** → **Bedrock AgentCore** → **Agents** tab → `factorial_builder`, `factorial_planner` or `factorial_reviewer` → **Sessions** tab → find session `<id>` → open a trace.
+**CloudWatch** → left nav **GenAI Observability** → **Bedrock AgentCore** → **Agents** tab → `factorial_builder` or `factorial_reviewer` (`factorial_planner` for runs before phase 3.1) → **Sessions** tab → find session `<id>` → open a trace.
 
-Traces appear only once CloudWatch Transaction Search is enabled for the account, which is not yet the case; enabling it belongs with the per-role metrics work. Until then the transcripts in the artefacts (`plan/`, `build/` and `review/`) are the record of what each agent did.
+Traces appear only once CloudWatch Transaction Search is enabled for the account, which is not yet the case; enabling it belongs with the per-role metrics work. Until then the transcripts in the artefacts (`build/`, which holds the plan subagent's run too, and `review/`) are the record of what each agent did.
 
-The builder runs on a Runtime (`docs/agent-sdk-plan.md`): Factorial's host process writes its own structured lines, with `workItemId` and `attempt` from the invoker's payload, to `/aws/bedrock-agentcore/runtimes/factorial_builder-*-live` (run started, tool use denied, run ended). Its `build/usage.json` adds an `sdk` block with the SDK's cost estimate, per-model usage (subagents included) and how many times the invoker re-attached to the stream. The planner's and reviewer's harness runtime logs (`/aws/bedrock-agentcore/runtimes/harness_factorial_<role>-*-live`) are not keyed by session.
+The builder runs on a Runtime (`docs/agent-sdk-plan.md`): Factorial's host process writes its own structured lines, with `workItemId` and `attempt` from the invoker's payload, to `/aws/bedrock-agentcore/runtimes/factorial_builder-*-live` (run started, tool use denied, plan invalid, report incomplete, run ended). Its `build/usage.json` adds an `sdk` block with the SDK's cost estimate, per-model usage (subagents included) and how many times the invoker re-attached to the stream. The reviewer's harness runtime logs (`/aws/bedrock-agentcore/runtimes/harness_factorial_<role>-*-live`) are not keyed by session.
