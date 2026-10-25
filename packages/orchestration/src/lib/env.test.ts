@@ -3,22 +3,18 @@ import { afterEach, describe, it } from 'node:test';
 
 import { requireEnv } from './env.ts';
 
-const NAME = 'FACTORIAL_TEST_REQUIRE_ENV_VAR';
+const NAME = 'FACTORIAL_TEST_REQUIRE_ENV_VALUE';
+const original = process.env[NAME];
+
+afterEach(() => {
+  if (original === undefined) delete process.env[NAME];
+  else process.env[NAME] = original;
+});
 
 describe('requireEnv', () => {
-  const original = process.env[NAME];
-
-  afterEach(() => {
-    if (original === undefined) {
-      delete process.env[NAME];
-    } else {
-      process.env[NAME] = original;
-    }
-  });
-
-  it('returns the value of a set variable', () => {
-    process.env[NAME] = 'some-value';
-    assert.equal(requireEnv(NAME), 'some-value');
+  it('returns a set variable', () => {
+    process.env[NAME] = 'hello';
+    assert.equal(requireEnv(NAME), 'hello');
   });
 
   it('throws when the variable is unset', () => {
