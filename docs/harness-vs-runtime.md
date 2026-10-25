@@ -1,6 +1,6 @@
 # Decision: AgentCore Harness over Runtime
 
-**Date:** 2026-10-22. **Status:** decided, stay on Harness. **Revisit:** see the last section.
+**Date:** 2026-10-22. **Status:** decided, stay on Harness; superseded for the builder on 2026-10-25, see `docs/agent-sdk-plan.md`. **Revisit:** see the last section.
 
 **2026-10-23:** an implementation plan for option 5 (the Claude Agent SDK on a Runtime) is in `docs/agent-sdk-plan.md`, with Claude reached through Amazon Bedrock rather than Claude Platform on AWS. The Harness remains the default until that plan's phase 2; the repository state before the move is tagged `stage-0-harness`.
 

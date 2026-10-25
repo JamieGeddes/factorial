@@ -26,12 +26,7 @@ Parameters:
   BuildTimeoutSeconds:
     Type: Number
     Default: 7200
-    Description: Upper bound for one round of the agent build step, including the harness's own timeout.
-  MaxBuildRounds:
-    Type: Number
-    Default: 6
-    MinValue: 1
-    Description: How many builder sessions one work item may use before an unfinished build is reported as incomplete. Each round is a fresh session that continues from the branch and the builder's notes.
+    Description: Upper bound for one round of the agent build step, including the builder host's own time limit (FACTORIAL_MAX_DURATION_SECONDS).
   TestTimeoutSeconds:
     Type: Number
     Default: 3600
@@ -54,11 +49,13 @@ Parameters:
 # never takes effect.
 Mappings:
   Builder:
-    # Where the builder runs: `harness`, or `runtime` for Factorial's host on
-    # the builder Runtime. Its session commands, its clean room and its
-    # invocation follow it; the planner and reviewer stay on their harnesses.
-    Target:
-      Value: runtime
+    # How many builder sessions one work item may use before an unfinished
+    # build is reported as incomplete. Each round is a fresh session that
+    # continues from the branch and the builder's notes. 3 since the spike
+    # (docs/harness-vs-runtime.md, Spike results): no successful item on the
+    # Runtime needed a second round.
+    MaxRounds:
+      Value: 3
 
 Globals:
   Function:
@@ -74,11 +71,9 @@ Globals:
         NODE_OPTIONS: --enable-source-maps
         TABLE_NAME: !Ref WorkItemsTable
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
-        HARNESS_ARN: !ImportValue Factorial-BuilderHarnessArn
         PLANNER_HARNESS_ARN: !ImportValue Factorial-PlannerHarnessArn
         REVIEWER_HARNESS_ARN: !ImportValue Factorial-ReviewerHarnessArn
         HARNESS_QUALIFIER: live
-        BUILDER_TARGET: !FindInMap [Builder, Target, Value]
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
@@ -433,12 +428,6 @@ Resources:
                   - bedrock-agentcore:InvokeHarness
                   - bedrock-agentcore:InvokeAgentRuntime
                 Resource:
-                  - !ImportValue Factorial-BuilderHarnessArn
-                  - !Sub
-                    - ${HarnessArn}/harness-endpoint/*
-                    - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
                   - !ImportValue Factorial-PlannerHarnessArn
                   - !Sub
                     - ${HarnessArn}/harness-endpoint/*
@@ -458,10 +447,6 @@ Resources:
                   - bedrock-agentcore:GetHarness
                   - bedrock-agentcore:GetHarnessEndpoint
                 Resource:
-                  - !ImportValue Factorial-BuilderHarnessArn
-                  - !Sub
-                    - ${HarnessArn}/harness-endpoint/*
-                    - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
                   - !ImportValue Factorial-PlannerHarnessArn
                   - !Sub
                     - ${HarnessArn}/harness-endpoint/*
@@ -470,9 +455,8 @@ Resources:
                   - !Sub
                     - ${HarnessArn}/harness-endpoint/*
                     - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
-              # The builder on AgentCore Runtime (docs/agent-sdk-plan.md),
-              # invoked when the state machine sets TARGET=runtime: the run,
-              # attach and status actions, and which version live serves.
+              # The builder on AgentCore Runtime (docs/agent-sdk-plan.md): the
+              # run, attach and status actions, and which version live serves.
               - Sid: InvokeRuntimes
                 Effect: Allow
                 Action: bedrock-agentcore:InvokeAgentRuntime
@@ -533,11 +517,11 @@ Resources:
           Essential: true
           # Time to store the transcript and usage after ECS sends SIGTERM.
           StopTimeout: 120
-          # The role and its harness (ROLE, HARNESS_ARN, HARNESS_ID,
-          # HARNESS_QUALIFIER), and for the builder its target (TARGET,
-          # RUNTIME_ARN, RUNTIME_QUALIFIER), come from the state machine's
-          # container overrides, so this one task definition serves every
-          # agent role.
+          # The role and where it runs, a harness for the planner and
+          # reviewer (ROLE, HARNESS_ARN, HARNESS_ID, HARNESS_QUALIFIER) and
+          # the Runtime for the builder (TARGET, RUNTIME_ARN,
+          # RUNTIME_QUALIFIER), come from the state machine's container
+          # overrides, so this one task definition serves every agent role.
           Environment:
             - Name: TABLE_NAME
               Value: !Ref WorkItemsTable
@@ -818,7 +802,7 @@ Resources:
     Type: AWS::IAM::ManagedPolicy
     Properties:
       ManagedPolicyName: factorial-session-command
-      Description: Run deterministic commands in the builder harness session.
+      Description: Run deterministic commands in the agents' sessions.
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -827,12 +811,6 @@ Resources:
               - bedrock-agentcore:InvokeAgentRuntimeCommand
               - bedrock-agentcore:InvokeAgentRuntime
             Resource:
-              - !ImportValue Factorial-BuilderHarnessArn
-              - !Sub
-                - ${HarnessArn}/harness-endpoint/*
-                - HarnessArn: !ImportValue Factorial-BuilderHarnessArn
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_builder-*/runtime-endpoint/*
               - !ImportValue Factorial-PlannerHarnessArn
               - !Sub
                 - ${HarnessArn}/harness-endpoint/*
@@ -845,8 +823,8 @@ Resources:
                 - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
-          # The builder's Runtime, for when the builder's target is runtime: commands
-          # only, since the invoker runs the agent.
+          # The builder's Runtime and its clean room: commands only, since the
+          # invoker runs the agent.
           - Effect: Allow
             Action:
               - bedrock-agentcore:InvokeAgentRuntimeCommand
@@ -1033,7 +1011,7 @@ Resources:
         FactorialVersion: !Ref FactorialVersion
         PlanTimeoutSeconds: !Ref PlanTimeoutSeconds
         BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
-        MaxBuildRounds: !Ref MaxBuildRounds
+        MaxBuildRounds: !FindInMap [Builder, MaxRounds, Value]
         TestTimeoutSeconds: !Ref TestTimeoutSeconds
         ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
@@ -1047,9 +1025,6 @@ Resources:
         ReportFunctionAlias: !Ref ReportFunction.Alias
         ClusterArn: !GetAtt BuildCluster.Arn
         TaskDefinitionArn: !Ref InvokerTaskDefinition
-        BuilderHarnessArn: !ImportValue Factorial-BuilderHarnessArn
-        BuilderHarnessId: !ImportValue Factorial-BuilderHarnessId
-        BuilderTarget: !FindInMap [Builder, Target, Value]
         BuilderRuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
         PlannerHarnessArn: !ImportValue Factorial-PlannerHarnessArn
         PlannerHarnessId: !ImportValue Factorial-PlannerHarnessId
@@ -1211,10 +1186,7 @@ Resources:
                       "Name": "invoker",
                       "Environment": [
                         { "Name": "ROLE", "Value": "builder" },
-                        { "Name": "HARNESS_ARN", "Value": "${BuilderHarnessArn}" },
-                        { "Name": "HARNESS_ID", "Value": "${BuilderHarnessId}" },
-                        { "Name": "HARNESS_QUALIFIER", "Value": "live" },
-                        { "Name": "TARGET", "Value": "${BuilderTarget}" },
+                        { "Name": "TARGET", "Value": "runtime" },
                         { "Name": "RUNTIME_ARN", "Value": "${BuilderRuntimeArn}" },
                         { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "BUILD_ROUND", "Value": "{% $string($buildRound) %}" },

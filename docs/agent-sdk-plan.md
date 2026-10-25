@@ -200,6 +200,11 @@ With everything above deployed and `BuilderTarget` still `harness`:
 - `CLAUDE.md` **Current stage** and the **Agent roles**, **Secrets** and **Language** conventions, `docs/current-stage.md` and `docs/system-diagram.md` are updated in the same pull request, as the stage rule requires. The **Language** convention becomes: TypeScript for all code Factorial owns, including the agent host process; the agent's loop is the SDK's, and its definition (prompt, tools, subagents, limits, model) is versioned by the Runtime version.
 - `docs/harness-vs-runtime.md` status line changes to "superseded for the builder; see `docs/agent-sdk-plan.md`".
 
+**Two pull requests, not one (2026-10-25).** The orchestration stack imports the builder Harness's exports, and CloudFormation will not delete an export that another stack still imports; the agent stack deploys first. So 8a stops the orchestration stack using the builder Harness, and 8b, once 8a is deployed, removes the Harness block.
+
+- **8a:** the `BuilderTarget` switch goes rather than defaulting to `runtime`, since the Harness it would switch back to is about to be removed: `sessionTarget` always sends the builder and its clean room to the Runtime, Build passes `TARGET=runtime` and no Harness ARN, and the Lambdas' and invoker's grants on the builder Harness go. `MaxBuildRounds` becomes the template mapping `Builder.MaxRounds`, 3 (a parameter's changed default would not reach the stack), and `FACTORIAL_MAX_BUDGET_USD` comes down to 5; `maxTurns` stays at 150. The docs above are updated here, since this is the change a work item sees.
+- **8b:** the builder Harness, its `live` endpoint, the `factorial-agent` role (used only by that Harness, so removed whole rather than losing a statement) and the three `Builder*` Harness outputs. The foundation's references to `role/factorial-agent` are left for the phase 4 clean-up, since a human deploys that stack.
+
 ### Phase 3: the planner subagent, then the reviewer Runtime
 
 The planner moves before the reviewer (changed 2026-10-25; the first version of this plan had it last). The spike runs a Sonnet builder from a plan written by GLM 5.3 Flash on the Harness, so the gate measures the builder alone, with a planner that can only hold it back. The full benefit needs the plan in the builder's session: no separate stage, no second clone, no wait of several minutes before the build starts, and the context gathered while planning kept for the build instead of read back from `plan.json`. The reviewer is advisory, so moving it changes no outcome and can wait.
@@ -241,7 +246,8 @@ The planner moves before the reviewer (changed 2026-10-25; the first version of 
 | 5 | 1 | Invoker `TARGET=runtime` path, transcript and usage mapping; invoker IAM | 4 | Unit tests on message mapping; a hand run records `usage.json` with cost |
 | 6 | 1 | Orchestrator session targeting, `chown` and `runuser` in Prepare, ContinueBuild and Collect; state machine `BuilderTarget` parameter | 5 | Default `harness`: the existing pipeline is unchanged on a real item |
 | 7 | 1 | Spike runs; **Spike results** in the record; gate decision | 6 | Numbers recorded; decision written |
-| 8 | 2 | Builder cut-over; Harness builder block removed; docs and `CLAUDE.md` stage update | 7 passed | A real item through the Runtime by default |
+| 8a | 2 | Builder cut-over: `BuilderTarget` removed, builder Harness unused; limits from the spike; docs and `CLAUDE.md` stage update | 7 passed | A real item through the Runtime |
+| 8b | 2 | Builder Harness block, `factorial-agent` role and their outputs removed | 8a deployed | Deploy succeeds; the next item unchanged |
 | 9 | 3 | Plan subagent, plan hook, Collect validation; Plan states removed; planner Harness removed | 8 | Two real items through the merged graph, one of them #87 |
 | 10 | 3 | Reviewer Runtime; reviewer Harness, model key and LiteLLM removed | 9 | A real review validated from the Runtime |
 | 11 | 4 | Harness code paths and image removed; foundation clean-up (human); docs rewrite; tag `stage-1-agent-sdk` | 10 | `npm run ci`; deploy; record updated |
@@ -271,8 +277,8 @@ Pull requests 3 to 6 can be reviewed independently but deploy in order; each is 
 | A run outlives the stream or the session | `HealthyBusy` keeps the session alive; the transcript and result are on disk; `attach` and `status` recover them; `maxLifetime` and `maxTurns` end a run before Step Functions does |
 | Subagent fan-out | Depth 1, concurrency 4, per-agent `maxTurns`, the stall watchdog, and one budget for the whole session |
 | Ownership mismatches between root commands and the agent user | `chown` after seeding, `runuser` for git in the model's repository, the clean room untouched |
-| The Harness is removed before the Runtime is proven | Phases 1 and 2 keep both deployed; `BuilderTarget` flips back in one deploy; `stage-0-harness` is the known-good state |
+| The Harness is removed before the Runtime is proven | Phase 1 kept both deployed behind `BuilderTarget` until the spike passed; from phase 2, reverting 8b and then 8a restores the builder Harness; `stage-0-harness` is the known-good state |
 
 ## 7. Rollback
 
-Until phase 4, every phase is reversible by deploy: `BuilderTarget=harness` returns the builder to the Harness, the reviewer and planner blocks are removed in their own pull requests and can be restored from the tag. After phase 4, the Harness is gone from `main`, and a return means reverting to `stage-0-harness` and re-creating the Z.ai credential. That is the point at which the move is permanent, and it comes only after three real items have gone through the new graph.
+Until phase 4, every phase is reversible by deploy: reverting phase 2's two pull requests, 8b first, returns the builder to the Harness; the reviewer and planner blocks are removed in their own pull requests and can be restored from the tag. After phase 4, the Harness is gone from `main`, and a return means reverting to `stage-0-harness` and re-creating the Z.ai credential. That is the point at which the move is permanent, and it comes only after three real items have gone through the new graph.
