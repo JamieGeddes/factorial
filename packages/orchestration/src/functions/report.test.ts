@@ -69,6 +69,12 @@ describe('saved work after a failure', () => {
 
   it('uses the singular for one commit', () => {
     assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 1 } }), /\(1 commit\)/);
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 3 } }), /\(3 commits\)/);
+  });
+
+  it('leaves the count out when the round pushed no commits of its own', () => {
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 0 } }), /^ Work in progress was saved to /);
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true } }), /^ Work in progress was saved to /);
   });
 
   it('says nothing when nothing was pushed, or Collect did not run', () => {
