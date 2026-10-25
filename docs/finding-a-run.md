@@ -51,10 +51,10 @@ It holds `workitem.json`, `prepare/`, `plan/` (the plan as markdown and JSON, it
 
 ## 5. The AgentCore trace
 
-The invoker sends the session id, which is the work item id (with `-r<n>` for a later build round), as `session.id` in the `baggage` header of the harness invocation, with `factorial.workItemId` and `factorial.attempt`.
+The invoker sends the session id, which is the work item id (with `-r<n>` for a later build round), as `session.id` in the `baggage` header of each invocation, with `factorial.workItemId` and `factorial.attempt`.
 
-**CloudWatch** → left nav **GenAI Observability** → **Bedrock AgentCore** → **Agents** tab → `factorial_builder` → **Sessions** tab → find session `<id>` → open a trace.
+**CloudWatch** → left nav **GenAI Observability** → **Bedrock AgentCore** → **Agents** tab → `factorial_builder`, `factorial_planner` or `factorial_reviewer` → **Sessions** tab → find session `<id>` → open a trace.
 
-Traces appear only once CloudWatch Transaction Search is enabled for the account, which is not yet the case; enabling it belongs with the per-role metrics work. Until then the harness runtime logs (`/aws/bedrock-agentcore/runtimes/harness_factorial_builder-*-live`) are not keyed by session, and the transcript in the artefacts (`build/transcript.jsonl`) is the record of what the agent did.
+Traces appear only once CloudWatch Transaction Search is enabled for the account, which is not yet the case; enabling it belongs with the per-role metrics work. Until then the transcripts in the artefacts (`plan/`, `build/` and `review/`) are the record of what each agent did.
 
-A build on the builder runtime (`TARGET=runtime`, docs/agent-sdk-plan.md) is different: Factorial's host process writes its own structured lines, with `workItemId` and `attempt` from the invoker's payload, to `/aws/bedrock-agentcore/runtimes/factorial_builder-*-live` (run started, tool use denied, run ended). Its `build/usage.json` adds an `sdk` block with the SDK's cost estimate, per-model usage (subagents included) and how many times the invoker re-attached to the stream.
+The builder runs on a Runtime (`docs/agent-sdk-plan.md`): Factorial's host process writes its own structured lines, with `workItemId` and `attempt` from the invoker's payload, to `/aws/bedrock-agentcore/runtimes/factorial_builder-*-live` (run started, tool use denied, run ended). Its `build/usage.json` adds an `sdk` block with the SDK's cost estimate, per-model usage (subagents included) and how many times the invoker re-attached to the stream. The planner's and reviewer's harness runtime logs (`/aws/bedrock-agentcore/runtimes/harness_factorial_<role>-*-live`) are not keyed by session.

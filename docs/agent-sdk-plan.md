@@ -203,7 +203,7 @@ With everything above deployed and `BuilderTarget` still `harness`:
 **Two pull requests, not one (2026-10-25).** The orchestration stack imports the builder Harness's exports, and CloudFormation will not delete an export that another stack still imports; the agent stack deploys first. So 8a stops the orchestration stack using the builder Harness, and 8b, once 8a is deployed, removes the Harness block.
 
 - **8a:** the `BuilderTarget` switch goes rather than defaulting to `runtime`, since the Harness it would switch back to is about to be removed: `sessionTarget` always sends the builder and its clean room to the Runtime, Build passes `TARGET=runtime` and no Harness ARN, and the Lambdas' and invoker's grants on the builder Harness go. `MaxBuildRounds` becomes the template mapping `Builder.MaxRounds`, 3 (a parameter's changed default would not reach the stack), and `FACTORIAL_MAX_BUDGET_USD` comes down to 5; `maxTurns` stays at 150. The docs above are updated here, since this is the change a work item sees.
-- **8b:** the builder Harness, its `live` endpoint, the `factorial-agent` role (used only by that Harness, so removed whole rather than losing a statement) and the three `Builder*` Harness outputs. The foundation's references to `role/factorial-agent` are left for the phase 4 clean-up, since a human deploys that stack.
+- **8b:** the builder Harness, its `live` endpoint, the `factorial-agent` role (used only by that Harness, so removed whole rather than losing a statement), the `MaxIterations` parameter, and the `Builder*` Harness and `AgentRoleArn` outputs. The planner's block takes over the explanations the others pointed to in the builder's (cfn-lint, LiteLLM, constants over parameters, gateway tool names, the one-line summarisation prompt). The builder's harness prompt survives at `stage-0-harness`. The foundation's references to `role/factorial-agent` are left for the phase 4 clean-up, since a human deploys that stack.
 
 ### Phase 3: the planner subagent, then the reviewer Runtime
 
@@ -223,7 +223,7 @@ The planner moves before the reviewer (changed 2026-10-25; the first version of 
 
 - `FACTORIAL_ROLE=reviewer` on a second Runtime, `factorial_reviewer`, from the same image, with role `factorial-agent-reviewer` re-created for the Runtime trust, and a `live` endpoint.
 - Tools: `Read`, `Grep`, `Glob` and `Bash`; a `PreToolUse` hook denies every `Edit` and `Write` except `/workspace/review.json`, and denies `Bash` commands that write (`>`, `tee`, `git commit`, `git checkout`, `npm install`). The reviewer's system prompt is ported from its harness block.
-- The state machine's Review state passes `TARGET=runtime` and the reviewer's Runtime ARN; PrepareReview and CollectReview address the Runtime through `session.ts`. The reviewer Harness block, the LiteLLM configuration and the `ModelApiKey` credential provider go; `MaxIterations` goes with this last Harness.
+- The state machine's Review state passes `TARGET=runtime` and the reviewer's Runtime ARN; PrepareReview and CollectReview address the Runtime through `session.ts`. The reviewer Harness block, the LiteLLM configuration and the `ModelApiKey` credential provider go (the `MaxIterations` parameter, used only by the builder Harness, went in 8b).
 
 **Gate:** a review that validates against `contracts/review/v1/` on a real item; the reviewer is advisory, so nothing more.
 

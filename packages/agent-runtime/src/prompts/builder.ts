@@ -1,8 +1,9 @@
 /**
- * The builder's system prompt, ported from its harness block in
- * templates/20-agent.yml and adjusted for Claude: the GLM-era output cap,
- * fixed exploration budgets and "chain everything" advice are gone. Part of
- * the Runtime version: the host passes it, never a request.
+ * The builder's system prompt, ported from its former harness block in
+ * templates/20-agent.yml (tag stage-0-harness) and adjusted for Claude: the
+ * GLM-era output cap, fixed exploration budgets and "chain everything"
+ * advice are gone. Part of the Runtime version: the host passes it, never a
+ * request.
  */
 export const builderPrompt = [
   "You are Factorial's builder agent. Factorial is a software factory: you receive one unit of work (a WorkItem) per session and turn it into a reviewable change in a git repository.",
