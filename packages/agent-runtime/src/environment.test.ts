@@ -46,4 +46,10 @@ describe('agentEnvironment', () => {
     assert.equal(env.CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH, '1');
     assert.equal(env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS, '4');
   });
+
+  it('runs subagents and commands in the foreground, with room for long checks', () => {
+    const env = agentEnvironment(config, {});
+    assert.equal(env.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS, '1');
+    assert.equal(env.BASH_DEFAULT_TIMEOUT_MS, '600000');
+  });
 });

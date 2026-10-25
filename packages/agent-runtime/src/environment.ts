@@ -46,6 +46,14 @@ export function agentEnvironment(config: Config, host: NodeJS.ProcessEnv): Recor
     CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '1',
     CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
     CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '4',
+    // Claude Code starts subagents in the background by default: on #125 the
+    // plan subagent ran while the builder slept 90 seconds waiting for it, and
+    // a less patient builder could have edited before the plan existed. With
+    // background tasks off, an Agent or Bash call returns only when it has
+    // finished. Bash then waits out its own timeout, 2 minutes by default, so
+    // the default is raised to the 10-minute maximum for installs and checks.
+    CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1',
+    BASH_DEFAULT_TIMEOUT_MS: '600000',
     CLAUDE_AGENT_SDK_CLIENT_APP: 'factorial-agent-runtime/0.1.0',
   };
 }
