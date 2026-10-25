@@ -13,7 +13,7 @@ export function reworkInstructions(): string[] {
 }
 
 /** The user message that starts the agent's session. The system prompt lives on the harness. */
-export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: string, round = 1): string {
+export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: string, round = 1, resumed = false): string {
   const isRework = workItem.context?.kind === 'rework';
   return [
     `# Work item ${workItem.source.id} (${workItem.source.type})`,
@@ -33,6 +33,11 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
     'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json.',
     'Commit on this branch as you go, after each coherent step: if the session ends early, only committed work is kept.',
     `This session may be one of several: if you run out of steps or time, the orchestrator saves your commits to the branch and starts a fresh session that continues from the branch and /workspace/notes.md, with nothing else from this conversation. That file already starts with this request under "# Task": keep that section, keep the step record under "# Plan" current, add your notes below, and re-read it${isRework ? ' and /workspace/rework.md' : ''} rather than relying on memory.`,
+    // #120's resumed attempt rewrote the earlier commit without reading it:
+    // the resume was only in notes.md, which it never opened.
+    ...(resumed
+      ? ['This attempt resumes an earlier one that stopped or failed its tests: its commits are already on this branch, and the "# Previous attempt" section of /workspace/notes.md describes it. Before changing anything, run `git log --oneline origin/HEAD..HEAD` and read what those commits changed. Build on that work: leave what already meets the plan as it is, and do not rewrite it.']
+      : []),
     ...(round > 1
       ? [`This is round ${round}: an earlier session did part of the work. Read the "# Continuing (round ${round})" section at the end of /workspace/notes.md first, and do what it says before changing anything.`]
       : []),

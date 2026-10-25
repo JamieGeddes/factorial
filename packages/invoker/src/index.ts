@@ -231,7 +231,8 @@ async function main(): Promise<number> {
     run.previousRoundsUsage = previous && typeof previous === 'object' ? addRunUsage(emptyRunUsage(), previous as RunUsage) : undefined;
   }
 
-  const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths, buildRound });
+  const resumed = typeof row.Item?.resumedFrom === 'string';
+  const prompt = promptFor(role, workItem, branch, baseBranch, { planAttempt, sensitivePaths, buildRound, resumed });
   run.harness = await harnessInfo();
   log.info('invoking agent', { role, target: target.kind, sessionId, qualifier, ...(role === 'planner' ? { planAttempt } : {}), ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });

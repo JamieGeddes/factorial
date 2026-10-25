@@ -2,13 +2,15 @@
  * Entry point: reads the Runtime version's configuration, then serves the
  * Runtime contract on port 8080 and runs one SDK query when asked.
  */
+import path from 'node:path';
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@factorial/log';
 
 import { readConfig } from './config.ts';
 import { preToolUseHooks } from './hooks.ts';
 import { queryOptions } from './options.ts';
-import { stopHooks } from './report.ts';
+import { planBrief, readAgentFile, stopHooks } from './report.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
@@ -39,7 +41,8 @@ function startQuery(request: RunRequest): AsyncIterable<unknown> {
     abortController,
     stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
   });
-  return query({ prompt: request.prompt, options });
+  const brief = planBrief(readAgentFile(path.join(config.workspace, 'plan.json')));
+  return query({ prompt: brief ? `${request.prompt}\n\n${brief}` : request.prompt, options });
 }
 
 const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };
