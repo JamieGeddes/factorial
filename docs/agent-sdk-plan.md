@@ -164,6 +164,8 @@ The Runtime, its image, the invoker's second path and a stack parameter that cho
 - At 10 turns, #116 finished in 5 (PR #118); Sonnet batches its work heavily, so forcing a round needed a limit of 3.
 - At 3, #120 stopped at its limit with the work committed, but failed instead of continuing. At a turn or budget limit the SDK delivers its `error_max_turns` result and then throws ("Claude Code returned an error result"). The host recorded the throw as a host error, so the stream said `host_error` while `status` said `incomplete`, and the invoker's agreement check failed closed (`outcome_mismatch`, exit 1, no ContinueBuild). The host now lets an error result decide the outcome when the SDK throws after it. A throw after `success`, or with no result, still fails.
 
+- With that fixed, #122 continued into round 2, then failed in Collect, which pushed every round as if it were the first: from the original base commit, onto a branch that must not exist yet. The ledger shows no item had reached round 2 before, on either target, so the rounds path had never completed. ContinueBuild now returns the round's start (the commit, whether the branch exists, whether earlier rounds pushed), the state machine carries it as `$buildStart`, and Collect bundles and pushes only that round's commits onto the branch as it stands. A round with no new commits keeps the earlier rounds' pushed head. A resumed attempt's first push, onto its existing branch, had the same fault and is fixed with it.
+
 **1.6 The orchestrator** (`packages/orchestration/`)
 
 - `session.ts`: the target for a role comes from `BUILDER_RUNTIME_ARN` when `BUILDER_TARGET=runtime`, otherwise from `HARNESS_ARN` as now. One place, no other call site changes.

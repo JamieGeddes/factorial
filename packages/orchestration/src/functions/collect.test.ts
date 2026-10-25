@@ -8,8 +8,10 @@ import {
   cleanRoomPushScript,
   inspectScript,
   parseInspection,
+  roundStartFor,
   touchesWorkflows,
 } from './collect.ts';
+import type { WorkContext } from '../lib/context.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 
@@ -162,5 +164,30 @@ describe('cleanRoomPushScript', () => {
   it('rejects bad names and shas before building anything', () => {
     assert.throws(() => cleanRoomPushScript({ ...params, owner: 'bad owner' }), /not a valid GitHub name/);
     assert.throws(() => cleanRoomPushScript({ ...params, headSha: 'short' }), /not a commit sha/);
+  });
+});
+
+describe('roundStartFor', () => {
+  const ctx = (extra: Partial<WorkContext> = {}): WorkContext =>
+    ({ workItem: { id: 'w', context: undefined }, baseCommit: base, ...extra }) as unknown as WorkContext;
+
+  it('starts round 1 at the base commit, on a new branch', () => {
+    assert.deepEqual(roundStartFor(ctx(), undefined), { commit: base, existing: false, pushed: false });
+    assert.deepEqual(roundStartFor(ctx(), null), { commit: base, existing: false, pushed: false });
+  });
+
+  it('starts round 1 on the existing branch for rework or a resumed attempt', () => {
+    const rework = ctx({ workItem: { id: 'w', context: { kind: 'rework' } } as unknown as WorkContext['workItem'] });
+    assert.equal(roundStartFor(rework, undefined).existing, true);
+    const resumed = ctx({ resumedFrom: { workItemId: 'a', status: 'failed', savedWork: true, branch: 'factorial/a' } });
+    assert.equal(roundStartFor(resumed, undefined).existing, true);
+  });
+
+  it("starts a later round where ContinueBuild says, the previous round's pushed head", () => {
+    assert.deepEqual(roundStartFor(ctx(), { commit: sha, existing: true, pushed: true }), { commit: sha, existing: true, pushed: true });
+  });
+
+  it('refuses a round start that is not a commit sha', () => {
+    assert.throws(() => roundStartFor(ctx(), { commit: 'HEAD; rm -rf /', existing: true, pushed: true }), /not a commit sha/);
   });
 });
