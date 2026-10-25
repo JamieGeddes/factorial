@@ -190,6 +190,8 @@ With everything above deployed and `BuilderTarget` still `harness`:
 
 **Gate for phase 2:** the Runtime completes the item in one session where the Harness needed rounds, at a cost per accepted pull request no worse than twice Flash's, with no finding against the security mitigations. If the gate fails, the Runtime block is removed and the record says why.
 
+**Result (2026-10-25):** passed on #87 (PR #128); the numbers, the runs not made and the decision are in **Spike results** in `docs/harness-vs-runtime.md`. `BuilderTarget` stays `runtime` for phase 2.
+
 ### Phase 2: cut the builder over
 
 - `BuilderTarget` defaults to `runtime`. The builder Harness block, its `live` endpoint and the builder's share of the LiteLLM configuration are removed from `templates/20-agent.yml`; the `factorial-agent` role loses its model-key statement. The planner and reviewer keep theirs.

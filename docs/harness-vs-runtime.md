@@ -4,6 +4,8 @@
 
 **2026-10-23:** an implementation plan for option 5 (the Claude Agent SDK on a Runtime) is in `docs/agent-sdk-plan.md`, with Claude reached through Amazon Bedrock rather than Claude Platform on AWS. The Harness remains the default until that plan's phase 2; the repository state before the move is tagged `stage-0-harness`.
 
+**2026-10-25:** the builder spike passed its gate; see **Spike results**. Phase 2 cuts the builder over.
+
 A decision record, as principle 6 in `docs/architecture-principles.md` asks for: the question, the evidence, the options, the decision and its consequences. It extends the one-paragraph decision in `docs/design-plan.md` §3.2 with the evidence from the first week of runs.
 
 ## The question
@@ -257,6 +259,59 @@ flowchart TB
 Read off the diagram: the two trust boundaries the SDK does not touch are the clean-room session, which is the only path to GitHub, and the reviewer's Runtime, which is the only session that judges the builder's output. Inside the builder's Runtime the host process is the new piece of Factorial-owned code; the plan and explore subagents live beneath the builder and share its trust level. The one external dependency that changes is the model: Bedrock replaces the Z.ai key, reached by the execution role rather than a secret.
 
 **Spike:** the builder only, on a Runtime in `eu-west-1`, with Claude on Bedrock. Run a #87-sized item on Haiku 5.5 and on Sonnet 5.5 against GLM 5.3 Flash on the Harness, and compare rounds, calls, tokens, cost and outcome. The planner and reviewer stay on Harness for the spike.
+
+## Spike results
+
+Run from 2026-10-24 to 2026-10-25 under `docs/agent-sdk-plan.md` §1.8: the builder on the `factorial_builder` Runtime with Claude Sonnet 5.5 on Bedrock (`eu.anthropic.claude-sonnet-5-5`, explore subagent on Haiku 5.5), the planner and reviewer still on their GLM 5.3 Flash harnesses. Costs are the SDK's figures at list price; Flash's are from the token counts at Flash list price.
+
+**#87, like for like.** The same issue as the Harness run above, planned by the Flash planner both times.
+
+| | Harness, GLM 5.3 Flash (PR #92) | Runtime, Sonnet 5.5 (PR #128) |
+|---|---|---|
+| Artefacts | `e61eeb40-ce44-11f1-8234-692b51c98c23/1/` | `c5cfb8d0-d072-11f1-91e5-0ba824b748bc/1/` |
+| Builder sessions | 1, stopped at `max_iterations_exceeded` with half the plan done | 1, `success` |
+| Model calls | 150 | 41 (42 turns) |
+| Input tokens | 9.37M, 98% from cache | 2.84M, 96% from cache, 112k cache writes |
+| Output tokens | 35k | 50k, of which 8k thinking |
+| Context at the end | 88k | 112k |
+| Builder wall time | 15.3 min | 8.7 min |
+| Builder cost | about $0.36 | $1.05 |
+| Outcome | Closed unmerged | Merged after one clean-up commit |
+
+The clean-up on #128 was 46 lines added and 26 removed across 9 files, against 1,326 and 192 in the builder's commits: escaping branch-controlled values in the PR body, a state machine reference that could be null when PrepareReview failed, a macOS `base64` difference in a test, and three small slips (a misplaced doc comment, a duplicate interface, a misnamed test). The plan was not the cause of any of them; the null reference was the builder departing from a plan that had it right. On both runs the Flash reviewer ran out of its 40 iterations and wrote no review, and the Flash planner took 21 minutes on the Harness run and 6 on the Runtime run (after a first attempt on 2026-10-25 that wrote no plan).
+
+**The smaller items.**
+
+| Item | Purpose | Turns | Wall time | Cost | Outcome |
+|---|---|---|---|---|---|
+| #108 | First item on the Runtime | 12 | 131 s | $0.081 | PR #113 merged; the `Stop` hook for `## Plan steps` came from its report |
+| #116 | Forced rounds at 10 turns | 5 | 58 s | $0.066 | Finished inside the limit; PR #118 merged |
+| #120 | Forced rounds at 3 turns | 3 | 51 s | not recorded | Failed on the SDK's throw after `error_max_turns`; fixed in the host |
+| #122, attempt 1 | Rounds end to end at 3 turns | 6 rounds | 207 s | $0.14 | Ended at `MaxBuildRounds` with round 1's commit saved: the rounds path works |
+| #122, attempt 2 | Resume from the saved branch | 6 | 57 s | $0.059 | PR #126 merged: resume works |
+
+Across every run: one stream per invocation with no reconnect (the longest 8.7 minutes), no permission denials, cache reads on every run, and no web search request.
+
+**The gate (plan §1.8).**
+
+- *One session where the Harness needed rounds:* met. #87 finished in one Sonnet session; Flash stopped at 150 calls with half the plan done.
+- *Cost per accepted pull request no worse than twice Flash's:* met, because Flash has no accepted pull request for #87 to compare against. Per run, Sonnet's builder cost about three times Flash's builder ($1.05 against $0.36), with a third of the calls. On the smaller items it was 6 to 8 cents.
+- *No finding against the security mitigations:* met. No permission denials, no reconnects, and the privilege drop, ownership hand-over and clean-room push behaved as designed on every run.
+
+**Decision:** the gate passes; proceed to phase 2 and cut the builder over. `BuilderTarget` stays `runtime` rather than going back to `harness` as §1.8 step 4 says, since phase 2 makes it the default.
+
+**Not run.** The Haiku 5.5 builder and the Sonnet run at 200K context (`CLAUDE_CODE_DISABLE_1M_CONTEXT=1`). Sonnet met the gate, and the intended split is a stronger model planning and Sonnet building, so Haiku as the builder would answer a question nobody is asking. Compaction did not fire at 1M: #87's context peaked at 112k. It matters once an item outgrows that, and is worth one run before `maxTurns` is raised.
+
+**Open questions from the plan (§5).**
+
+1. *Streaming duration:* one stream held for 8.7 minutes; `attach` was never needed. The service's limit is still unknown.
+2. *Web search:* not exercised; no item needed it.
+3. *Prompt caching:* works in `eu-west-1`, 96% of #87's input from cache. The 200K comparison was not run.
+4. *User and ownership:* `chown` after seeding is enough, with no `safe.directory` complaint.
+5. *Cold start:* not measured separately; not visible in the wall times.
+6. *Disk:* a 42-turn run fitted; a 150-turn run has not happened.
+
+**For phase 2.** `maxTurns` 150 is 3.5 times the largest run and can stay. `maxBudgetUsd` 10 is 10 times #87's cost and can come down to 5. No successful item needed a second round, so `MaxBuildRounds` can come down from 6 to 3.
 
 ## If building from scratch
 
