@@ -265,7 +265,7 @@ The planner moves before the reviewer (changed 2026-10-25; the first version of 
 | 8a | 2 | Builder cut-over: `BuilderTarget` removed, builder Harness unused; limits from the spike; docs and `CLAUDE.md` stage update | 7 passed | A real item through the Runtime |
 | 8b | 2 | Builder Harness block, `factorial-agent` role and their outputs removed | 8a deployed | Deploy succeeds; the next item unchanged |
 | 9a | 3 | Plan subagent, plan hook, Collect validation; Plan states, CollectPlan and the invoker's planner role removed | 8b | Two real items through the merged graph, one of them #87 |
-| 9b | 3 | Planner Harness block, its role and its LiteLLM share removed | 9a deployed | Deploy succeeds; the next item unchanged |
+| 9b | 3 | Planner Harness block, its role and its LiteLLM share removed; the reviewer block takes over the explanations; the foundation's planner references wait for phase 4 | 9a deployed | Deploy succeeds; the next item unchanged |
 | 10 | 3 | Reviewer Runtime; reviewer Harness, model key and LiteLLM removed | 9b | A real review validated from the Runtime |
 | 11 | 4 | Harness code paths and image removed; foundation clean-up (human); docs rewrite; tag `stage-1-agent-sdk` | 10 | `npm run ci`; deploy; record updated |
 
