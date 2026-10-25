@@ -8,6 +8,7 @@ import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
 
 import type { Config } from './config.ts';
 import { planPrompt } from './prompts/plan.ts';
+import { TOOL_NAME } from './web-search.ts';
 
 export const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
 
@@ -28,23 +29,28 @@ export function explore(config: Config): AgentDefinition {
   };
 }
 
+/** The plan subagent's name, which hooks see as `agent_type` on its tool calls. */
+export const PLAN_AGENT = 'plan';
+
 /**
  * The planner, inside the builder's session since phase 3.1 of
- * docs/agent-sdk-plan.md. Read-only like explore, but on the builder's own
- * model: planning is where the reasoning pays. It returns the plan; the
- * builder writes the files, which the plan hook validates.
+ * docs/agent-sdk-plan.md, on the builder's own model: planning is where the
+ * reasoning pays. It reads, searches the web like the planner harness did,
+ * and writes the two plan files itself: the PreToolUse hook (hooks.ts) lets
+ * it write nothing else, and the plan hook (report.ts) sends it the
+ * validation errors, so the planner fixes its own plan.
  */
-export function plan(): AgentDefinition {
+export function plan(webSearch: boolean): AgentDefinition {
   return {
     description:
-      'Read-only planner. Run it once, before any change, with the request and anything already on the branch; it replies with the plan JSON and its explanation, which you write to /workspace/plan.json and /workspace/plan.md.',
+      'Planner. Run it once, before any change, with the request and anything already on the branch; it writes /workspace/plan.json and /workspace/plan.md and replies with a short summary.',
     prompt: planPrompt,
-    tools: READ_ONLY_TOOLS,
+    tools: [...READ_ONLY_TOOLS, 'Write', ...(webSearch ? [TOOL_NAME] : [])],
     model: 'inherit',
     maxTurns: 40,
   };
 }
 
-export function builderAgents(config: Config): Record<string, AgentDefinition> {
-  return { explore: explore(config), plan: plan() };
+export function builderAgents(config: Config, webSearch: boolean): Record<string, AgentDefinition> {
+  return { explore: explore(config), [PLAN_AGENT]: plan(webSearch) };
 }

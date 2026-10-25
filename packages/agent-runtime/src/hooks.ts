@@ -8,6 +8,7 @@ import path from 'node:path';
 
 import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 
+import { PLAN_AGENT } from './agents.ts';
 import { PLAN_GATE_CLOSED } from './report.ts';
 
 export type Decision = { allow: true } | { allow: false; reason: string };
@@ -35,12 +36,19 @@ const DENIED_COMMANDS: { pattern: RegExp; reason: string }[] = [
   },
 ];
 
+/** The only files the plan subagent may write. */
+const PLAN_FILES = ['plan.json', 'plan.md'];
+
 function isInside(directory: string, target: string): boolean {
   const relative = path.relative(directory, target);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
-export function decideToolUse(workspace: string, toolName: string, input: unknown): Decision {
+/**
+ * `agentType` is the subagent making the call, absent for the builder. The
+ * plan subagent may write only the two plan files.
+ */
+export function decideToolUse(workspace: string, toolName: string, input: unknown, agentType?: string): Decision {
   const fields = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
 
   const field = FILE_TOOLS[toolName];
@@ -50,6 +58,9 @@ export function decideToolUse(workspace: string, toolName: string, input: unknow
       return { allow: false, reason: `${toolName} needs an absolute path in ${field}.` };
     }
     const target = path.resolve(workspace, raw);
+    if (agentType === PLAN_AGENT && (toolName !== 'Write' || !PLAN_FILES.some((file) => target === path.join(workspace, file)))) {
+      return { allow: false, reason: `The plan subagent writes only ${PLAN_FILES.map((file) => path.join(workspace, file)).join(' and ')}.` };
+    }
     if (!isInside(workspace, target)) {
       return { allow: false, reason: `Write only inside ${workspace}; ${target} is outside it.` };
     }
@@ -98,7 +109,7 @@ export function preToolUseHooks(
           if (input.hook_event_name !== 'PreToolUse') return {};
           const decision: Decision = planGateClosed()
             ? { allow: false, reason: PLAN_GATE_CLOSED }
-            : decideToolUse(workspace, input.tool_name, input.tool_input);
+            : decideToolUse(workspace, input.tool_name, input.tool_input, input.agent_id === undefined ? undefined : input.agent_type);
           if (!decision.allow) onDenied(input.tool_name, decision.reason);
           return toHookOutput(decision);
         },

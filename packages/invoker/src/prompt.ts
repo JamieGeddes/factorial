@@ -41,7 +41,7 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
     ...(round > 1
       ? [`This is round ${round}: an earlier session did part of the work. Read the "# Continuing (round ${round})" section at the end of /workspace/notes.md first, and do what it says before changing anything.`]
       : []),
-    'Plan before changing any code: unless /workspace/plan.json already exists from an earlier round, run the plan subagent and write its plan to /workspace/plan.json and /workspace/plan.md, as your instructions describe. Then follow its `steps` in order, by `id`; where plan.json and plan.md disagree, plan.json wins, and note the disagreement under "# Plan" in /workspace/notes.md. Re-read the Task section before each commit and before writing the summary, checking the work against it.',
+    'Plan before changing any code: unless /workspace/plan.json already exists from an earlier round, run the plan subagent, which writes /workspace/plan.json and /workspace/plan.md, as your instructions describe. Then follow its `steps` in order, by `id`; where plan.json and plan.md disagree, plan.json wins, and note the disagreement under "# Plan" in /workspace/notes.md. Re-read the Task section before each commit and before writing the summary, checking the work against it.',
     'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions, including a "## Plan steps" section: one line per plan step, each starting with the step\'s `id` from plan.json, then done, skipped or changed, and why for any not done as planned. Use the summary.md headings and limits from your instructions.',
   ].join('\n');
 }

@@ -48,6 +48,7 @@ describe('queryOptions', () => {
     const options = queryOptions(config, { ...parts, webSearch: webSearchServer(async () => ({})) });
     assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['factorial']);
     assert.deepEqual(options.allowedTools, [TOOL_NAME]);
+    assert.ok(options.agents?.plan?.tools?.includes(TOOL_NAME));
   });
 });
 
