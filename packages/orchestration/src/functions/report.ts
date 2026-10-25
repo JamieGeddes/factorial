@@ -33,8 +33,11 @@ export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved'>): string
   const { owner, name } = input.ctx.workItem.repository;
   const branch = input.ctx.branch;
   const url = `https://github.com/${owner}/${name}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
-  const commits = input.saved.commitCount === 1 ? '1 commit' : `${input.saved.commitCount ?? 'the'} commits`;
-  return ` Work in progress (${commits}) was saved to [\`${branch}\`](${url}); it is untested and no pull request was opened. Adding the label again resumes from that branch.`;
+  // A later round with no new commits keeps the earlier rounds' head, so its
+  // own count of 0 says nothing about what the branch holds.
+  const count = input.saved.commitCount;
+  const commits = count === 1 ? ' (1 commit)' : count ? ` (${count} commits)` : '';
+  return ` Work in progress${commits} was saved to [\`${branch}\`](${url}); it is untested and no pull request was opened. Adding the label again resumes from that branch.`;
 }
 
 export function reportMessage(input: ReportInput): string {

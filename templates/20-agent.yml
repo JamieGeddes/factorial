@@ -586,9 +586,7 @@ Resources:
         FACTORIAL_BACKGROUND_MODEL: eu.anthropic.claude-haiku-5-5
         # The same turn limit as the harness's MaxIterations. A run that
         # reaches a limit ends incomplete and the next round continues it.
-        # SPIKE: 3 for one forced-rounds run (docs/agent-sdk-plan.md 1.8;
-        # at 10, #116 finished in 5 turns); back to 150 straight after it.
-        FACTORIAL_MAX_TURNS: '3'
+        FACTORIAL_MAX_TURNS: '150'
         FACTORIAL_MAX_BUDGET_USD: '10'
         # Below the orchestration stack's BuildTimeoutSeconds (7200), as the
         # harness's TimeoutSeconds is, so the host ends the run itself and
