@@ -7,8 +7,9 @@
  *
  * The report stays the model's claim: this only makes it present. The host is
  * root and the files are the agent's, so they are opened without following a
- * link, must be regular files, are read up to a cap, and nothing read from
- * them is sent back to the model except the plan's step ids.
+ * link, must be regular files, and are read up to a cap. Nothing read from
+ * them reaches the model except the plan: its step ids here, and its steps in
+ * full at the start of the run (planBrief), which the model could read itself.
  */
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
@@ -49,6 +50,56 @@ export function planStepIds(planJson: string | undefined): string[] | undefined 
   } catch {
     return undefined;
   }
+}
+
+interface PlanStep {
+  id: string;
+  description: string;
+  files: string[];
+  verification: string;
+}
+
+function isPlanStep(step: unknown): step is PlanStep {
+  const { id, description, files, verification } = (step ?? {}) as Partial<Record<keyof PlanStep, unknown>>;
+  return (
+    typeof id === 'string' &&
+    STEP_ID.test(id) &&
+    typeof description === 'string' &&
+    typeof verification === 'string' &&
+    Array.isArray(files) &&
+    files.every((file) => typeof file === 'string')
+  );
+}
+
+/**
+ * The plan's steps, appended to the builder's first message. On #120's
+ * resumed attempt the model read only the step ids, never the step, and
+ * rewrote a commit the step said to keep. Undefined if the plan cannot be
+ * read as one, and the model then reads /workspace/plan.json as before.
+ */
+export function planBrief(planJson: string | undefined): string | undefined {
+  if (planJson === undefined) return undefined;
+  let steps: unknown;
+  try {
+    steps = (JSON.parse(planJson) as { steps?: unknown }).steps;
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(steps) || steps.length === 0 || !steps.every(isPlanStep)) return undefined;
+  return [
+    "## The plan's steps",
+    '',
+    'Copied from /workspace/plan.json. Do each step as its description says, including any condition on whether to change or commit anything, and report each by its id in summary.md.',
+    ...steps.flatMap((step, i) => [
+      '',
+      `### ${i + 1}. \`${step.id}\``,
+      '',
+      step.description.trim(),
+      '',
+      `Files: ${step.files.length ? step.files.map((file) => `\`${file}\``).join(', ') : 'none listed'}`,
+      `Verification: ${step.verification.trim()}`,
+    ]),
+  ].join('\n');
 }
 
 /** The lines of the summary's `## Plan steps` section, or undefined if it has none. */

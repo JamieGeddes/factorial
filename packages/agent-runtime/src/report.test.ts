@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 
 import type { HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 
-import { MAX_REPORT_CHECKS, planStepIds, readAgentFile, reportProblem, stopHooks } from './report.ts';
+import { MAX_REPORT_CHECKS, planBrief, planStepIds, readAgentFile, reportProblem, stopHooks } from './report.ts';
 
 const plan = JSON.stringify({ steps: [{ id: 'add-test' }, { id: 'reword' }] });
 const report = (lines: string[]) => ['# Summary', '', 'Changed things.', '', '## Plan steps', ...lines, '', '## Notes', 'n'].join('\n');
@@ -49,6 +49,25 @@ describe('planStepIds', () => {
     assert.equal(planStepIds('{"steps":[{"id":"ok"},{"id":"not ok; rm -rf /"}]}'), undefined);
     assert.equal(planStepIds('not json'), undefined);
     assert.equal(planStepIds(undefined), undefined);
+  });
+});
+
+describe('planBrief', () => {
+  const step = { id: 'verify-ci', description: 'Run the checks. Commit only if one fails.', files: [], verification: 'npm run ci passes' };
+
+  it('lists every step in order with its description, files and verification', () => {
+    const brief = planBrief(JSON.stringify({ steps: [step, { ...step, id: 'add-test', files: ['src/a.test.ts'] }] })) ?? '';
+    assert.match(brief, /^## The plan's steps\n/);
+    assert.match(brief, /### 1\. `verify-ci`\n\nRun the checks\. Commit only if one fails\.\n\nFiles: none listed\nVerification: npm run ci passes/);
+    assert.match(brief, /### 2\. `add-test`[\s\S]*Files: `src\/a\.test\.ts`/);
+  });
+
+  it('is undefined for a missing, unparseable or malformed plan', () => {
+    assert.equal(planBrief(undefined), undefined);
+    assert.equal(planBrief('{'), undefined);
+    assert.equal(planBrief(JSON.stringify({ steps: [] })), undefined);
+    assert.equal(planBrief(JSON.stringify({ steps: [{ ...step, verification: 1 }] })), undefined);
+    assert.equal(planBrief(JSON.stringify({ steps: [{ ...step, id: '../x' }] })), undefined);
   });
 });
 

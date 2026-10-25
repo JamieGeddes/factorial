@@ -167,13 +167,15 @@ export interface PromptOptions {
   sensitivePaths?: SensitivePath[];
   /** The builder's round: 2 or more when continuing a build in a fresh session. */
   buildRound?: number;
+  /** Whether this attempt resumes an earlier one's branch. */
+  resumed?: boolean;
 }
 
 /** The user message that starts a session for the role. */
 export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBranch: string, options: PromptOptions = {}): string {
   switch (role) {
     case 'builder':
-      return buildPrompt(workItem, branch, baseBranch, options.buildRound ?? 1);
+      return buildPrompt(workItem, branch, baseBranch, options.buildRound ?? 1, options.resumed ?? false);
     case 'planner':
       return planPrompt(workItem, branch, baseBranch, options.planAttempt ?? 1);
     case 'reviewer':

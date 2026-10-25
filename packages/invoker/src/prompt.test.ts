@@ -100,6 +100,16 @@ describe('buildPrompt rounds', () => {
   });
 });
 
+describe('buildPrompt resumes', () => {
+  it('says only a resumed attempt builds on commits already on the branch', () => {
+    assert.doesNotMatch(buildPrompt(workItem, 'factorial/x', 'main'), /resumes an earlier one/);
+    const resumed = buildPrompt(workItem, 'factorial/x', 'main', 1, true);
+    assert.match(resumed, /This attempt resumes an earlier one/);
+    assert.match(resumed, /git log --oneline origin\/HEAD\.\.HEAD/);
+    assert.match(resumed, /do not rewrite it/);
+  });
+});
+
 describe('planPrompt', () => {
   it('gives the request and asks for both plan files without changing the repository', () => {
     const prompt = planPrompt(workItem, 'factorial/x', 'main', 1);
