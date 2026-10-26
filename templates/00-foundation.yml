@@ -57,7 +57,8 @@ Resources:
 
   # ---------------------------------------------------------------------------
   # Permissions boundary. Every IAM role Factorial creates for itself (Lambdas,
-  # the state machine, the agent harness) must carry this boundary. It is the
+  # the state machine, the invoker) must carry this boundary; agent roles carry
+  # the agent boundary below. It is the
   # mechanical enforcement of "agents never deploy or promote Factorial" and of
   # "no privilege escalation": whatever a role's own policy says, it can never
   # exceed what is allowed here.
@@ -206,6 +207,9 @@ Resources:
               - iam:PassRole
             Resource: !Sub arn:${AWS::Partition}:iam::*:role/factorial-*
           # --- Dangerous subsets of the allowed services ---
+          # The Harness actions stay denied although Factorial no longer uses
+          # harnesses: AgentsAndModels allows bedrock-agentcore:*, and a
+          # bounded role must not be able to start an agent of its own.
           - Sid: DenyPromotingOrChangingVersions
             Effect: Deny
             Action:
@@ -230,9 +234,9 @@ Resources:
               - states:UpdateStateMachineAlias
               - states:DeleteStateMachineAlias
             Resource: '*'
-          # Model keys and OAuth tokens are resolved only by agent execution
-          # roles, which carry the agent boundary below. No other runtime role
-          # may read or change a credential.
+          # No runtime role may read or change an AgentCore credential. Since
+          # the agents moved to Bedrock no agent role may either (the agent
+          # boundary below allows none).
           - Sid: DenyCredentials
             Effect: Deny
             Action:
@@ -269,10 +273,12 @@ Resources:
   # ---------------------------------------------------------------------------
   # Agent permissions boundary. Agent execution roles are shared with the
   # agent's own shell, so once an agent has run its session is treated as
-  # hostile. Their ceiling is therefore only what a harness needs to run:
-  # pull its image, resolve its model key through the service, search the web
-  # through a Factorial gateway, and emit telemetry. No data, orchestration,
-  # Factorial roles or other services.
+  # hostile. Their ceiling is therefore only what a Runtime needs to run:
+  # call Claude on Bedrock, pull its image, search the web through a Factorial
+  # gateway, and emit telemetry. No credentials, data, orchestration, Factorial
+  # roles or other services. (The description below still says harness:
+  # changing a managed policy's description replaces it, and the fixed name
+  # makes the replacement fail, as on #130.)
   #
   # The execution role enforces which boundary a role gets: roles named
   # factorial-agent or factorial-agent-* must carry this one, and only those
@@ -289,38 +295,23 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          # Anthropic models only, through this account's EU inference
+          # profiles and the foundation models they route to in any region.
+          # Each execution role narrows this to its own named profiles.
           - Sid: Models
             Effect: Allow
             Action:
               - bedrock:InvokeModel
               - bedrock:InvokeModelWithResponseStream
-              - bedrock:ApplyGuardrail
-            Resource: '*'
-          - Sid: ModelCredentials
-            Effect: Allow
-            Action:
-              - bedrock-agentcore:GetWorkloadAccessToken
-              - bedrock-agentcore:GetWorkloadAccessTokenForJWT
-              - bedrock-agentcore:GetResourceApiKey
-              - bedrock-agentcore:GetResourceOauth2Token
             Resource:
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/*credentialprovider/factorial-*
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_*
-          # Only the service-mediated read the harness makes to resolve a
-          # credential provider; never a direct read from the agent's shell.
-          - Sid: SecretsViaServiceOnly
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.*
+              - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.*
+          - Sid: Guardrails
             Effect: Allow
-            Action: secretsmanager:GetSecretValue
-            Resource:
-              - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/*
-              - !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:bedrock-agentcore-identity!default/*
-            Condition:
-              Bool:
-                aws:ViaAWSService: 'true'
+            Action: bedrock:ApplyGuardrail
+            Resource: !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:guardrail/*
           # Web search through Factorial's own gateways. InvokeGateway is the
-          # harness calling the gateway; InvokeWebSearch is the gateway's
+          # builder's host calling the gateway; InvokeWebSearch is the gateway's
           # service role calling the AWS-owned connector. The gateway role is
           # passed to AgentCore, so it is an agent role under this boundary.
           - Sid: WebSearch
@@ -418,8 +409,8 @@ Resources:
                 Condition:
                   StringNotEquals:
                     iam:PermissionsBoundary: !Ref AgentPermissionsBoundary
-              # And only agent roles may run inside AgentCore, so no harness or
-              # runtime can execute with the wider runtime boundary.
+              # And only agent roles may run inside AgentCore, so no runtime
+              # can execute with the wider runtime boundary.
               - Sid: OnlyAgentRolesForAgentCore
                 Effect: Deny
                 Action: iam:PassRole
@@ -546,24 +537,20 @@ Resources:
                 Resource:
                   - !Sub arn:${AWS::Partition}:cloudwatch:${AWS::Region}:${AWS::AccountId}:alarm:factorial-*
                   - !Sub arn:${AWS::Partition}:cloudwatch::${AWS::AccountId}:dashboard/factorial-*
-              # AgentCore resources are scoped by name. Harness and runtime
-              # names allow only [A-Za-z0-9_], hence factorial_; a harness's
-              # underlying runtime and workload identity are prefixed harness_.
-              # Gateway names allow hyphens, and a gateway's ID (and ARN) is
+              # AgentCore resources are scoped by name. Runtime names allow
+              # only [A-Za-z0-9_], hence factorial_, which also prefixes each
+              # runtime's workload identity. Gateway names allow hyphens, and a gateway's ID (and ARN) is
               # its lower-cased name plus a random suffix, hence factorial-.
               - Sid: AgentCore
                 Effect: Allow
                 Action: bedrock-agentcore:*
                 Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/factorial_*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/*credentialprovider/factorial-*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/factorial*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_*
               # These actions authorise against no resource, so cannot be
               # scoped by name; everything done to the result afterwards is.
               # Other AgentCore resource types (memory, ...) are added here
@@ -571,17 +558,15 @@ Resources:
               - Sid: AgentCoreUnscoped
                 Effect: Allow
                 Action:
-                  - bedrock-agentcore:CreateHarness
                   - bedrock-agentcore:CreateAgentRuntime
                   - bedrock-agentcore:CreateGateway
                   - bedrock-agentcore:List*
                 Resource: '*'
-              # Creating a harness creates its runtime, and the runtime's
-              # first endpoint is authorised against runtime/* because the
-              # runtime's ID does not exist yet (refused for
-              # factorial_planner on 2026-10-19; on 2026-10-17 the same
-              # call for the builder was checked against its real name, so
-              # the service changed). Every later endpoint is checked
+              # Creating a runtime creates its first endpoint, which is
+              # authorised against runtime/* because the runtime's ID does not
+              # exist yet (first refused for a harness's runtime on
+              # 2026-10-19; on 2026-10-17 the same call was checked against
+              # its real name, so the service changed). Every later endpoint is checked
               # against the named runtime, which the AgentCore statement
               # covers. The ARN cannot be narrowed, so the grant is limited
               # to calls AgentCore makes on this role's behalf: a template
@@ -593,22 +578,18 @@ Resources:
                 Condition:
                   Bool:
                     aws:ViaAWSService: 'true'
-              # A gateway's or harness's ARN embeds an ID assigned at
-              # creation, so tagging on create is authorised against
-              # gateway/* or harness/*, not the factorial name (harnesses:
-              # CreateHarness for factorial_planner was refused on
-              # 2026-10-19). Only the stack tag, and the aws:cloudformation:*
-              # tags CloudFormation adds to every create (seen in CloudTrail
-              # on 2026-10-18), may be applied, from a factorial- stack. This
-              # also lets the role add Project=Factorial to any gateway or
-              # harness in the account, so never grant AgentCore access by
+              # A gateway's ARN embeds an ID assigned at creation, so tagging
+              # on create is authorised against gateway/*, not the factorial
+              # name. Only the stack tag, and the aws:cloudformation:* tags
+              # CloudFormation adds to every create (seen in CloudTrail on
+              # 2026-10-18), may be applied, from a factorial- stack. This
+              # also lets the role add Project=Factorial to any gateway in
+              # the account, so never grant AgentCore access by
               # aws:ResourceTag/Project.
               - Sid: AgentCoreTagOnCreate
                 Effect: Allow
                 Action: bedrock-agentcore:TagResource
-                Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/*
+                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/*
                 Condition:
                   StringEquals:
                     aws:RequestTag/Project: Factorial
@@ -620,17 +601,16 @@ Resources:
                       - aws:cloudformation:stack-name
                       - aws:cloudformation:stack-id
                       - aws:cloudformation:logical-id
-              # The runtime AgentCore creates with a harness is tagged with
-              # the stack tag only: CloudFormation's aws:cloudformation:* tags
-              # stay on the harness (CreateAgentRuntime for
-              # harness_factorial_planner carried only Project=Factorial and
-              # was refused on 2026-10-21). A runtime the agent stack creates
-              # itself (factorial_builder on AgentCore Runtime) carries those
-              # tags too, as every direct create does (CloudTrail, 2026-10-23),
-              # so they are allowed when present, from a factorial- stack. Its
-              # ARN is runtime/* for the same reason as the endpoint above. As
-              # with harnesses, this lets the role add Project=Factorial to any
-              # runtime, which grants nothing.
+              # A runtime the agent stack creates carries the stack tag and
+              # CloudFormation's aws:cloudformation:* tags, as every direct
+              # create does (CloudTrail, 2026-10-23), allowed from a
+              # factorial- stack. They are optional (IfExists) because the
+              # runtime AgentCore created under a harness carried only
+              # Project=Factorial (2026-10-21); no harness remains, and the
+              # condition can be made strict once a runtime has been created
+              # under it. Its ARN is runtime/* for the same reason as the
+              # endpoint above. As with gateways, this lets the role add
+              # Project=Factorial to any runtime, which grants nothing.
               - Sid: AgentCoreRuntimeTagOnCreate
                 Effect: Allow
                 Action: bedrock-agentcore:TagResource
@@ -906,13 +886,6 @@ Resources:
               - Sid: PromoteLiveAliases
                 Effect: Allow
                 Action:
-                  # Harness endpoint operations also perform the underlying
-                  # runtime endpoint operations, so both sets are needed.
-                  - bedrock-agentcore:GetHarness
-                  - bedrock-agentcore:ListHarnessVersions
-                  - bedrock-agentcore:GetHarnessEndpoint
-                  - bedrock-agentcore:ListHarnessEndpoints
-                  - bedrock-agentcore:UpdateHarnessEndpoint
                   - bedrock-agentcore:GetAgentRuntime
                   - bedrock-agentcore:ListAgentRuntimeVersions
                   - bedrock-agentcore:GetAgentRuntimeEndpoint
@@ -927,9 +900,7 @@ Resources:
                   - lambda:GetAlias
                   - lambda:UpdateAlias
                 Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:harness/factorial_*
                   - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_*
                   - !Sub arn:${AWS::Partition}:states:${AWS::Region}:${AWS::AccountId}:stateMachine:factorial-*
                   - !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:factorial-*
       Tags:
@@ -989,38 +960,6 @@ Resources:
                 aws:SecureTransport: 'false'
 
   # ---------------------------------------------------------------------------
-  # Container registry for the agent harness environment image.
-  # ---------------------------------------------------------------------------
-  AgentEnvironmentRepository:
-    Type: AWS::ECR::Repository
-    Properties:
-      RepositoryName: factorial/agent-environment
-      ImageTagMutability: IMMUTABLE
-      ImageScanningConfiguration:
-        ScanOnPush: true
-      EncryptionConfiguration:
-        EncryptionType: AES256
-      LifecyclePolicy:
-        LifecyclePolicyText: |
-          {
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep the most recent 20 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 20
-                },
-                "action": { "type": "expire" }
-              }
-            ]
-          }
-      Tags:
-        - Key: Project
-          Value: Factorial
-
-  # ---------------------------------------------------------------------------
   # Container registry for the agent runtime image (Claude Agent SDK host).
   # ---------------------------------------------------------------------------
   AgentRuntimeRepository:
@@ -1053,7 +992,7 @@ Resources:
           Value: Factorial
 
   # ---------------------------------------------------------------------------
-  # Container registry for the orchestration's harness invoker.
+  # Container registry for the orchestration's agent invoker.
   # ---------------------------------------------------------------------------
   InvokerRepository:
     Type: AWS::ECR::Repository
@@ -1122,10 +1061,6 @@ Outputs:
     Value: !Ref ArtefactBucket
     Export:
       Name: Factorial-ArtefactBucketName
-  AgentEnvironmentRepositoryUri:
-    Value: !GetAtt AgentEnvironmentRepository.RepositoryUri
-    Export:
-      Name: Factorial-AgentEnvironmentRepositoryUri
   AgentRuntimeRepositoryUri:
     Value: !GetAtt AgentRuntimeRepository.RepositoryUri
     Export:

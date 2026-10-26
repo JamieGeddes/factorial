@@ -287,6 +287,14 @@ Two fixes came out of the runs:
 - **Drops the invoker's delta joining.** The transcript buffer joined the Harness's streamed text deltas so a split credential was redacted whole; the host sends whole SDK messages, so there are no deltas to join.
 - **Supersedes `docs/security.md` section 8** (root in the session) rather than deleting it, and records the reviewer's Bash denylist as a known gap in section 7.
 
+11b differs from the bullets above in three places:
+
+- **The runtime boundary keeps its Harness deny statements.** It allows `bedrock-agentcore:*`, so dropping `CreateHarness` and the endpoint actions from its deny list would let a bounded role start an agent of its own if its policy ever allowed it. Denying actions on a resource type Factorial no longer uses costs nothing.
+- **The agent boundary's model statement is scoped** to `eu.anthropic.*` inference profiles in the account and `anthropic.*` foundation models, closing the gap `docs/security.md` recorded (every model allowed); `ApplyGuardrail` is limited to the account's guardrails. Each execution role still names its own profiles.
+- **`role/factorial-agent` stays** in the execution role's agent-role rules. No role has that name since 8b, and keeping it in the deny list is the stricter choice.
+
+Deploying 11b removes the `factorial/agent-environment` repository, which CloudFormation can only delete when it is empty, so its images are deleted by hand first; the Z.ai secret is deleted by hand after. Nothing in the foundation's deny statements depends on either.
+
 ## 4. Pull requests, in order
 
 | # | Phase | Contents | Depends on | Done when |
