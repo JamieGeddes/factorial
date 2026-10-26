@@ -63,33 +63,32 @@ const MAX_LIST = 5;
  * Agent text cannot mention anyone: a zero-width space after each `@` that
  * would start a mention or team reference stops GitHub notifying, so a
  * prompt-injected builder cannot ping people from Factorial's comments.
- * Code spans are left as written (a package such as `@scope/pkg` stays
- * copyable), since GitHub never links mentions inside them.
+ * Applied everywhere, code spans included, and after cutting: telling real
+ * code spans apart needs a full Markdown parser (escaped backticks, longer
+ * backtick runs), and a cut can leave a span open. Inside a code span the
+ * character is invisible.
  */
 export function noMentions(text: string): string {
-  return text
-    .split(/(`[^`\n]*`)/)
-    .map((part, i) => (i % 2 === 1 ? part : part.replace(/@(?=[A-Za-z0-9])/g, '@\u200b')))
-    .join('');
+  return text.replace(/@(?=[A-Za-z0-9])/g, '@\u200b');
 }
 
 export function agentText(text: string, max: number): string {
-  const flat = noMentions(replaceEmDashes(text))
+  const flat = replaceEmDashes(text)
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
     .split('\n')
     .map((line) => line.replace(/^\s*#{1,6}\s+/, '').trim())
     .filter(Boolean)
     .join(' ');
-  return cutText(flat, max);
+  return noMentions(cutText(flat, max));
 }
 
 /** Free text from an agent that may run to several paragraphs: kept as lines, headings and tags neutralised, then cut. */
 function agentBlock(text: string, max: number): string {
-  const lines = noMentions(replaceEmDashes(text))
+  const lines = replaceEmDashes(text)
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
     .split('\n')
     .map((line) => line.replace(/^\s*#{1,6}\s+/, '').trimEnd());
-  return cutText(lines.join('\n'), max);
+  return noMentions(cutText(lines.join('\n'), max));
 }
 
 /** The plan as the PR needs it: from the full plan when it could be read back, otherwise from the state's digest. */

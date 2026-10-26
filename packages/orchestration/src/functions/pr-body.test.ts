@@ -458,10 +458,15 @@ describe('safeLogin', () => {
 });
 
 describe('noMentions', () => {
-  it('stops agent text mentioning people or teams, outside code spans only', () => {
+  it('stops agent text mentioning people or teams, whatever surrounds the @', () => {
     assert.equal(noMentions('ping @alice and @org/team'), 'ping @\u200balice and @\u200borg/team');
-    assert.equal(noMentions('uses `@factorial/log` here'), 'uses `@factorial/log` here');
+    assert.equal(noMentions('\\`@alice\\` and ``a ` @bob``'), '\\`@\u200balice\\` and ``a ` @\u200bbob``');
     assert.equal(noMentions('mail a@b.com, @ alone'), 'mail a@\u200bb.com, @ alone');
+  });
+
+  it('applies after cutting, so a cut cannot leave a mention unescaped', () => {
+    const text = agentText(`${'x'.repeat(95)} @alice`, 100);
+    assert.doesNotMatch(text, /@a/);
   });
 
   it('applies to the builder slots of the body and the rework reply', () => {
