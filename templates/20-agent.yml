@@ -255,6 +255,8 @@ Resources:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
       AgentRuntimeName: factorial_builder
+      # Runtime V2 restores sessions from a snapshot. Set explicitly; rollback is V1.
+      PlatformVersion: V2
       Description: Factorial builder on the Claude Agent SDK.
       RoleArn: !GetAtt BuilderRuntimeRole.Arn
       AgentRuntimeArtifact:
@@ -373,6 +375,8 @@ Resources:
     Type: AWS::BedrockAgentCore::Runtime
     Properties:
       AgentRuntimeName: factorial_reviewer
+      # Runtime V2 restores sessions from a snapshot. Set explicitly; rollback is V1.
+      PlatformVersion: V2
       Description: Factorial reviewer on the Claude Agent SDK.
       RoleArn: !GetAtt ReviewerAgentRole.Arn
       AgentRuntimeArtifact:
