@@ -3,6 +3,7 @@
  * Holds counts and identifiers only, never content.
  */
 import type { CallUsage, RunUsage } from './usage.ts';
+import type { SubagentRun, SubagentTotal } from './sdk-messages.ts';
 
 /**
  * The version the `live` endpoint served, and its model and limits, read when
@@ -79,6 +80,8 @@ export interface SdkRecord {
   modelUsage?: Record<string, unknown>;
   permissionDenials?: number;
   reconnects?: number;
+  /** Each subagent run in order and a total per agent type (see SubagentRun for where each figure comes from). Already inside the run's own totals. */
+  subagents?: { runs: SubagentRun[]; totals: SubagentTotal[] };
 }
 
 export function usageRecord(params: {

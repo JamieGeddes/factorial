@@ -44,7 +44,7 @@ import { assertWorkItem } from '@factorial/workitem';
 import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, agentTarget, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor, type RuntimeTarget } from './role.ts';
 import { modelIdOf, runtimeInfoOf, usageRecord, type HarnessInfo, type SdkRecord } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
-import { SdkTally, runUsageOf, runtimeStop, type HostStatus } from './sdk-messages.ts';
+import { SdkTally, runUsageOf, runtimeStop, subagentsOf, type HostStatus } from './sdk-messages.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
 import { addCallUsage, addRunUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
@@ -373,8 +373,9 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
     ...(tally.result?.modelUsage ? { modelUsage: tally.result.modelUsage } : {}),
     permissionDenials: tally.result?.permissionDenials ?? 0,
     reconnects,
+    ...(tally.subagentRuns.length > 0 ? { subagents: subagentsOf(tally.subagentRuns) } : {}),
   };
-  log.info('runtime run ended', { stopReason: run.stopReason, status: status?.state, outcome: status?.outcome, ...run.sdk, modelUsage: undefined });
+  log.info('runtime run ended', { stopReason: run.stopReason, status: status?.state, outcome: status?.outcome, ...run.sdk, modelUsage: undefined, subagents: undefined });
 }
 
 main().then(

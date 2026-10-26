@@ -69,6 +69,65 @@ export function callUsageOf(usage: AnthropicUsage | undefined): CallUsage | unde
   };
 }
 
+/**
+ * One finished subagent run. Duration and tool calls are the SDK's totals
+ * from the Agent tool's result. Its token figures are not: on #140,
+ * `totalTokens` and `usage` were the subagent's last model call (25,735
+ * tokens, its final context), against 59,372 input tokens over its four
+ * calls. So the tokens here are summed from the subagent's own streamed
+ * calls, matched to the Agent call by `parent_tool_use_id`. Input and cache
+ * tokens are exact; a streamed message counts output from the start of its
+ * response (see runUsageOf), so output is a lower bound. The SDK's figure is
+ * kept as `finalContextTokens`.
+ */
+export interface SubagentRun {
+  agentType: string;
+  durationMs: number;
+  toolUseCount: number;
+  modelCalls: number;
+  inputTokens: number;
+  cacheReadInputTokens: number;
+  cacheWriteInputTokens: number;
+  outputTokensAtLeast: number;
+  finalContextTokens: number;
+}
+
+export type SubagentTotal = Omit<SubagentRun, 'finalContextTokens'> & { runs: number };
+
+/** A completed Agent result with its calls' usage, or undefined for anything else (async launches, malformed values). */
+function subagentRunOf(result: unknown, calls: RunUsage | undefined): SubagentRun | undefined {
+  if (typeof result !== 'object' || result === null) return undefined;
+  const r = result as Record<string, unknown>;
+  if (r.status === 'async_launched') return undefined;
+  if (typeof r.agentType !== 'string' || r.agentType === '') return undefined;
+  const usage = calls ?? emptyRunUsage();
+  return {
+    agentType: r.agentType,
+    durationMs: count(r.totalDurationMs),
+    toolUseCount: count(r.totalToolUseCount),
+    modelCalls: usage.modelCalls,
+    inputTokens: usage.inputTokens,
+    cacheReadInputTokens: usage.cacheReadInputTokens,
+    cacheWriteInputTokens: usage.cacheWriteInputTokens,
+    outputTokensAtLeast: usage.outputTokens,
+    finalContextTokens: count(r.totalTokens),
+  };
+}
+
+const SUMMED = ['durationMs', 'toolUseCount', 'modelCalls', 'inputTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens', 'outputTokensAtLeast'] as const;
+
+/** The runs in order, and a total per agent type. */
+export function subagentsOf(runs: SubagentRun[]): { runs: SubagentRun[]; totals: SubagentTotal[] } {
+  const byType = new Map<string, SubagentTotal>();
+  for (const run of runs) {
+    const total = byType.get(run.agentType) ?? { agentType: run.agentType, runs: 0, ...Object.fromEntries(SUMMED.map((field) => [field, 0])) } as SubagentTotal;
+    total.runs += 1;
+    for (const field of SUMMED) total[field] += run[field];
+    byType.set(run.agentType, total);
+  }
+  return { runs, totals: [...byType.values()] };
+}
+
 export interface LogLine {
   message: string;
   fields: Record<string, unknown>;
@@ -80,8 +139,11 @@ export class SdkTally {
   result: SdkResult | undefined;
   hostError: string | undefined;
   maxDuration = false;
+  subagentRuns: SubagentRun[] = [];
   /** The SDK repeats an API response's usage on every message it splits it into. */
   private readonly countedMessages = new Set<string>();
+  /** Each subagent's model calls so far, by the id of the Agent call that started it. */
+  private readonly subagentCalls = new Map<string, RunUsage>();
 
   /** Takes one message and returns the log lines it is worth. */
   add(message: unknown): LogLine[] {
@@ -96,6 +158,8 @@ export class SdkTally {
           this.countedMessages.add(inner.id);
           const call = callUsageOf(inner.usage);
           if (call) this.calls.push(call);
+          const parent = fields.parent_tool_use_id;
+          if (call && typeof parent === 'string') this.subagentCalls.set(parent, addCallUsage(this.subagentCalls.get(parent) ?? emptyRunUsage(), call));
         }
         for (const block of inner.content ?? []) {
           if (block.type === 'tool_use') {
@@ -106,6 +170,15 @@ export class SdkTally {
             lines.push({ message: 'assistant text', fields: { agent, model: inner.model, text: block.text.slice(-4000) } });
           }
         }
+        break;
+      }
+      case 'user': {
+        if (fields.parent_tool_use_id) break;
+        const content = (fields.message as { content?: unknown } | undefined)?.content;
+        const block = Array.isArray(content) ? (content as { type?: unknown; tool_use_id?: unknown }[]).find((b) => b?.type === 'tool_result') : undefined;
+        const toolUseId = typeof block?.tool_use_id === 'string' ? block.tool_use_id : undefined;
+        const run = subagentRunOf(fields.tool_use_result, toolUseId === undefined ? undefined : this.subagentCalls.get(toolUseId));
+        if (run) this.subagentRuns.push(run);
         break;
       }
       case 'result': {
