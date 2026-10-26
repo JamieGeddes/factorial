@@ -6,6 +6,10 @@
       "reason": "changes the foundation stack, which holds the deploy role, the CloudFormation execution role and the permissions boundaries"
     },
     {
+      "path": "templates/20-agent.yml",
+      "reason": "changes an agent's execution role, models, image or limits"
+    },
+    {
       "contentPattern": "[Pp]ermissions-?[Bb]oundary",
       "reason": "changes a permissions boundary or what carries one"
     },
