@@ -122,12 +122,15 @@ export function pingTracker(now: () => number = () => Math.floor(Date.now() / 10
   ping: () => Ping;
   setBusy: (busy: boolean) => void;
 } {
-  let current: Ping = { status: 'Healthy', time_of_last_update: now() };
+  // Stamped lazily: on Runtime V2 module load happens before the snapshot, so a
+  // load-time stamp would be stale in every restored session.
+  let current: Ping | undefined;
+  const get = (): Ping => (current ??= { status: 'Healthy', time_of_last_update: now() });
   return {
-    ping: () => current,
+    ping: get,
     setBusy: (busy) => {
       const status = busy ? 'HealthyBusy' : 'Healthy';
-      if (status !== current.status) current = { status, time_of_last_update: now() };
+      if (status !== get().status) current = { status, time_of_last_update: now() };
     },
   };
 }

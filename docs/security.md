@@ -237,6 +237,10 @@ On the Harness, the tool allow-list, the model and the loop's limits are enforce
 - **Caps in the host.** Subagent depth, concurrency, per-agent turns, `maxTurns` and `maxBudgetUsd` are set by the host process.
 - **No subagent output is evidence.** Subagent reports are the model's claim, like the builder's summary. Anything the orchestrator acts on still leaves as a named file and is validated outside the session.
 
+### 9.2a Runtime V2 snapshots
+
+Both Runtimes use platform version V2: a session is restored from a snapshot of the container taken once per Runtime version, so the host process (started before the snapshot) shares its in-memory state, including any OpenSSL or `Math.random` state, across sessions. The host generates no secrets or identifiers; its only TLS connections are the web search gateway calls, whose client randoms could repeat across sessions (residual risk, accepted: the calls are SigV4-signed and carry no secret the randoms protect; where randomness is needed, read `/dev/urandom` directly). The Claude Code subprocess, git and command-API processes start after restore. Restored instances all report hostname `localhost` and PID 1; nothing in Factorial uses either. These points are pending confirmation by the V2 spike (issue 147).
+
 ### 9.3 Why this is acceptable
 
 The in-session allow-list was never the access gate: as section 8 says, it constrains what a prompt injection can drive, and the gates are the outer rules above. On Bedrock the execution role signs with SigV4 and holds no key, which is rule 2's production shape and removes the third-party key gap in section 7. Net, one in-session control moves from AWS-owned to Factorial-owned code, and the credential surface shrinks.

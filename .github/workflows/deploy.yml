@@ -93,6 +93,9 @@ jobs:
   deploy:
     name: Deploy Factorial stacks
     needs: classify
+    # Runtime V2 prepares a snapshot per version (minutes each) in the stack
+    # update and again on promotion.
+    timeout-minutes: 90
     # Deploy only from a successful CI run of a push to main in this repository
     # (CI also runs for pull requests), or an on-demand run from main; and skip
     # everything when only non-functional paths changed since the last
@@ -294,4 +297,19 @@ jobs:
             aws bedrock-agentcore-control update-agent-runtime-endpoint --agent-runtime-id "$runtime_id" --endpoint-name live \
               --agent-runtime-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
             echo "$runtime_id: live endpoint moved from runtime version $current to $latest."
+            # On V2 the endpoint prepares a snapshot, which takes minutes.
+            deadline=$((SECONDS + 1200))
+            while true; do
+              status=$(aws bedrock-agentcore-control get-agent-runtime-endpoint --agent-runtime-id "$runtime_id" --endpoint-name live \
+                --query 'status' --output text)
+              case "$status" in
+                READY) echo "$runtime_id: live endpoint READY."; break ;;
+                *FAILED) echo "::error::$runtime_id live endpoint is $status."; exit 1 ;;
+              esac
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::$runtime_id live endpoint still $status after 20 minutes."
+                exit 1
+              fi
+              sleep 15
+            done
           done

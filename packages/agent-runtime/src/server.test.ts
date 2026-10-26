@@ -47,6 +47,15 @@ describe('parseInvocation', () => {
 });
 
 describe('pingTracker', () => {
+  it('stamps time_of_last_update at the first ping, not at creation (Runtime V2 snapshot)', () => {
+    let now = 100;
+    const tracker = pingTracker(() => now);
+    now = 500;
+    assert.deepEqual(tracker.ping(), { status: 'Healthy', time_of_last_update: 500 });
+    now = 600;
+    assert.equal(tracker.ping().time_of_last_update, 500);
+  });
+
   it('changes time_of_last_update only when the status changes', () => {
     let now = 100;
     const tracker = pingTracker(() => now);
