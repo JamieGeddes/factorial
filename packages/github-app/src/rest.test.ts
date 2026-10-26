@@ -64,6 +64,66 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { reviewers: ['alice', 'bob'] });
   });
 
+  it('reads a pull request trimmed to its state, author and branches', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({
+      token: 't',
+      fetchImpl: fakeFetch(
+        200,
+        { number: 26, state: 'open', user: { login: 'x[bot]' }, head: { ref: 'factorial/a', sha: 'c'.repeat(40), repo: null }, base: { ref: 'main', repo: { id: 42 } } },
+        seen,
+      ),
+    });
+    assert.deepEqual(await client.getPullRequest(repo, 26), {
+      number: 26,
+      state: 'open',
+      authorLogin: 'x[bot]',
+      headRef: 'factorial/a',
+      headSha: 'c'.repeat(40),
+      headRepoId: undefined,
+      baseRef: 'main',
+      baseRepoId: 42,
+    });
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/26');
+  });
+
+  it("lists one review's inline comments, falling back to the original line", async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({
+      token: 't',
+      fetchImpl: fakeFetch(
+        200,
+        [
+          { user: { login: 'alice', type: 'User' }, path: 'a.ts', line: 3, original_line: 2, body: 'one' },
+          { user: null, path: 'b.ts', line: null, original_line: 7, body: 'two' },
+        ],
+        seen,
+      ),
+    });
+    assert.deepEqual(await client.listReviewComments(repo, 26, 77), [
+      { authorLogin: 'alice', authorType: 'User', path: 'a.ts', line: 3, body: 'one' },
+      { authorLogin: 'ghost', authorType: 'User', path: 'b.ts', line: 7, body: 'two' },
+    ]);
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/26/reviews/77/comments?per_page=100');
+  });
+
+  it("reads the state of an inline comment's review in two calls", async () => {
+    const seen: string[] = [];
+    const client = new GitHubClient({
+      token: 't',
+      fetchImpl: (async (url: string | URL) => {
+        seen.push(String(url));
+        const body = String(url).includes('/pulls/comments/') ? { pull_request_review_id: 77 } : { state: 'CHANGES_REQUESTED' };
+        return new Response(JSON.stringify(body), { status: 200 });
+      }) as typeof fetch,
+    });
+    assert.equal(await client.reviewStateOfComment(repo, 26, 5), 'CHANGES_REQUESTED');
+    assert.deepEqual(seen, [
+      'https://api.github.com/repos/JamieGeddes/factorial/pulls/comments/5',
+      'https://api.github.com/repos/JamieGeddes/factorial/pulls/26/reviews/77',
+    ]);
+  });
+
   it('reads a branch head through the git refs API', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { object: { sha: 'b'.repeat(40) } }, seen) });

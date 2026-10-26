@@ -1,4 +1,4 @@
-import type { ReworkContext, WorkItem, WorkItemReviewDetail } from '@factorial/workitem';
+import type { ReworkContext, WorkItem } from '@factorial/workitem';
 
 import type { Plan } from '@factorial/plan';
 
@@ -15,6 +15,7 @@ import type { WorkContext } from '../lib/context.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
 import { GUARD_FINDING_PREFIX, type ReviewDigest } from '../lib/review-files.ts';
+import type { ReworkPoint } from '../lib/rework-admission.ts';
 
 export interface TestResult {
   runUrl?: string;
@@ -337,11 +338,19 @@ export function planSection(plan: PlanView | undefined, summary: BuilderSummary 
   ].join('\n');
 }
 
-/** Run details: the metadata table, collapsed. Only values the orchestrator knows; the artefact prefix without the bucket, which carries the account ID. */
+/**
+ * Run details: the metadata table, collapsed. Only values the orchestrator
+ * knows; the artefact prefix without the bucket, which carries the account
+ * ID. The trigger adapter reads the Branch row back for a comment in the
+ * pull request's conversation, whose webhook does not carry the branch, so
+ * its form is fixed (`| Branch | \`factorial/<id>\` |`); Prepare checks the
+ * value against the pull request's real head.
+ */
 export function runDetailsSection(ctx: WorkContext, headSha: string): string {
   const rows: Array<[string, string]> = [
     ['Work item', `[${ctx.workItem.source.type} ${ctx.workItem.source.id}](${ctx.workItem.source.url})`],
     ['Requested by', `@${ctx.workItem.requestedBy}`],
+    ['Branch', `\`${ctx.branch}\``],
     ['Head', `\`${headSha.slice(0, 12)}\``],
     ['Built by', `Factorial \`${ctx.factorialVersion.slice(0, 12)}\``],
     ['Session', `\`${ctx.sessionId}\``],
@@ -385,7 +394,7 @@ export function safeLogin(author: string): string | undefined {
 }
 
 /** Who raised a point and where: a mention for a valid login, so the reviewer is told; anything else as a code span. */
-function pointOrigin(detail: WorkItemReviewDetail): string {
+function pointOrigin(detail: ReworkPoint): string {
   const login = safeLogin(detail.author);
   const who = login ? `@${login}` : codeSpan(detail.author, 60);
   const where = detail.path ? ` on ${codeSpan(detail.line === undefined ? detail.path : `${detail.path}:${detail.line}`)}` : '';
@@ -394,13 +403,18 @@ function pointOrigin(detail: WorkItemReviewDetail): string {
 
 const MAX_REWORK_POINTS = 50;
 
-/** Each point the rework was asked to address, numbered as in rework.md, with the builder's answer beside it. */
-export function reworkPointsSection(rework: ReworkContext, summary: BuilderSummary | undefined): string {
+/**
+ * Each point the rework was asked to address, numbered as in rework.md, with
+ * the builder's answer beside it. `points` is the list Prepare numbered
+ * (with a review's inline comments); the work item's details for runs that
+ * started before it recorded one.
+ */
+export function reworkPointsSection(rework: ReworkContext, points: readonly ReworkPoint[], summary: BuilderSummary | undefined): string {
   const heading = rework.cause === 'checks-failed' ? '## Failing checks' : '## Points raised';
-  if (rework.details.length === 0) {
+  if (points.length === 0) {
     return [heading, '', '_No specific points were recorded for this rework._'].join('\n');
   }
-  const lines = rework.details.slice(0, MAX_REWORK_POINTS).map((detail, i) => {
+  const lines = points.slice(0, MAX_REWORK_POINTS).map((detail, i) => {
     const answer = summary?.reworkPoints.get(i + 1);
     return `${i + 1}. ${pointOrigin(detail)}: ${answer ? agentText(answer, SUMMARY_CAPS.reworkNote) : NOT_REPORTED}`;
   });
@@ -427,7 +441,7 @@ export function reworkComment(
   const tested = test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
   const body = [
     `Factorial has reworked this pull request after ${why}. The branch is now at \`${headSha.slice(0, 12)}\`, and ${tested}. The description above still describes the change as first opened; this comment covers the rework.`,
-    reworkPointsSection(rework, summary),
+    reworkPointsSection(rework, ctx.reworkPoints ?? rework.details, summary),
     summarySection(summary, summaryText, undefined),
     reviewSection(extras.review),
     testsSection(test, summary, extras.facts ?? null, undefined),

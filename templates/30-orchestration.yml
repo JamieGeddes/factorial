@@ -553,7 +553,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: factorial-prepare
-      Description: Accept a WorkItem once, clone the repository into the agent session and create the work branch.
+      Description: Accept a WorkItem once, admit a rework item, clone the repository into the agent session and create the work branch.
       CodeUri: ../packages/orchestration/dist/prepare/
       Handler: index.handler
       Timeout: 900
@@ -1011,11 +1011,13 @@ Resources:
               ],
               "Catch": [
                 { "ErrorEquals": ["DuplicateWorkItem"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "Duplicate" },
+                { "ErrorEquals": ["ReworkNotAdmitted"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "NotAdmitted" },
                 { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "Build"
             },
             "Duplicate": { "Type": "Succeed", "Comment": "This WorkItem was already accepted; nothing to do." },
+            "NotAdmitted": { "Type": "Succeed", "Comment": "A rework item that may not run: its pull request is not Factorial's or no longer on its branch, another item holds it, or failed checks reached their limit. Prepare recorded why and replied on the pull request when a person asked." },
             "Build": {
               "Type": "Task",
               "Resource": "arn:aws:states:::ecs:runTask.sync",

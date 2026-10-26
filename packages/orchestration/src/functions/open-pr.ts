@@ -20,6 +20,7 @@ import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
 import { assertCommitSha } from '../lib/shell.ts';
+import type { ReworkPoint } from '../lib/rework-admission.ts';
 import { recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
@@ -68,9 +69,9 @@ async function storedPlan(ctx: WorkContext, log: Logger): Promise<Plan | undefin
  * people who raised its points, never a bot (GitHub refuses those, and
  * Factorial's own comments never count).
  */
-export function reviewersToRequest(rework: ReworkContext): string[] {
+export function reviewersToRequest(rework: ReworkContext, points: readonly ReworkPoint[] = rework.details): string[] {
   if (rework.cause !== 'review') return [];
-  const logins = rework.details.map((d) => safeLogin(d.author)).filter((l): l is string => l !== undefined && !l.endsWith('[bot]'));
+  const logins = points.map((d) => safeLogin(d.author)).filter((l): l is string => l !== undefined && !l.endsWith('[bot]'));
   return [...new Set(logins)];
 }
 
@@ -90,7 +91,7 @@ async function replyToRework(
     pr.number,
     reworkComment(ctx, rework, redactSecrets(input.collect.summary), input.test, headSha, { review: input.review, facts: input.prFacts }),
   );
-  const reviewers = reviewersToRequest(rework);
+  const reviewers = reviewersToRequest(rework, ctx.reworkPoints);
   if (reviewers.length > 0) {
     try {
       await client.requestReviewers(repo, pr.number, reviewers);

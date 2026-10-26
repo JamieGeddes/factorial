@@ -204,7 +204,7 @@ describe('buildReworkFile', () => {
   }
 
   it('lists every review detail with its author, file and line, redacted', async () => {
-    const file = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, {
+    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, {
       ...rework,
       details: [{ author: 'u', path: 'src/a.ts', line: 3, body: 'Fix this.\nSecret: ghs_abcdefghijklmnopqrstuvwx' }],
     });
@@ -218,9 +218,39 @@ describe('buildReworkFile', () => {
   });
 
   it('numbers the points in order, so the builder can answer each by number', async () => {
-    const file = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework);
+    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework);
     assert.match(file, /### Point 1: @JamieGeddes \(packages\/invoker\/src\/prompt\.ts:12\)\n\nPlease name/);
     assert.match(file, /### Point 2: @other-user\n\nOverall looks good\./);
+  });
+
+  it("adds a review's inline comments as further points, without bots, when the source names the review", async () => {
+    const seen: string[] = [];
+    const client = new GitHubClient({
+      token: 'ghs_x',
+      fetchImpl: (async (url: string | URL) => {
+        seen.push(String(url));
+        return new Response(
+          JSON.stringify([
+            { user: { login: 'JamieGeddes', type: 'User' }, path: 'src/b.ts', line: 4, original_line: 4, body: 'Inline one.' },
+            { user: { login: 'helper[bot]', type: 'Bot' }, path: 'src/c.ts', line: 1, original_line: 1, body: 'Bot noise.' },
+          ]),
+          { status: 200 },
+        );
+      }) as typeof fetch,
+    });
+    const { text, points } = await buildReworkFile(client, repo, HEAD_SHA, rework, 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77');
+    assert.deepEqual(seen, ['https://api.github.com/repos/JamieGeddes/factorial/pulls/26/reviews/77/comments?per_page=100']);
+    assert.equal(points.length, 3);
+    assert.match(text, /### Point 3: @JamieGeddes \(src\/b\.ts:4\)\n\nInline one\./);
+    assert.doesNotMatch(text, /Bot noise/);
+  });
+
+  it('fetches no review comments when the source is a comment rather than a review', async () => {
+    let called = false;
+    const client = new GitHubClient({ token: 'ghs_x', fetchImpl: (async () => { called = true; return new Response('[]', { status: 200 }); }) as typeof fetch });
+    const { points } = await buildReworkFile(client, repo, HEAD_SHA, rework, 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9');
+    assert.equal(called, false);
+    assert.equal(points.length, 2);
   });
 
   it('does not fetch checks for a review-cause rework', async () => {
@@ -240,7 +270,7 @@ describe('buildReworkFile', () => {
     const failing: CheckJob = { id: 4242, name: 'npm test', htmlUrl: 'https://github.com/JamieGeddes/factorial/job/4242', conclusion: 'failure' };
     const passing: CheckJob = { id: 4243, name: 'lint', htmlUrl: 'u', conclusion: 'success' };
     const logs = new Map([[4242, `old\n${Array.from({ length: 300 }, (_, i) => `l${i}`).join('\n')}\ntoken ghs_abcdefghijklmnopqrstuvwx`]]);
-    const file = await buildReworkFile(clientWith([failing, passing], logs), repo, HEAD_SHA, {
+    const { text: file } = await buildReworkFile(clientWith([failing, passing], logs), repo, HEAD_SHA, {
       ...rework,
       cause: 'checks-failed',
       details: [],
@@ -256,7 +286,7 @@ describe('buildReworkFile', () => {
   });
 
   it('says so when no job is failing on the branch head any more', async () => {
-    const file = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'checks-failed', details: [] });
+    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'checks-failed', details: [] });
     assert.match(file, /no longer reported as failing/);
   });
 });

@@ -1,6 +1,7 @@
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 
 import type { Attempt } from './resume.ts';
+import type { ReworkPoint } from './rework-admission.ts';
 import { assertGitBranch } from './shell.ts';
 
 /** What the state machine carries from Prepare to every later step. */
@@ -22,6 +23,12 @@ export interface WorkContext {
   artefactPrefix: string;
   /** The earlier attempt this item resumes, if any; the builder's session is seeded with it too. */
   resumedFrom?: Attempt;
+  /**
+   * For rework: who raised each point in rework.md and where, numbered as
+   * there, including a review's inline comments that the work item does not
+   * carry. The reply on the pull request and the review re-request use it.
+   */
+  reworkPoints?: ReworkPoint[];
 }
 
 export function branchFor(workItem: WorkItem): string {

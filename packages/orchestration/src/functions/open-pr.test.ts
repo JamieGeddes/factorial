@@ -26,6 +26,10 @@ describe('reviewersToRequest', () => {
     assert.deepEqual(reviewersToRequest(rework), ['alice', 'bob']);
   });
 
+  it("uses Prepare's numbered points when the context has them, so a review's inline commenters are asked too", () => {
+    assert.deepEqual(reviewersToRequest(rework, [{ author: 'carol', path: 'a.ts' }, { author: 'alice' }]), ['carol', 'alice']);
+  });
+
   it('asks nobody after a checks-failed rework', () => {
     assert.deepEqual(reviewersToRequest({ ...rework, cause: 'checks-failed' }), []);
   });

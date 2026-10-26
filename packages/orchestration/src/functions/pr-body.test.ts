@@ -432,6 +432,12 @@ describe('reworkComment', () => {
     assert.doesNotMatch(text, /Closes #7|## Plan\b|## Impact/);
   });
 
+  it("numbers the points from the context when Prepare recorded them, review comments included", () => {
+    const withPoints: WorkContext = { ...reworkCtx, reworkPoints: [{ author: 'alice', path: 'src/a.ts', line: 3 }, { author: 'bob' }, { author: 'carol' }, { author: 'dave', path: 'src/d.ts', line: 9 }] };
+    const text = reworkComment(withPoints, rework, summary, PASS, HEAD, {});
+    assert.match(text, /4\. @dave on `src\/d\.ts:9`: _Not reported by the builder\._/);
+  });
+
   it('heads the points as failing checks for a checks-failed rework, and copes with none recorded', () => {
     const failed = { ...rework, cause: 'checks-failed' as const, details: [] };
     const text = reworkComment(reworkCtx, failed, summaryMd(), PASS, HEAD, {});
@@ -473,5 +479,11 @@ describe('noMentions', () => {
     const body = render(summaryMd().replace('Adds the thing so operators can see it.', 'Thanks @everyone and @alice.'));
     assert.doesNotMatch(body, /@everyone|@alice/);
     assert.match(body, /@\u200beveryone/);
+  });
+});
+
+describe('runDetailsSection', () => {
+  it('records the work branch in the fixed form the trigger adapter reads back', () => {
+    assert.match(render(summaryMd()), new RegExp(`^\\| Branch \\| \`${ctx.branch}\` \\|$`, 'm'));
   });
 });

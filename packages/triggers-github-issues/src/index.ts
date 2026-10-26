@@ -1,9 +1,11 @@
 /**
- * GitHub issue trigger adapter.
+ * GitHub trigger adapter.
  *
- * Receives GitHub webhook deliveries on a Lambda function URL, verifies the
- * HMAC signature, and when the trigger label is added to an issue, places one
- * WorkItem on the Factorial event bus. Nothing downstream knows about GitHub.
+ * Receives the GitHub App's webhook deliveries on a Lambda function URL (an
+ * App has one webhook URL), verifies the HMAC signature, and places at most
+ * one WorkItem on the Factorial event bus: when the trigger label is added
+ * to an issue, or when an event on one of Factorial's pull requests asks for
+ * rework (`pull-request-event.ts`). Nothing downstream knows about GitHub.
  */
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -12,6 +14,7 @@ import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-sec
 import { WORKITEM_DETAIL_TYPE, WORKITEM_EVENT_SOURCE } from '@factorial/workitem';
 
 import { BadPayloadError, decideIssueEvent } from './issue-event.ts';
+import { PULL_REQUEST_EVENTS, decidePullRequestEvent } from './pull-request-event.ts';
 import { verifyGitHubSignature } from './signature.ts';
 
 const eventBridge = new EventBridgeClient({});
@@ -80,7 +83,8 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   if (githubEvent === 'ping') {
     return respond(200, { message: 'pong' });
   }
-  if (githubEvent !== 'issues') {
+  const forPullRequest = (PULL_REQUEST_EVENTS as readonly string[]).includes(githubEvent ?? '');
+  if (githubEvent !== 'issues' && !forPullRequest) {
     return respond(202, { message: `ignored event "${githubEvent ?? ''}"` });
   }
 
@@ -93,11 +97,13 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
 
   let decision;
   try {
-    decision = decideIssueEvent(payload, {
-      triggerLabel: process.env.TRIGGER_LABEL ?? 'factorial',
-      allowedUserIds: allowedUserIds(),
-      deliveryId,
-    });
+    decision = forPullRequest
+      ? decidePullRequestEvent(githubEvent!, payload, { appSlug: requireEnv('APP_SLUG'), allowedUserIds: allowedUserIds(), deliveryId })
+      : decideIssueEvent(payload, {
+          triggerLabel: process.env.TRIGGER_LABEL ?? 'factorial',
+          allowedUserIds: allowedUserIds(),
+          deliveryId,
+        });
   } catch (error) {
     if (error instanceof BadPayloadError) {
       console.warn(JSON.stringify({ message: 'rejected malformed payload', deliveryId, error: error.message }));
@@ -107,6 +113,9 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   }
 
   if (decision.kind === 'ignore') {
+    // Pull request events arrive for every comment and workflow run; the
+    // reason is logged so a request that did nothing can be traced.
+    if (forPullRequest) console.log(JSON.stringify({ message: 'event ignored', event: githubEvent, deliveryId, reason: decision.reason }));
     return respond(202, { message: decision.reason });
   }
 
@@ -134,6 +143,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     JSON.stringify({
       message: 'WorkItem created',
       workItemId: workItem.id,
+      decision: decision.kind,
       source: workItem.source,
       repository: workItem.repository,
     }),

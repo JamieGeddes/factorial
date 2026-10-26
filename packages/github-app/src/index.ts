@@ -4,7 +4,7 @@
  */
 import { createSign } from 'node:crypto';
 
-export { GitHubApiError, GitHubClient, type CheckJob, type PullRequest, type Repo } from './rest.ts';
+export { GitHubApiError, GitHubClient, type CheckJob, type PullRequest, type PullRequestState, type Repo, type ReviewComment } from './rest.ts';
 
 export interface AppCredentials {
   appId: string;

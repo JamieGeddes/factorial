@@ -29,11 +29,11 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    | Metadata | Read-only | Mandatory. |
    | Issues | Read and write | Receive issue events; comment progress back on the issue. |
    | Contents | Read and write | Clone and push branches. |
-   | Pull requests | Read and write | Open the PR. |
+   | Pull requests | Read and write | Open the PR; check a PR and read a review's comments before rework, reply on it and re-request review. |
    | Actions | Read and write | Dispatch the test workflow and read its result. Rework of failed checks also reads the failing jobs' logs (the orchestrator's token is narrowed to `actions: read` for that). |
    | Workflows | Read and write | Push branches that change files under `.github/workflows/`. GitHub rejects such pushes otherwise. The orchestrator requests this permission on a token only when the change edits a workflow file. |
 
-6. Under **Subscribe to events**, tick **Issues**.
+6. Under **Subscribe to events**, tick **Issues**, **Issue comment**, **Pull request review**, **Pull request review comment** and **Workflow run**. The last four let Factorial rework its own pull requests (see **Pull request events** below).
 7. Under **Where can this GitHub App be installed?**, choose **Only on this account**.
 8. Click **Create GitHub App**.
 
@@ -80,6 +80,17 @@ where `ruleset.json` targets `~DEFAULT_BRANCH` with the rules `deletion`, `non_f
 3. Open a test issue and add the `factorial` label. Only users listed in the triggers stack's `AllowedGitHubUserIds` parameter (default: the repository owner) can trigger work: both the issue author and whoever applies the label must be listed, otherwise the delivery returns `202` with an "untrusted user" reason and no WorkItem is created. The delivery for the `issues` event should show `202` with a `workItemId` in the response body, and the adapter's log group `/aws/lambda/factorial-github-issues-adapter` should contain a `WorkItem created` line.
 
 Until the orchestration stack exists, nothing consumes the event. That is expected.
+
+## Pull request events
+
+Factorial reworks a pull request it opened when a trusted user (the triggers stack's `AllowedGitHubUserIds`) submits a review with **Request changes**, or writes a comment whose first word is `@<slug>` (for example `@factorial-jamiegeddes please add a test`), either in the conversation or inline on the diff; and, at most twice in a row without a person asking, when a workflow run fails on the pull request's head. `<slug>` is the App's slug, the triggers stack's `GitHubAppSlug` parameter. GitHub does not offer the App in mention autocompletion, so type it in full. Comments without the mention, from anyone else, or from bots do nothing.
+
+An App created before these events were added needs them subscribed. No permission changes, so the installation needs no re-approval.
+
+1. Click your profile photo, then **Settings**, then **Developer settings** at the bottom of the left nav, then **GitHub Apps**, then **Edit** next to the Factorial App.
+2. In the left nav click **Permissions & events**. Scroll to **Subscribe to events** and tick **Issue comment**, **Pull request review**, **Pull request review comment** and **Workflow run**. Leave **Issues** ticked.
+3. Scroll down and click **Save changes**.
+4. Check it: in the left nav click **Advanced**. Comment on a Factorial pull request without the mention; **Recent Deliveries** shows an `issue_comment` delivery answered `202` with "comment does not address Factorial".
 
 ## Adding a permission later
 
