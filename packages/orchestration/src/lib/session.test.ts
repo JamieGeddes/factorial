@@ -6,14 +6,15 @@ import { asAgent, cleanRoomTarget, commandFor, sessionTarget } from './session.t
 
 const HARNESS = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:harness/factorial_reviewer-abc';
 const RUNTIME = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_builder-abc';
-const NAMES = ['REVIEWER_HARNESS_ARN', 'HARNESS_QUALIFIER', 'BUILDER_RUNTIME_ARN'];
+const REVIEWER = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_reviewer-abc';
+const NAMES = ['REVIEWER_RUNTIME_ARN', 'HARNESS_QUALIFIER', 'BUILDER_RUNTIME_ARN'];
 
 describe('sessionTarget', () => {
   let saved: Record<string, string | undefined>;
   beforeEach(() => {
     saved = Object.fromEntries(NAMES.map((name) => [name, process.env[name]]));
     Object.assign(process.env, {
-      REVIEWER_HARNESS_ARN: 'arn:reviewer',
+      REVIEWER_RUNTIME_ARN: REVIEWER,
       HARNESS_QUALIFIER: 'live',
       BUILDER_RUNTIME_ARN: RUNTIME,
     });
@@ -31,13 +32,15 @@ describe('sessionTarget', () => {
     assert.equal(cleanRoomTarget('w').sessionId, 'w-push');
   });
 
-  it('keeps the reviewer on its harness', () => {
-    assert.deepEqual(sessionTarget('s', 'reviewer'), { arn: 'arn:reviewer', qualifier: 'live', sessionId: 's', kind: 'harness' });
+  it('targets the reviewer Runtime', () => {
+    assert.deepEqual(sessionTarget('s', 'reviewer'), { arn: REVIEWER, qualifier: 'live', sessionId: 's', kind: 'runtime' });
   });
 
   it('refuses a missing Runtime ARN', () => {
     delete process.env.BUILDER_RUNTIME_ARN;
+    delete process.env.REVIEWER_RUNTIME_ARN;
     assert.throws(() => sessionTarget('s'), /BUILDER_RUNTIME_ARN/);
+    assert.throws(() => sessionTarget('s', 'reviewer'), /REVIEWER_RUNTIME_ARN/);
   });
 });
 

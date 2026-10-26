@@ -46,15 +46,14 @@ flowchart TB
     %% ----------------------------------------------------------------- Agent
     subgraph agent["Stack 20: factorial-agent"]
         direction TB
-        modelkey["AgentCore Identity:<br/>factorial-model-api-key<br/>reads human-created secret"]
         harness["AgentCore Runtime:<br/>factorial_builder<br/>host process + Claude Agent SDK,<br/>plan and explore subagents,<br/>Sonnet 5.5 on Bedrock,<br/>immutable versions"]
         liveendpoint["Runtime endpoint 'live'<br/>(promoted by deploy workflow)"]
         agentrole["factorial-agent-builder role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents;<br/>named Bedrock profiles only)"]
         bedrock["Amazon Bedrock<br/>EU inference profiles"]
-        otherharnesses["AgentCore Harness:<br/>factorial_reviewer<br/>GLM 5.3 Flash via Z.ai API"]
+        otherharnesses["AgentCore Runtime:<br/>factorial_reviewer<br/>same image and host, review mode,<br/>Sonnet 5.5 on Bedrock"]
         harness --- agentrole
         harness -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
-        otherharnesses -->|"GetResourceApiKey<br/>(control)"| modelkey
+        otherharnesses -->|"InvokeModel with<br/>its execution role<br/>(data)"| bedrock
         liveendpoint --- harness
     end
 
@@ -82,7 +81,7 @@ flowchart TB
 
     prepare -->|"session command API:<br/>clone with token as header<br/>(data)"| harness
     invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| liveendpoint
-    invoker -->|"InvokeHarness: review<br/>(control)"| otherharnesses
+    invoker -->|"InvokeAgentRuntime: review<br/>qualifier 'live'<br/>(control)"| otherharnesses
     collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| harness
     collect -->|"push branch with<br/>App installation token<br/>(data)"| github
     dispatch -->|"workflow_dispatch<br/>(control)"| testwf
@@ -98,7 +97,7 @@ flowchart TB
     openpr -.-> ledger
     report -.-> ledger
 
-    class modelkey,webhooksecret human
+    class webhooksecret human
 ```
 
 ## The loop, step by step
@@ -119,7 +118,7 @@ Each part is independently versioned and referenced only through its `live` alia
 
 | Part | Versioned resource | `live` pointer |
 |---|---|---|
-| Agents | Runtime versions (builder), harness versions (reviewer) | Endpoint named `live` |
+| Agents | Runtime versions (builder, reviewer) | Endpoint named `live` |
 | State machine | Step Functions versions | Alias named `live` |
 | Adapters and Lambdas | Lambda versions | Alias named `live` |
 

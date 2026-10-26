@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import { readConfig } from './config.ts';
-import { BUILDER_TOOLS, queryOptions } from './options.ts';
+import { BUILDER_TOOLS, REVIEWER_TOOLS, queryOptions } from './options.ts';
+import { reviewerPrompt } from './prompts/reviewer.ts';
 import { TOOL_NAME, webSearchServer } from './web-search.ts';
 
 const config = readConfig({
@@ -50,6 +51,26 @@ describe('queryOptions', () => {
     assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['factorial']);
     assert.deepEqual(options.allowedTools, [TOOL_NAME]);
     assert.ok(options.agents?.plan?.tools?.includes(TOOL_NAME));
+  });
+});
+
+describe('queryOptions for the reviewer', () => {
+  const reviewer = { ...config, role: 'reviewer' as const, exploreModel: undefined };
+
+  it('gives it its own prompt and read-only tools, and no subagents', () => {
+    const options = queryOptions(reviewer, { ...parts, webSearch: undefined });
+    assert.equal(options.systemPrompt, reviewerPrompt);
+    assert.deepEqual(options.tools, REVIEWER_TOOLS);
+    assert.ok(!REVIEWER_TOOLS.includes('Agent') && !REVIEWER_TOOLS.includes('WebFetch'));
+    assert.deepEqual(options.agents, {});
+    assert.equal(options.permissionMode, 'bypassPermissions');
+    assert.deepEqual(options.settingSources, []);
+  });
+
+  it('never offers it web search', () => {
+    const options = queryOptions(reviewer, { ...parts, webSearch: webSearchServer(async () => ({})) });
+    assert.deepEqual(options.mcpServers, {});
+    assert.deepEqual(options.allowedTools, []);
   });
 });
 

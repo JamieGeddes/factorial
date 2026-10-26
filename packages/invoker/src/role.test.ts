@@ -147,6 +147,14 @@ test('reads the role and its runtime from the task input', () => {
   });
 });
 
+test('reads the reviewer and its runtime', () => {
+  const runtimeArn = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_reviewer-Q7mXk2LpZa';
+  const target = agentTarget({ ...runtimeEnv, ROLE: 'reviewer', RUNTIME_ARN: runtimeArn });
+  assert.equal(target.kind, 'runtime');
+  assert.equal(target.role, 'reviewer');
+  assert.equal(target.kind === 'runtime' ? target.runtimeId : undefined, 'factorial_reviewer-Q7mXk2LpZa');
+});
+
 test("refuses a runtime that is not the role's", () => {
   assert.throws(() => agentTarget({ ...runtimeEnv, ROLE: 'reviewer' }), /does not name the reviewer runtime/);
   assert.throws(

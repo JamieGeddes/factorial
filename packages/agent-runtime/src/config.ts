@@ -4,7 +4,7 @@
  * taken from a request, so the model, limits and tools are fixed by the version.
  */
 
-export type Role = 'builder';
+export type Role = 'builder' | 'reviewer';
 
 export interface Config {
   role: Role;
@@ -13,8 +13,8 @@ export interface Config {
   // value on the Runtime version.
   /** The role's main loop, e.g. eu.anthropic.claude-sonnet-5-5. */
   model: string;
-  /** The explore subagent, e.g. eu.anthropic.claude-haiku-5-5. */
-  exploreModel: string;
+  /** The builder's explore subagent, e.g. eu.anthropic.claude-haiku-5-5; the reviewer has none. */
+  exploreModel: string | undefined;
   /** The SDK's own background calls (ANTHROPIC_DEFAULT_HAIKU_MODEL). */
   backgroundModel: string;
   region: string;
@@ -34,7 +34,7 @@ export interface Config {
   claudeExecutable: string;
 }
 
-const ROLES: readonly Role[] = ['builder'];
+const ROLES: readonly Role[] = ['builder', 'reviewer'];
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
@@ -56,7 +56,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   return {
     role: role as Role,
     model: required(env, 'FACTORIAL_MODEL'),
-    exploreModel: required(env, 'FACTORIAL_EXPLORE_MODEL'),
+    exploreModel: role === 'builder' ? required(env, 'FACTORIAL_EXPLORE_MODEL') : undefined,
     backgroundModel: required(env, 'FACTORIAL_BACKGROUND_MODEL'),
     region: required(env, 'AWS_REGION'),
     maxTurns,

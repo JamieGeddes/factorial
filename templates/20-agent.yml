@@ -212,8 +212,10 @@ Resources:
   # Role blocks. One block per agent role: its execution role, harness or
   # runtime, live endpoint and outputs. The builder is a runtime running
   # Factorial's host around the Claude Agent SDK, which also plans (its plan
-  # subagent, since phase 3.1); the reviewer is a harness, with its model and
-  # prompt constants on the harness. To add a harness role, copy a harness block and change, for
+  # subagent, since phase 3.1); the reviewer runs on its own runtime from the
+  # same image since phase 3.2, and its harness stays deployed, unused, until
+  # the next pull request removes it (the orchestration stack imports its
+  # outputs). To add a harness role, copy a harness block and change, for
   # role <role>:
   # - logical IDs to <Role>AgentRole, <Role>Harness and <Role>LiveEndpoint;
   # - RoleName to factorial-agent-<role>, and HarnessName to
@@ -354,14 +356,19 @@ Resources:
   # into the artefact store and the pull request body and never blocks the
   # pull request. It makes no changes, and only review.json is read out of its
   # session. No web search: everything it judges is in the session. The
-  # Review stage, after Test, runs it; until that stage exists nothing
-  # invokes it.
+  # Review stage, after Test, runs it.
+  # Factorial's host in review mode (FACTORIAL_ROLE: reviewer), on Claude
+  # through Bedrock with this role, as the builder is. The role keeps its
+  # logical id and name (a new logical id with the same RoleName would fail
+  # to create) and no longer reaches the model key: the harness below is
+  # unused and goes in the next pull request, and the runtime's shell shares
+  # this role, so the key must not be readable from it.
   # ---------------------------------------------------------------------------
   ReviewerAgentRole:
     Type: AWS::IAM::Role
     Properties:
       RoleName: factorial-agent-reviewer
-      Description: Execution role of the Factorial reviewer harness.
+      Description: Execution role of the Factorial reviewer.
       PermissionsBoundary: !ImportValue Factorial-AgentPermissionsBoundaryArn
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
@@ -380,22 +387,29 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Sid: WorkloadIdentity
+              # The runtime's models, pinned here as well as on the runtime
+              # version (FACTORIAL_*MODEL below), as for the builder.
+              - Sid: InferenceProfiles
                 Effect: Allow
                 Action:
-                  - bedrock-agentcore:GetWorkloadAccessToken
-                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_reviewer-*
-              - Sid: ModelApiKey
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
+              - Sid: FoundationModelsThroughProfiles
                 Effect: Allow
-                Action: bedrock-agentcore:GetResourceApiKey
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
                 Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/apikeycredentialprovider/factorial-model-api-key
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_reviewer-*
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-sonnet-5-5
+                  - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.claude-haiku-5-5
+                Condition:
+                  StringEquals:
+                    bedrock:InferenceProfileArn:
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
       Tags:
         - Key: Project
           Value: Factorial
@@ -546,6 +560,53 @@ Resources:
         - Key: Project
           Value: Factorial
 
+  ReviewerRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: factorial_reviewer
+      Description: Factorial reviewer on the Claude Agent SDK.
+      RoleArn: !GetAtt ReviewerAgentRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Join
+            - ':'
+            - - !ImportValue Factorial-AgentRuntimeRepositoryUri
+              - !Ref AgentRuntimeImageTag
+      ProtocolConfiguration: HTTP
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      LifecycleConfiguration:
+        IdleRuntimeSessionTimeout: 900
+        MaxLifetime: 3600
+      # As for the builder: part of the immutable runtime version, fixed here
+      # rather than parameters. No FACTORIAL_EXPLORE_MODEL (no subagents) and
+      # no web search gateway.
+      EnvironmentVariables:
+        FACTORIAL_ROLE: reviewer
+        FACTORIAL_MODEL: eu.anthropic.claude-sonnet-5-5
+        FACTORIAL_BACKGROUND_MODEL: eu.anthropic.claude-haiku-5-5
+        # A review reads a diff and its surroundings and writes one file; the
+        # harness allowed 40 steps. A run that reaches a limit keeps whatever
+        # review.json it has written, which CollectReview judges.
+        FACTORIAL_MAX_TURNS: '60'
+        FACTORIAL_MAX_BUDGET_USD: '2'
+        # Below the orchestration stack's ReviewTimeoutSeconds (1200), so the
+        # host ends the run itself and CollectReview reads what it left.
+        FACTORIAL_MAX_DURATION_SECONDS: '900'
+      Tags:
+        Project: Factorial
+
+  # Created once at whatever version is current; promoted by the deploy
+  # workflow, never by this template.
+  ReviewerRuntimeLiveEndpoint:
+    Type: AWS::BedrockAgentCore::RuntimeEndpoint
+    Properties:
+      AgentRuntimeId: !GetAtt ReviewerRuntime.AgentRuntimeId
+      Name: live
+      Description: The reviewer runtime version handling new WorkItems.
+      Tags:
+        Project: Factorial
+
 Outputs:
   ReviewerHarnessArn:
     Value: !GetAtt ReviewerHarness.Arn
@@ -571,3 +632,15 @@ Outputs:
     Value: !GetAtt BuilderRuntimeLiveEndpoint.AgentRuntimeEndpointArn
     Export:
       Name: Factorial-BuilderRuntimeLiveEndpointArn
+  ReviewerRuntimeArn:
+    Value: !GetAtt ReviewerRuntime.AgentRuntimeArn
+    Export:
+      Name: Factorial-ReviewerRuntimeArn
+  ReviewerRuntimeId:
+    Value: !GetAtt ReviewerRuntime.AgentRuntimeId
+    Export:
+      Name: Factorial-ReviewerRuntimeId
+  ReviewerRuntimeLiveEndpointArn:
+    Value: !GetAtt ReviewerRuntimeLiveEndpoint.AgentRuntimeEndpointArn
+    Export:
+      Name: Factorial-ReviewerRuntimeLiveEndpointArn

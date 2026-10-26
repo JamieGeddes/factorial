@@ -8,9 +8,10 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@factorial/log';
 
 import { readConfig } from './config.ts';
-import { preToolUseHooks } from './hooks.ts';
+import { preToolUseHooks, reviewerPreToolUseHooks } from './hooks.ts';
 import { queryOptions } from './options.ts';
 import { planBrief, planHooks, readAgentFile, stopHooks, type PlanGate } from './report.ts';
+import { reviewStopHooks } from './review.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
@@ -29,12 +30,13 @@ let log = createLogger('agent-runtime');
 const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
 
-function startQuery(request: RunRequest): AsyncIterable<unknown> {
-  log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
+const onDenied = (toolName: string, reason: string) => log.info('tool use denied', { toolName, reason });
+
+function startBuilder(request: RunRequest): AsyncIterable<unknown> {
   const planGate: PlanGate = { closed: false };
   const options = queryOptions(config, {
     hostEnv: process.env,
-    preToolUse: preToolUseHooks(config.workspace, (toolName, reason) => log.info('tool use denied', { toolName, reason }), () => planGate.closed),
+    preToolUse: preToolUseHooks(config.workspace, onDenied, () => planGate.closed),
     postToolUse: planHooks(config.workspace, planGate, (errors, closed) => log.info(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
     stop: stopHooks(config.workspace, planGate, (reason) => log.info('report incomplete; builder sent back', { reason })),
     webSearch: config.webSearchGatewayUrl
@@ -45,6 +47,24 @@ function startQuery(request: RunRequest): AsyncIterable<unknown> {
   });
   const brief = planBrief(readAgentFile(path.join(config.workspace, 'plan.json')));
   return query({ prompt: brief ? `${request.prompt}\n\n${brief}` : request.prompt, options });
+}
+
+function startReviewer(request: RunRequest): AsyncIterable<unknown> {
+  const options = queryOptions(config, {
+    hostEnv: process.env,
+    preToolUse: reviewerPreToolUseHooks(config.workspace, onDenied),
+    postToolUse: [],
+    stop: reviewStopHooks(config.workspace, (reason) => log.info('review missing or invalid; reviewer sent back', { reason })),
+    webSearch: undefined,
+    abortController,
+    stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
+  });
+  return query({ prompt: request.prompt, options });
+}
+
+function startQuery(request: RunRequest): AsyncIterable<unknown> {
+  log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
+  return config.role === 'reviewer' ? startReviewer(request) : startBuilder(request);
 }
 
 const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };

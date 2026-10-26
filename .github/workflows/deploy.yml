@@ -209,15 +209,15 @@ jobs:
       # The host bundle (agent-runtime/dist) comes from "Build Lambda bundles"
       # above. The tag covers everything the image is built from: the image
       # directory with its own lockfile, the host and the workspace packages
-      # it bundles (the plan package with its contract), quiet's source, and
-      # the root lockfile.
+      # it bundles (the plan and review packages with their contracts),
+      # quiet's source, and the root lockfile.
       - name: Build and push the agent runtime image when its inputs change
         id: runtime_image
         env:
           REPO_URI: ${{ steps.foundation.outputs.runtime_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/log HEAD:packages/artefacts HEAD:packages/plan HEAD:contracts/plan HEAD:agent-environment/tools HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/log HEAD:packages/artefacts HEAD:packages/plan HEAD:contracts/plan HEAD:packages/review HEAD:contracts/review HEAD:agent-environment/tools HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/agent-runtime --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Agent runtime image $tag already exists; skipping the build."

@@ -23,8 +23,9 @@ export function explore(config: Config): AgentDefinition {
       'Reply with the answer, the file paths and line numbers it rests on, and nothing else. Do not propose changes.',
     ].join('\n'),
     tools: READ_ONLY_TOOLS,
-    // The full inference profile id from the Runtime version, not an alias.
-    model: config.exploreModel,
+    // The full inference profile id from the Runtime version, not an alias;
+    // readConfig requires it for the builder.
+    ...(config.exploreModel ? { model: config.exploreModel } : {}),
     maxTurns: 30,
   };
 }
