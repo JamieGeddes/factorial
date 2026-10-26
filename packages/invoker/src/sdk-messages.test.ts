@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { HOST_ERROR, MAX_DURATION, SdkTally, callUsageOf, runUsageOf, runtimeStop } from './sdk-messages.ts';
+import { HOST_ERROR, MAX_DURATION, SdkTally, callUsageOf, runUsageOf, runtimeStop, subagentsOf } from './sdk-messages.ts';
 
 const assistant = (id: string, content: unknown[], usage: object, parent: string | null = null) => ({
   type: 'assistant',
@@ -151,5 +151,37 @@ describe('runUsageOf', () => {
     tally.add(assistant('msg_1', [], { input_tokens: 4, output_tokens: 1, cache_read_input_tokens: 9000 }));
     assert.equal(runUsageOf(tally).modelCalls, 1);
     assert.equal(runUsageOf(tally).inputTokens, 9004);
+  });
+});
+
+describe('subagent results', () => {
+  const toolResult = (toolUseResult: unknown, parent: string | null = null) => ({ type: 'user', parent_tool_use_id: parent, tool_use_result: toolUseResult });
+  const usage = { input_tokens: 5, output_tokens: 50 };
+
+  it('records a completed plan result and an explore result, with a total per type', () => {
+    const tally = new SdkTally();
+    tally.add(toolResult({ status: 'completed', agentId: 'a1', agentType: 'plan', totalTokens: 1000, totalDurationMs: 2000, totalToolUseCount: 4, usage }));
+    tally.add(toolResult({ agentId: 'a2', agentType: 'explore', totalTokens: 300, totalDurationMs: 500, totalToolUseCount: 2, usage }));
+    tally.add(toolResult({ agentId: 'a3', agentType: 'explore', totalTokens: 200, totalDurationMs: 100, totalToolUseCount: 1, usage }));
+    assert.deepEqual(tally.subagentRuns[0], { agentType: 'plan', totalTokens: 1000, totalDurationMs: 2000, totalToolUseCount: 4, usage });
+    assert.deepEqual(tally.subagentRuns.map((run) => run.agentType), ['plan', 'explore', 'explore']);
+    assert.deepEqual(subagentsOf(tally.subagentRuns).totals, [
+      { agentType: 'plan', runs: 1, totalTokens: 1000, totalDurationMs: 2000, totalToolUseCount: 4 },
+      { agentType: 'explore', runs: 2, totalTokens: 500, totalDurationMs: 600, totalToolUseCount: 3 },
+    ]);
+  });
+
+  it('ignores an async_launched result', () => {
+    const tally = new SdkTally();
+    tally.add(toolResult({ status: 'async_launched', agentId: 'a1', agentType: 'plan', description: 'x', prompt: 'y' }));
+    assert.equal(tally.subagentRuns.length, 0);
+  });
+
+  it('ignores malformed results and subagents own messages without failing', () => {
+    const tally = new SdkTally();
+    for (const bad of [undefined, null, 'text', 7, [], {}, { agentType: 5 }, { agentType: '' }]) tally.add(toolResult(bad));
+    tally.add(toolResult({ agentType: 'plan', totalTokens: 'many', usage: 'none' }));
+    tally.add(toolResult({ agentType: 'plan', totalTokens: 1 }, 'toolu_1'));
+    assert.deepEqual(tally.subagentRuns, [{ agentType: 'plan', totalTokens: 0, totalDurationMs: 0, totalToolUseCount: 0 }]);
   });
 });

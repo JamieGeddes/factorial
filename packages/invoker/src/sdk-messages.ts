@@ -69,6 +69,53 @@ export function callUsageOf(usage: AnthropicUsage | undefined): CallUsage | unde
   };
 }
 
+/** One finished subagent run, as the SDK reports it on the Agent tool's result. */
+export interface SubagentRun {
+  agentType: string;
+  totalTokens: number;
+  totalDurationMs: number;
+  totalToolUseCount: number;
+  usage?: Record<string, unknown>;
+}
+
+export interface SubagentTotal {
+  agentType: string;
+  runs: number;
+  totalTokens: number;
+  totalDurationMs: number;
+  totalToolUseCount: number;
+}
+
+/** A completed Agent result, or undefined for anything else (async launches, malformed values). */
+function subagentRunOf(result: unknown): SubagentRun | undefined {
+  if (typeof result !== 'object' || result === null) return undefined;
+  const r = result as Record<string, unknown>;
+  if (r.status === 'async_launched') return undefined;
+  if (typeof r.agentType !== 'string' || r.agentType === '') return undefined;
+  const usage = typeof r.usage === 'object' && r.usage !== null && !Array.isArray(r.usage) ? (r.usage as Record<string, unknown>) : undefined;
+  return {
+    agentType: r.agentType,
+    totalTokens: count(r.totalTokens),
+    totalDurationMs: count(r.totalDurationMs),
+    totalToolUseCount: count(r.totalToolUseCount),
+    ...(usage ? { usage } : {}),
+  };
+}
+
+/** The runs in order, and a total per agent type. */
+export function subagentsOf(runs: SubagentRun[]): { runs: SubagentRun[]; totals: SubagentTotal[] } {
+  const byType = new Map<string, SubagentTotal>();
+  for (const run of runs) {
+    const total = byType.get(run.agentType) ?? { agentType: run.agentType, runs: 0, totalTokens: 0, totalDurationMs: 0, totalToolUseCount: 0 };
+    total.runs += 1;
+    total.totalTokens += run.totalTokens;
+    total.totalDurationMs += run.totalDurationMs;
+    total.totalToolUseCount += run.totalToolUseCount;
+    byType.set(run.agentType, total);
+  }
+  return { runs, totals: [...byType.values()] };
+}
+
 export interface LogLine {
   message: string;
   fields: Record<string, unknown>;
@@ -80,6 +127,7 @@ export class SdkTally {
   result: SdkResult | undefined;
   hostError: string | undefined;
   maxDuration = false;
+  subagentRuns: SubagentRun[] = [];
   /** The SDK repeats an API response's usage on every message it splits it into. */
   private readonly countedMessages = new Set<string>();
 
@@ -106,6 +154,12 @@ export class SdkTally {
             lines.push({ message: 'assistant text', fields: { agent, model: inner.model, text: block.text.slice(-4000) } });
           }
         }
+        break;
+      }
+      case 'user': {
+        if (fields.parent_tool_use_id) break;
+        const run = subagentRunOf(fields.tool_use_result);
+        if (run) this.subagentRuns.push(run);
         break;
       }
       case 'result': {
