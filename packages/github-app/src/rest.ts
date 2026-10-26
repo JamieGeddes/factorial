@@ -94,6 +94,14 @@ export class GitHubClient {
     await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}/comments`, { body });
   }
 
+  /**
+   * Ask these users to review a pull request. A user who has already reviewed
+   * it is asked again, which is how GitHub re-requests a review.
+   */
+  async requestReviewers(repo: Repo, pullNumber: number, reviewers: readonly string[]): Promise<void> {
+    await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/pulls/${pullNumber}/requested_reviewers`, { reviewers });
+  }
+
   async getDefaultBranch(repo: Repo): Promise<string> {
     const info = await this.#request<{ default_branch: string }>('GET', `/repos/${repo.owner}/${repo.name}`);
     return info.default_branch;

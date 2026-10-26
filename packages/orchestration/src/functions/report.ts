@@ -5,7 +5,7 @@
 import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
-import { issueNumber, type WorkContext } from '../lib/context.ts';
+import { issueNumber, reworkContext, type WorkContext } from '../lib/context.ts';
 import { builderIncomplete } from '../lib/incomplete.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { logged, runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
@@ -27,9 +27,24 @@ interface ReportInput {
   buildRound?: number | null;
 }
 
+/**
+ * Whether the item reworks an open pull request. Its branch already backs
+ * that pull request, so anything pushed is on the pull request at once, and
+ * the requester is told there rather than on an issue.
+ */
+function isRework(input: Pick<ReportInput, 'ctx' | 'workItem'>): boolean {
+  const workItem = input.ctx?.workItem ?? (input.workItem as WorkItem | undefined);
+  return typeof workItem === 'object' && workItem !== null && reworkContext(workItem) !== undefined;
+}
+
 /** A sentence pointing at the pushed branch, when there is one. */
-export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved'>): string {
+export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved' | 'workItem'>): string {
   if (!input.saved?.pushed || !input.ctx) return '';
+  if (isRework(input)) {
+    const count = input.saved.commitCount;
+    const commits = count === 1 ? ' (1 commit)' : count ? ` (${count} commits)` : '';
+    return ` Work in progress${commits} was saved to this pull request's branch, so the pull request now includes it untested. Do not merge until it is finished and its checks pass.`;
+  }
   const { owner, name } = input.ctx.workItem.repository;
   const branch = input.ctx.branch;
   const url = `https://github.com/${owner}/${name}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
@@ -41,16 +56,22 @@ export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved'>): string
 }
 
 export function reportMessage(input: ReportInput): string {
+  const rework = isRework(input);
+  const notOpened = rework ? 'the pull request was not updated' : 'no pull request was opened';
   switch (input.status) {
     case 'no-changes':
       return [
-        'Factorial ran but made no changes, so no pull request was opened.',
+        `Factorial ran but made no changes, so ${notOpened}.`,
         input.summary?.trim() ? `\n**The agent said:**\n\n${input.summary.trim()}` : '',
       ].join('\n');
     case 'tests-failed': {
       const cause = safeJson(input.error?.Cause);
       const runUrl = typeof cause?.runUrl === 'string' ? cause.runUrl : undefined;
-      return `Factorial's change did not pass the repository's checks${runUrl ? ` ([run](${runUrl}))` : ''}, so no pull request was opened. The branch \`${input.ctx?.branch ?? ''}\` is left for inspection.`;
+      const run = runUrl ? ` ([run](${runUrl}))` : '';
+      if (rework) {
+        return `Factorial's rework did not pass the repository's checks${run}. Its commits are on this pull request's branch, so the pull request now includes them. Do not merge until they are fixed or reverted.`;
+      }
+      return `Factorial's change did not pass the repository's checks${run}, so no pull request was opened. The branch \`${input.ctx?.branch ?? ''}\` is left for inspection.`;
     }
     case 'invalid-plan': {
       // The problems are the validator's messages about the builder's plan
@@ -64,7 +85,7 @@ export function reportMessage(input: ReportInput): string {
     case 'failed':
       if (builderIncomplete(input.error)) {
         const rounds = typeof input.buildRound === 'number' && input.buildRound > 1 ? ` in ${input.buildRound} sessions` : '';
-        return `Factorial's builder reached its iteration or time limit${rounds} before finishing, so the change was not tested and no pull request was opened. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.${savedWorkNote(input)}`;
+        return `Factorial's builder reached its iteration or time limit${rounds} before finishing, so the change was not tested and ${notOpened}. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.${savedWorkNote(input)}`;
       }
       // Deliberately generic: causes can contain command output. Details stay
       // in the execution history and the ledger, both inside the account.
@@ -150,6 +171,11 @@ function safeJson(text: string | undefined): Record<string, unknown> | undefined
   }
 }
 
+/** Where the requester is told: the pull request for rework, otherwise the source issue, if any. */
+export function commentTarget(workItem: WorkItem): number | undefined {
+  return reworkContext(workItem)?.pullRequest.number ?? issueNumber(workItem);
+}
+
 function resolveWorkItem(input: ReportInput): WorkItem | undefined {
   if (input.ctx) return input.ctx.workItem;
   try {
@@ -176,10 +202,10 @@ export const handler = logged('report', reportKey, async (input: ReportInput, lo
 
   await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
   await storeArtefacts({ ...input, ...(error ? { error } : {}) }, workItem, log);
-  const issue = issueNumber(workItem);
-  if (issue === undefined) return;
+  const target = commentTarget(workItem);
+  if (target === undefined) return;
 
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const client = await repositoryClient(repo, { issues: 'write' });
-  await client.commentOnIssue(repo, issue, message);
+  const client = await repositoryClient(repo, { issues: 'write', ...(reworkContext(workItem) ? { pull_requests: 'write' } : {}) });
+  await client.commentOnIssue(repo, target, message);
 });

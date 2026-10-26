@@ -141,7 +141,7 @@ describe('initialNotes', () => {
   });
 
   it('points rework items at rework.md', () => {
-    assert.match(initialNotes(workItem, { rework: true }), /every point in \/workspace\/rework\.md must be addressed/);
+    assert.match(initialNotes(workItem, { rework: true }), /every numbered point in \/workspace\/rework\.md must be addressed, and answered by its number under `## Rework points` in summary\.md/);
   });
 
   it('tells a resumed attempt what the previous one did and to continue from it', () => {
@@ -211,10 +211,16 @@ describe('buildReworkFile', () => {
     assert.match(file, /# Rework of pull request #26/);
     assert.match(file, /Previous work item: 7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c/);
     assert.match(file, /Cause: review comments/);
-    assert.match(file, /- \*\*@u \(src\/a\.ts:3\)\*\*/);
+    assert.match(file, /### Point 1: @u \(src\/a\.ts:3\)/);
     assert.match(file, /Fix this\./);
     assert.doesNotMatch(file, /ghs_abcdefghij/);
     assert.doesNotMatch(file, /## Failing checks/);
+  });
+
+  it('numbers the points in order, so the builder can answer each by number', async () => {
+    const file = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework);
+    assert.match(file, /### Point 1: @JamieGeddes \(packages\/invoker\/src\/prompt\.ts:12\)\n\nPlease name/);
+    assert.match(file, /### Point 2: @other-user\n\nOverall looks good\./);
   });
 
   it('does not fetch checks for a review-cause rework', async () => {

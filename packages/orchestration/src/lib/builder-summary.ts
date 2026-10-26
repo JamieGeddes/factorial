@@ -13,6 +13,7 @@ export const SUMMARY_HEADINGS = {
   uncertainties: '## Uncertainties',
   notTested: '## Not tested',
   planSteps: '## Plan steps',
+  reworkPoints: '## Rework points',
 } as const;
 
 /** Character caps applied when rendering, a little above the word limits in the prompt. */
@@ -24,6 +25,7 @@ export const SUMMARY_CAPS = {
   uncertainty: 200,
   notTestedBullets: 3,
   stepNote: 300,
+  reworkNote: 300,
 } as const;
 
 export type StepStatus = 'done' | 'skipped' | 'changed';
@@ -45,6 +47,8 @@ export interface BuilderSummary {
   /** Undefined when the section is absent, so "not reported" differs from "nothing". */
   notTested?: string[];
   steps: StepReport[];
+  /** The builder's answer to each numbered point in rework.md, by number; first line per number wins. */
+  reworkPoints: Map<number, string>;
 }
 
 /** Dashes read as an AI tell and are banned from the body: map them to a hyphen. */
@@ -72,6 +76,21 @@ export function parseStepLine(line: string): StepReport {
   const match = STEP_LINE.exec(raw);
   if (!match) return { note: raw, raw };
   return { id: match[1]!, status: match[2]!.toLowerCase() as StepStatus, note: match[3]!.trim(), raw };
+}
+
+const REWORK_LINE = /^(?:[-*+]\s*)?[`*_]*(?:point\s*)?([1-9][0-9]{0,2})[`*_]*\s*[:.)\-]\s*(.*)$/i;
+
+/** `- <n>: <answer>` lines, keyed by point number. Lines that do not parse are dropped. */
+export function parseReworkPoints(lines: readonly string[]): Map<number, string> {
+  const points = new Map<number, string>();
+  for (const line of lines) {
+    const match = REWORK_LINE.exec(line.trim());
+    if (!match) continue;
+    const n = Number(match[1]);
+    const note = match[2]!.trim();
+    if (note && !points.has(n)) points.set(n, note);
+  }
+  return points;
 }
 
 const bulletText = (line: string): string => line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, '').trim();
@@ -105,5 +124,6 @@ export function parseBuilderSummary(text: string): BuilderSummary | undefined {
     uncertainties: lines('uncertainties').map(bulletText).filter((l) => l && !noneWord.test(l)),
     ...(sections.has('notTested') ? { notTested: lines('notTested').map(bulletText).filter((l) => l && !noneWord.test(l)) } : {}),
     steps: lines('planSteps').map(parseStepLine),
+    reworkPoints: parseReworkPoints(lines('reworkPoints')),
   };
 }

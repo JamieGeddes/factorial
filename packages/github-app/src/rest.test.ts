@@ -55,6 +55,15 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
+  it('requests reviewers on a pull request', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { number: 26 }, seen) });
+    await client.requestReviewers(repo, 26, ['alice', 'bob']);
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/26/requested_reviewers');
+    assert.equal(seen[0]?.method, 'POST');
+    assert.deepEqual(seen[0]?.body, { reviewers: ['alice', 'bob'] });
+  });
+
   it('reads a branch head through the git refs API', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { object: { sha: 'b'.repeat(40) } }, seen) });
