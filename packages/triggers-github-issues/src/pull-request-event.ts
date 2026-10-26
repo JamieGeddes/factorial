@@ -345,6 +345,18 @@ function fromWorkflowRun(payload: Record<string, unknown>, options: PullRequestD
   const prs = Array.isArray(run.pull_requests) ? run.pull_requests.filter(isRecord) : [];
   const pr = prs.find((p) => isRecord(p.head) && p.head.ref === headBranch && p.head.sha === headSha);
   if (!pr) return { kind: 'ignore', reason: 'workflow run is not on the head of an open pull request' };
+  // The run's logs become the builder's instructions, so whoever caused it
+  // must be trusted too: the App (its own push) or an allowed person. A
+  // collaborator outside the list who pushes to the branch, or re-runs a
+  // workflow, does not get to steer the rework.
+  for (const field of ['actor', 'triggering_actor'] as const) {
+    if (run[field] === undefined || run[field] === null) continue;
+    const who = user(run[field], `workflow_run.${field}`);
+    const isApp = who.login.toLowerCase() === `${options.appSlug}[bot]`.toLowerCase();
+    if (!isApp && (who.type === 'Bot' || !options.allowedUserIds.has(who.id))) {
+      return { kind: 'ignore', reason: `workflow run caused by untrusted ${who.type === 'Bot' ? 'bot' : 'user'} "${who.login}"` };
+    }
+  }
   const number = num(pr.number, 'workflow_run.pull_requests.number');
   const name = str(run.name, 'workflow_run.name');
   const runUrl = str(run.html_url, 'workflow_run.html_url');

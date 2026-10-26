@@ -28,7 +28,7 @@ export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /** Statuses of items that were refused, which neither hold the pull request nor count as an attempt. */
-const REFUSED: ReadonlySet<string> = new Set(['not-eligible', 'busy', 'rework-limit', 'covered-by-review']);
+export const REFUSED_STATUSES: ReadonlySet<string> = new Set(['not-eligible', 'busy', 'rework-limit', 'covered-by-review']);
 
 /**
  * An item still not finished after this long is taken to have died without
@@ -67,7 +67,7 @@ export type Admission =
   | { ok: false; status: 'busy' | 'rework-limit'; reason: string; reply?: string };
 
 /** Whether `item` was accepted before `current`, ties broken by id so two simultaneous items never refuse each other. */
-function before(item: EarlierItem, current: { workItemId: string; createdAt: string }): boolean {
+export function acceptedBefore(item: EarlierItem, current: { workItemId: string; createdAt: string }): boolean {
   if (!item.createdAt) return false;
   return item.createdAt < current.createdAt || (item.createdAt === current.createdAt && item.workItemId < current.workItemId);
 }
@@ -84,7 +84,7 @@ export function admitRework(
   earlier: readonly EarlierItem[],
   now: Date,
 ): Admission {
-  const prior = earlier.filter((item) => item.workItemId !== current.workItemId && before(item, current));
+  const prior = earlier.filter((item) => item.workItemId !== current.workItemId && acceptedBefore(item, current));
   const running = prior.find(
     (item) => !TERMINAL_STATUSES.has(item.status ?? '') && now.getTime() - Date.parse(item.createdAt ?? '') < STALE_AFTER_MS,
   );
@@ -102,7 +102,7 @@ export function admitRework(
 
   let automatic = 0;
   for (const item of prior) {
-    if (REFUSED.has(item.status ?? '')) continue;
+    if (REFUSED_STATUSES.has(item.status ?? '')) continue;
     if (item.cause !== 'checks-failed') break;
     automatic += 1;
   }

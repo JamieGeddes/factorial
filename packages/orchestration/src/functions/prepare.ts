@@ -24,7 +24,7 @@ import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.t
 import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { botLogin, repositoryClient, repositoryToken } from '../lib/github.ts';
-import { admitRework, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints } from '../lib/rework-admission.ts';
+import { REFUSED_STATUSES, acceptedBefore, admitRework, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints, type EarlierItem } from '../lib/rework-admission.ts';
 import { handOverWorkspace, mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
@@ -35,7 +35,7 @@ import {
   gitAuthHeader,
   shellQuote,
 } from '../lib/shell.ts';
-import { acceptWorkItem, attemptRecord, attemptsAtSource, itemsAtSource, recordProgress, reworkCauseOf } from '../lib/table.ts';
+import { TooManyItemsError, acceptWorkItem, attemptRecord, attemptsAtSource, itemsAtSource, recordProgress, reworkCauseOf } from '../lib/table.ts';
 
 interface PrepareInput {
   workItem: unknown;
@@ -331,12 +331,22 @@ async function admitReworkItem(
     return refuse('covered-by-review', 'the comment belongs to a review requesting changes, which is reworked as a whole');
   }
 
-  const earlier = await itemsAtSource(workItem);
+  let earlier: EarlierItem[];
+  try {
+    earlier = await itemsAtSource(workItem);
+  } catch (error) {
+    if (error instanceof TooManyItemsError) return refuse('busy', error.message);
+    throw error;
+  }
   if (rework.cause === 'checks-failed') {
+    // Only the causes the limit walks: newest first, up to the first item
+    // a person asked for, refused items read too so they can be skipped.
+    const current = { workItemId: workItem.id, createdAt };
     for (const item of earlier) {
-      if (item.workItemId === workItem.id) continue;
+      if (item.workItemId === workItem.id || !acceptedBefore(item, current)) continue;
       const cause = await reworkCauseOf(item.workItemId);
       if (cause !== undefined) item.cause = cause;
+      if (cause !== 'checks-failed' && !REFUSED_STATUSES.has(item.status ?? '')) break;
     }
   }
   const admission = admitRework({ workItemId: workItem.id, createdAt, cause: rework.cause }, earlier, new Date());

@@ -187,6 +187,13 @@ describe('decidePullRequestEvent: a failed workflow run', () => {
     assert.equal(workItem.requestedBy, BOT.login);
   });
 
+  it('needs the App or a trusted person to have caused the run, never another bot', () => {
+    assert.equal(decidePullRequestEvent('workflow_run', workflowRun({ actor: owner, triggering_actor: owner }), options).kind, 'rework-checks-failed');
+    ignored('workflow_run', workflowRun({ actor: stranger }), /caused by untrusted user "stranger"/);
+    ignored('workflow_run', workflowRun({ triggering_actor: stranger }), /caused by untrusted user "stranger"/);
+    ignored('workflow_run', workflowRun({ actor: { id: 1, login: 'other[bot]', type: 'Bot' } }), /caused by untrusted bot/);
+  });
+
   it('counts a failure on push as well as on the pull request', () => {
     assert.equal(decidePullRequestEvent('workflow_run', workflowRun({ event: 'push' }), options).kind, 'rework-checks-failed');
   });

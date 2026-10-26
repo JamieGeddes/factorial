@@ -67,24 +67,44 @@ export async function attemptsAtSource(workItem: WorkItem): Promise<Attempt[]> {
   return (result.Items ?? []) as Attempt[];
 }
 
+/** More items than any pull request should ever gather; past it, admission refuses rather than judge on part of the record. */
+export const MAX_ITEMS_AT_SOURCE = 1_000;
+
+export class TooManyItemsError extends Error {
+  constructor(key: string) {
+    super(`more than ${MAX_ITEMS_AT_SOURCE} items at ${key}`);
+    this.name = 'TooManyItems';
+  }
+}
+
 /**
- * The items at the same source, newest first, with when each was accepted:
- * for a pull request source, every rework item for that pull request.
+ * Every item at the same source, newest first, with when each was accepted:
+ * for a pull request source, every rework item for that pull request. All
+ * pages are read, so refused items cannot push a running item or an earlier
+ * attempt out of view.
  */
 export async function itemsAtSource(workItem: WorkItem): Promise<EarlierItem[]> {
-  const result = await documents.send(
-    new QueryCommand({
-      TableName: requireEnv('TABLE_NAME'),
-      IndexName: 'sourceKey-createdAt-index',
-      KeyConditionExpression: 'sourceKey = :key',
-      ExpressionAttributeValues: { ':key': sourceKey(workItem) },
-      ProjectionExpression: 'workItemId, #status, createdAt',
-      ExpressionAttributeNames: { '#status': 'status' },
-      ScanIndexForward: false,
-      Limit: 10,
-    }),
-  );
-  return (result.Items ?? []) as EarlierItem[];
+  const key = sourceKey(workItem);
+  const items: EarlierItem[] = [];
+  let start: Record<string, unknown> | undefined;
+  do {
+    const page = await documents.send(
+      new QueryCommand({
+        TableName: requireEnv('TABLE_NAME'),
+        IndexName: 'sourceKey-createdAt-index',
+        KeyConditionExpression: 'sourceKey = :key',
+        ExpressionAttributeValues: { ':key': key },
+        ProjectionExpression: 'workItemId, #status, createdAt',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ScanIndexForward: false,
+        ...(start ? { ExclusiveStartKey: start } : {}),
+      }),
+    );
+    items.push(...((page.Items ?? []) as EarlierItem[]));
+    if (items.length > MAX_ITEMS_AT_SOURCE) throw new TooManyItemsError(key);
+    start = page.LastEvaluatedKey;
+  } while (start);
+  return items;
 }
 
 /** The rework cause recorded in an item's WorkItem, if it has one. Not in the source index, so read from the row. */
