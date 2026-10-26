@@ -9,7 +9,7 @@ import type { PrFacts } from '../lib/pr-facts.ts';
 
 import type { ReworkContext } from '@factorial/workitem';
 
-import { agentText, closingReference, pullRequestBody, reworkComment, safeLogin, type BodyExtras } from './pr-body.ts';
+import { agentText, closingReference, noMentions, pullRequestBody, reworkComment, safeLogin, type BodyExtras } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -454,5 +454,19 @@ describe('safeLogin', () => {
     assert.equal(safeLogin('Jamie-Geddes'), 'Jamie-Geddes');
     assert.equal(safeLogin('factorial-x[bot]'), 'factorial-x[bot]');
     for (const bad of ['', '-lead', 'trail-', 'two--hyphens', 'a b', '@x', 'x'.repeat(40)]) assert.equal(safeLogin(bad), undefined, bad);
+  });
+});
+
+describe('noMentions', () => {
+  it('stops agent text mentioning people or teams, outside code spans only', () => {
+    assert.equal(noMentions('ping @alice and @org/team'), 'ping @\u200balice and @\u200borg/team');
+    assert.equal(noMentions('uses `@factorial/log` here'), 'uses `@factorial/log` here');
+    assert.equal(noMentions('mail a@b.com, @ alone'), 'mail a@\u200bb.com, @ alone');
+  });
+
+  it('applies to the builder slots of the body and the rework reply', () => {
+    const body = render(summaryMd().replace('Adds the thing so operators can see it.', 'Thanks @everyone and @alice.'));
+    assert.doesNotMatch(body, /@everyone|@alice/);
+    assert.match(body, /@\u200beveryone/);
   });
 });

@@ -59,8 +59,22 @@ const MAX_LIST = 5;
  * the body bans, no tags that could close the body's own collapsed blocks,
  * on one line, and cut to `max`.
  */
+/**
+ * Agent text cannot mention anyone: a zero-width space after each `@` that
+ * would start a mention or team reference stops GitHub notifying, so a
+ * prompt-injected builder cannot ping people from Factorial's comments.
+ * Code spans are left as written (a package such as `@scope/pkg` stays
+ * copyable), since GitHub never links mentions inside them.
+ */
+export function noMentions(text: string): string {
+  return text
+    .split(/(`[^`\n]*`)/)
+    .map((part, i) => (i % 2 === 1 ? part : part.replace(/@(?=[A-Za-z0-9])/g, '@\u200b')))
+    .join('');
+}
+
 export function agentText(text: string, max: number): string {
-  const flat = replaceEmDashes(text)
+  const flat = noMentions(replaceEmDashes(text))
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
     .split('\n')
     .map((line) => line.replace(/^\s*#{1,6}\s+/, '').trim())
@@ -71,7 +85,7 @@ export function agentText(text: string, max: number): string {
 
 /** Free text from an agent that may run to several paragraphs: kept as lines, headings and tags neutralised, then cut. */
 function agentBlock(text: string, max: number): string {
-  const lines = replaceEmDashes(text)
+  const lines = noMentions(replaceEmDashes(text))
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
     .split('\n')
     .map((line) => line.replace(/^\s*#{1,6}\s+/, '').trimEnd());
