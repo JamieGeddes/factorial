@@ -8,6 +8,7 @@ import type { WorkItem } from '@factorial/workitem';
 import { requireEnv } from './env.ts';
 import { lineageAttributes } from './lineage.ts';
 import { sourceKey, type Attempt } from './resume.ts';
+import type { EarlierItem } from './rework-admission.ts';
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -20,8 +21,8 @@ export class DuplicateWorkItemError extends Error {
   }
 }
 
-/** Record a new WorkItem exactly once, with its attempt number, artefact prefix and any lineage. */
-export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string, attempt: number): Promise<void> {
+/** Record a new WorkItem exactly once, with its attempt number, artefact prefix and any lineage. Returns the row's `createdAt`. */
+export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string, attempt: number): Promise<string> {
   const now = new Date().toISOString();
   try {
     await documents.send(
@@ -48,6 +49,7 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
     }
     throw error;
   }
+  return now;
 }
 
 /** Earlier attempts at the same source as this WorkItem, newest first. */
@@ -63,6 +65,40 @@ export async function attemptsAtSource(workItem: WorkItem): Promise<Attempt[]> {
     }),
   );
   return (result.Items ?? []) as Attempt[];
+}
+
+/**
+ * The items at the same source, newest first, with when each was accepted:
+ * for a pull request source, every rework item for that pull request.
+ */
+export async function itemsAtSource(workItem: WorkItem): Promise<EarlierItem[]> {
+  const result = await documents.send(
+    new QueryCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      IndexName: 'sourceKey-createdAt-index',
+      KeyConditionExpression: 'sourceKey = :key',
+      ExpressionAttributeValues: { ':key': sourceKey(workItem) },
+      ProjectionExpression: 'workItemId, #status, createdAt',
+      ExpressionAttributeNames: { '#status': 'status' },
+      ScanIndexForward: false,
+      Limit: 10,
+    }),
+  );
+  return (result.Items ?? []) as EarlierItem[];
+}
+
+/** The rework cause recorded in an item's WorkItem, if it has one. Not in the source index, so read from the row. */
+export async function reworkCauseOf(workItemId: string): Promise<string | undefined> {
+  const result = await documents.send(
+    new GetCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      Key: { workItemId },
+      ProjectionExpression: '#w.#c.#k',
+      ExpressionAttributeNames: { '#w': 'workItem', '#c': 'context', '#k': 'cause' },
+    }),
+  );
+  const cause = (result.Item as { workItem?: { context?: { cause?: unknown } } } | undefined)?.workItem?.context?.cause;
+  return typeof cause === 'string' ? cause : undefined;
 }
 
 /** The attempt number and artefact prefix on a ledger row, if the row exists. */

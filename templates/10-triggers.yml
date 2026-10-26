@@ -1,7 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
-  Factorial triggers: the work event bus and the GitHub issue adapter.
+  Factorial triggers: the work event bus and the GitHub adapter (issues and
+  Factorial's own pull requests).
   Deployed by GitHub Actions through the factorial-cloudformation role.
 
 Parameters:
@@ -15,8 +16,18 @@ Parameters:
     Description: >-
       Comma-separated numeric GitHub user IDs trusted to request work. Both the
       issue author and whoever applies the trigger label must be listed; issues
-      from anyone else are ignored. Find an ID with: gh api users/<login> --jq .id
+      from anyone else are ignored. The same list decides who can ask for
+      rework on Factorial's pull requests. Find an ID with: gh api users/<login> --jq .id
     AllowedPattern: '^[0-9]+(,[0-9]+)*$'
+  GitHubAppSlug:
+    Type: String
+    Default: factorial-jamiegeddes
+    Description: >-
+      The GitHub App's slug. Its bot user, `<slug>[bot]`, opens Factorial's
+      pull requests, and a comment on one of them that starts with `@<slug>`
+      asks Factorial for rework. Find it on the App's settings page, or with:
+      gh api repos/<owner>/<repo>/pulls/<n> --jq .user.login
+    AllowedPattern: '^[a-z0-9][a-z0-9-]{0,62}$'
   LogRetentionDays:
     Type: Number
     Default: 30
@@ -61,7 +72,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: factorial-github-issues-adapter
-      Description: Converts GitHub issue webhooks into WorkItem events on the Factorial bus.
+      Description: Converts GitHub App webhooks (labelled issues, and reviews, comments and failed runs on Factorial's pull requests) into WorkItem events on the Factorial bus.
       CodeUri: ../packages/triggers-github-issues/dist/
       Handler: index.handler
       Runtime: nodejs22.x
@@ -81,6 +92,7 @@ Resources:
           WEBHOOK_SECRET_ARN: !Ref WebhookSecret
           TRIGGER_LABEL: !Ref TriggerLabel
           ALLOWED_USER_IDS: !Ref AllowedGitHubUserIds
+          APP_SLUG: !Ref GitHubAppSlug
           NODE_OPTIONS: --enable-source-maps
       # Public endpoint by necessity (GitHub must reach it); every request is
       # authenticated by HMAC signature in the handler before anything else.

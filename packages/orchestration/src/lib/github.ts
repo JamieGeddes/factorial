@@ -55,6 +55,14 @@ export async function repositoryClient(repo: Repo, permissions: TokenPermissions
   return new GitHubClient({ token: await repositoryToken(repo, permissions) });
 }
 
+let cachedSlug: string | undefined;
+
+/** The login of the App's bot user, `<slug>[bot]`: the author of every pull request Factorial opens. */
+export async function botLogin(): Promise<string> {
+  cachedSlug ??= (await getApp(await appCredentials())).slug;
+  return `${cachedSlug}[bot]`;
+}
+
 let cachedIdentity: GitIdentity | undefined;
 
 /**

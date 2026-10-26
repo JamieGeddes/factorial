@@ -28,6 +28,29 @@ export interface PullRequest {
   htmlUrl: string;
 }
 
+/** A pull request's state, as far as checking it before rework is concerned. */
+export interface PullRequestState {
+  number: number;
+  state: string;
+  authorLogin: string;
+  headRef: string;
+  headSha: string;
+  /** Undefined when the head repository has been deleted. */
+  headRepoId: number | undefined;
+  baseRef: string;
+  baseRepoId: number;
+}
+
+/** An inline comment on a pull request's diff. */
+export interface ReviewComment {
+  authorLogin: string;
+  authorType: string;
+  path: string;
+  /** The line in the current diff, or the original line when the comment is outdated; undefined for a file-level comment. */
+  line: number | undefined;
+  body: string;
+}
+
 /** A job in a GitHub Actions run, as far as Factorial is concerned. */
 export interface CheckJob {
   id: number;
@@ -92,6 +115,52 @@ export class GitHubClient {
 
   async commentOnIssue(repo: Repo, issueNumber: number, body: string): Promise<void> {
     await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}/comments`, { body });
+  }
+
+  async getPullRequest(repo: Repo, pullNumber: number): Promise<PullRequestState> {
+    const pr = await this.#request<{
+      number: number;
+      state: string;
+      user: { login: string };
+      head: { ref: string; sha: string; repo: { id: number } | null };
+      base: { ref: string; repo: { id: number } };
+    }>('GET', `/repos/${repo.owner}/${repo.name}/pulls/${pullNumber}`);
+    return {
+      number: pr.number,
+      state: pr.state,
+      authorLogin: pr.user.login,
+      headRef: pr.head.ref,
+      headSha: pr.head.sha,
+      headRepoId: pr.head.repo?.id,
+      baseRef: pr.base.ref,
+      baseRepoId: pr.base.repo.id,
+    };
+  }
+
+  /**
+   * The state of the review an inline comment was submitted with
+   * (`CHANGES_REQUESTED`, `COMMENTED`, …), or undefined for a comment that
+   * belongs to none.
+   */
+  async reviewStateOfComment(repo: Repo, pullNumber: number, commentId: number): Promise<string | undefined> {
+    const comment = await this.#request<{ pull_request_review_id: number | null }>('GET', `/repos/${repo.owner}/${repo.name}/pulls/comments/${commentId}`);
+    if (comment.pull_request_review_id === null) return undefined;
+    const review = await this.#request<{ state: string }>('GET', `/repos/${repo.owner}/${repo.name}/pulls/${pullNumber}/reviews/${comment.pull_request_review_id}`);
+    return review.state;
+  }
+
+  /** The inline comments submitted with one review, at most 100. */
+  async listReviewComments(repo: Repo, pullNumber: number, reviewId: number): Promise<ReviewComment[]> {
+    const comments = await this.#request<
+      Array<{ user: { login: string; type: string } | null; path: string; line: number | null; original_line: number | null; body: string }>
+    >('GET', `/repos/${repo.owner}/${repo.name}/pulls/${pullNumber}/reviews/${reviewId}/comments?per_page=100`);
+    return comments.map((c) => ({
+      authorLogin: c.user?.login ?? 'ghost',
+      authorType: c.user?.type ?? 'User',
+      path: c.path,
+      line: c.line ?? c.original_line ?? undefined,
+      body: c.body,
+    }));
   }
 
   /**
