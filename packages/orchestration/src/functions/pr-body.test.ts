@@ -7,7 +7,9 @@ import type { Plan } from '@factorial/plan';
 
 import type { PrFacts } from '../lib/pr-facts.ts';
 
-import { agentText, closingReference, pullRequestBody, type BodyExtras } from './pr-body.ts';
+import type { ReworkContext } from '@factorial/workitem';
+
+import { agentText, closingReference, noMentions, pullRequestBody, reworkComment, safeLogin, type BodyExtras } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -393,5 +395,83 @@ describe('closingReference', () => {
   it('is absent for other triggers or an unrecognised url', () => {
     assert.equal(closingReference({ ...ctx.workItem, source: { type: 'jira-ticket', id: 'FAC-1', url: 'https://x.atlassian.net/browse/FAC-1' } }), undefined);
     assert.equal(closingReference({ ...ctx.workItem, source: { ...ctx.workItem.source, url: 'https://evil.example/JamieGeddes/factorial/issues/7' } }), undefined);
+  });
+});
+
+describe('reworkComment', () => {
+  const rework: ReworkContext = {
+    kind: 'rework',
+    pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
+    branch: ctx.branch,
+    baseBranch: 'main',
+    previousWorkItemId: '1f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+    cause: 'review',
+    details: [
+      { author: 'alice', path: 'src/a.ts', line: 3, body: 'Rename this.' },
+      { author: 'bob', body: 'Add a test.' },
+      { author: 'carol', body: 'And a doc.' },
+    ],
+  };
+  const reworkCtx: WorkContext = { ...ctx, workItem: { ...ctx.workItem, context: rework } };
+  const summary = `${summaryMd()}\n\n## Rework points\n- 1: Renamed it to \`b.ts\`.\n- 2: Added \`a.test.ts\`.\n`;
+
+  it('answers each point by number, mentioning who raised it and where', () => {
+    const text = reworkComment(reworkCtx, rework, summary, PASS, HEAD, { review: undefined, facts: noFacts });
+    assert.match(text, /## Points raised\n\n1\. @alice on `src\/a\.ts:3`: Renamed it to `b\.ts`\.\n2\. @bob: Added `a\.test\.ts`\.\n3\. @carol: _Not reported by the builder\._/);
+  });
+
+  it('opens with the new head and the passing run, and says the description is unchanged', () => {
+    const text = reworkComment(reworkCtx, rework, summary, PASS, HEAD, {});
+    assert.match(text, /^Factorial has reworked this pull request after the review\. The branch is now at `ffffffffffff`, and the \[tests\]\(https:\/\/x\/run\/1\) passed on it\./);
+    assert.match(text, /description above still describes the change as first opened/);
+  });
+
+  it('carries the summary, review, tests and run details, but no closing reference or plan', () => {
+    const text = reworkComment(reworkCtx, rework, summary, PASS, HEAD, {});
+    for (const marker of ['## Summary', '## Automated review', '## Tests', '<summary>Run details</summary>']) assert.ok(text.includes(marker), marker);
+    assert.doesNotMatch(text, /Closes #7|## Plan\b|## Impact/);
+  });
+
+  it('heads the points as failing checks for a checks-failed rework, and copes with none recorded', () => {
+    const failed = { ...rework, cause: 'checks-failed' as const, details: [] };
+    const text = reworkComment(reworkCtx, failed, summaryMd(), PASS, HEAD, {});
+    assert.match(text, /after the failing checks\./);
+    assert.match(text, /## Failing checks\n\n_No specific points were recorded for this rework\._/);
+  });
+
+  it('never mentions an author that is not a valid login, and keeps answers to one capped line', () => {
+    const odd = { ...rework, details: [{ author: 'x @everyone', body: 'b' }] };
+    const text = reworkComment(reworkCtx, odd, `## Rework points\n- 1: ${'long '.repeat(200)}\n## Summary\nok`, PASS, HEAD, {});
+    assert.match(text, /1\. `x @everyone`: /);
+    assert.ok(!text.split('`x @everyone`').join('').includes('@everyone'), 'the author appears only inside its code span');
+    const line = text.split('\n').find((l) => l.startsWith('1. '))!;
+    assert.ok(line.length < 400, `line is ${line.length} characters`);
+  });
+});
+
+describe('safeLogin', () => {
+  it('accepts user and bot logins and rejects anything else', () => {
+    assert.equal(safeLogin('Jamie-Geddes'), 'Jamie-Geddes');
+    assert.equal(safeLogin('factorial-x[bot]'), 'factorial-x[bot]');
+    for (const bad of ['', '-lead', 'trail-', 'two--hyphens', 'a b', '@x', 'x'.repeat(40)]) assert.equal(safeLogin(bad), undefined, bad);
+  });
+});
+
+describe('noMentions', () => {
+  it('stops agent text mentioning people or teams, whatever surrounds the @', () => {
+    assert.equal(noMentions('ping @alice and @org/team'), 'ping @\u200balice and @\u200borg/team');
+    assert.equal(noMentions('\\`@alice\\` and ``a ` @bob``'), '\\`@\u200balice\\` and ``a ` @\u200bbob``');
+    assert.equal(noMentions('mail a@b.com, @ alone'), 'mail a@\u200bb.com, @ alone');
+  });
+
+  it('applies after cutting, so a cut cannot leave a mention unescaped', () => {
+    const text = agentText(`${'x'.repeat(95)} @alice`, 100);
+    assert.doesNotMatch(text, /@a/);
+  });
+
+  it('applies to the builder slots of the body and the rework reply', () => {
+    const body = render(summaryMd().replace('Adds the thing so operators can see it.', 'Thanks @everyone and @alice.'));
+    assert.doesNotMatch(body, /@everyone|@alice/);
+    assert.match(body, /@\u200beveryone/);
   });
 });

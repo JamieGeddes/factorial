@@ -1,4 +1,4 @@
-import type { WorkItem } from '@factorial/workitem';
+import type { ReworkContext, WorkItem, WorkItemReviewDetail } from '@factorial/workitem';
 
 import type { Plan } from '@factorial/plan';
 
@@ -59,6 +59,19 @@ const MAX_LIST = 5;
  * the body bans, no tags that could close the body's own collapsed blocks,
  * on one line, and cut to `max`.
  */
+/**
+ * Agent text cannot mention anyone: a zero-width space after each `@` that
+ * would start a mention or team reference stops GitHub notifying, so a
+ * prompt-injected builder cannot ping people from Factorial's comments.
+ * Applied everywhere, code spans included, and after cutting: telling real
+ * code spans apart needs a full Markdown parser (escaped backticks, longer
+ * backtick runs), and a cut can leave a span open. Inside a code span the
+ * character is invisible.
+ */
+export function noMentions(text: string): string {
+  return text.replace(/@(?=[A-Za-z0-9])/g, '@\u200b');
+}
+
 export function agentText(text: string, max: number): string {
   const flat = replaceEmDashes(text)
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
@@ -66,7 +79,7 @@ export function agentText(text: string, max: number): string {
     .map((line) => line.replace(/^\s*#{1,6}\s+/, '').trim())
     .filter(Boolean)
     .join(' ');
-  return cutText(flat, max);
+  return noMentions(cutText(flat, max));
 }
 
 /** Free text from an agent that may run to several paragraphs: kept as lines, headings and tags neutralised, then cut. */
@@ -75,7 +88,7 @@ function agentBlock(text: string, max: number): string {
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
     .split('\n')
     .map((line) => line.replace(/^\s*#{1,6}\s+/, '').trimEnd());
-  return cutText(lines.join('\n'), max);
+  return noMentions(cutText(lines.join('\n'), max));
 }
 
 /** The plan as the PR needs it: from the full plan when it could be read back, otherwise from the state's digest. */
@@ -231,7 +244,7 @@ export function reviewSection(outcome: ReviewOutcome): string {
     return [
       '## Automated review',
       '',
-      '_The automated review did not complete. It is advisory, so the pull request was opened anyway; the details are under `review/` in the artefacts._',
+      '_The automated review did not complete. It is advisory, so it does not hold the pull request back; the details are under `review/` in the artefacts._',
     ].join('\n');
   }
   const { review } = outcome;
@@ -361,5 +374,64 @@ export function pullRequestBody(ctx: WorkContext, summaryText: string, test: Tes
     runDetailsSection(ctx, headSha),
   ].join('\n\n');
   // Whatever the sections let through, the body has no em or en dashes.
+  return `${replaceEmDashes(body)}\n`;
+}
+
+/** A login as GitHub allows it (letters, digits, single hyphens, optional `[bot]`), or undefined for anything else. */
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(?:\[bot\])?$/;
+
+export function safeLogin(author: string): string | undefined {
+  return GITHUB_LOGIN.test(author) ? author : undefined;
+}
+
+/** Who raised a point and where: a mention for a valid login, so the reviewer is told; anything else as a code span. */
+function pointOrigin(detail: WorkItemReviewDetail): string {
+  const login = safeLogin(detail.author);
+  const who = login ? `@${login}` : codeSpan(detail.author, 60);
+  const where = detail.path ? ` on ${codeSpan(detail.line === undefined ? detail.path : `${detail.path}:${detail.line}`)}` : '';
+  return `${who}${where}`;
+}
+
+const MAX_REWORK_POINTS = 50;
+
+/** Each point the rework was asked to address, numbered as in rework.md, with the builder's answer beside it. */
+export function reworkPointsSection(rework: ReworkContext, summary: BuilderSummary | undefined): string {
+  const heading = rework.cause === 'checks-failed' ? '## Failing checks' : '## Points raised';
+  if (rework.details.length === 0) {
+    return [heading, '', '_No specific points were recorded for this rework._'].join('\n');
+  }
+  const lines = rework.details.slice(0, MAX_REWORK_POINTS).map((detail, i) => {
+    const answer = summary?.reworkPoints.get(i + 1);
+    return `${i + 1}. ${pointOrigin(detail)}: ${answer ? agentText(answer, SUMMARY_CAPS.reworkNote) : NOT_REPORTED}`;
+  });
+  return [heading, '', ...lines].join('\n');
+}
+
+/**
+ * The reply to a rework request, posted on the pull request in place of a new
+ * one. It answers each point, then gives the summary, the automated review
+ * and the test result for the new head. The description is left as it was:
+ * it describes the change as first opened, and this comment the rework.
+ */
+export function reworkComment(
+  ctx: WorkContext,
+  rework: ReworkContext,
+  summaryText: string,
+  test: TestResult,
+  headSha: string,
+  extras: Pick<BodyExtras, 'review' | 'facts'> = {},
+): string {
+  const summary = parseBuilderSummary(summaryText);
+  const why = rework.cause === 'checks-failed' ? 'the failing checks' : 'the review';
+  // Only a run whose tests passed reaches this reply.
+  const tested = test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
+  const body = [
+    `Factorial has reworked this pull request after ${why}. The branch is now at \`${headSha.slice(0, 12)}\`, and ${tested}. The description above still describes the change as first opened; this comment covers the rework.`,
+    reworkPointsSection(rework, summary),
+    summarySection(summary, summaryText, undefined),
+    reviewSection(extras.review),
+    testsSection(test, summary, extras.facts ?? null, undefined),
+    runDetailsSection(ctx, headSha),
+  ].join('\n\n');
   return `${replaceEmDashes(body)}\n`;
 }

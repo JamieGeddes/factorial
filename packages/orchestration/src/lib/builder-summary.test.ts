@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { SUMMARY_HEADINGS, cutText, parseBuilderSummary, parseStepLine, replaceEmDashes } from './builder-summary.ts';
+import { SUMMARY_HEADINGS, cutText, parseBuilderSummary, parseReworkPoints, parseStepLine, replaceEmDashes } from './builder-summary.ts';
 
 const full = [
   SUMMARY_HEADINGS.summary,
@@ -56,6 +56,32 @@ describe('parseBuilderSummary', () => {
   it('matches headings case-insensitively and stops a section at the next heading', () => {
     const parsed = parseBuilderSummary('## summary\nText\n## Other\nignored\n')!;
     assert.equal(parsed.summary, 'Text');
+  });
+});
+
+describe('parseReworkPoints', () => {
+  it('keys each answer by its point number, first line per number winning', () => {
+    const points = parseReworkPoints(['- 1: Renamed the file.', '- 2: Not changed: the name is fixed by the contract.', '- 1: again', 'stray text']);
+    assert.deepEqual([...points], [
+      [1, 'Renamed the file.'],
+      [2, 'Not changed: the name is fixed by the contract.'],
+    ]);
+  });
+
+  it('accepts the common variations of the line form', () => {
+    const points = parseReworkPoints(['* Point 3. Done', '`4`) Added a test', '5 - Reverted']);
+    assert.deepEqual([...points], [
+      [3, 'Done'],
+      [4, 'Added a test'],
+      [5, 'Reverted'],
+    ]);
+  });
+
+  it('is read from the summary as its own section, empty when absent', () => {
+    assert.equal(parseBuilderSummary(full)!.reworkPoints.size, 0);
+    const parsed = parseBuilderSummary(`${full}\n\n${SUMMARY_HEADINGS.reworkPoints}\n- 1: Fixed.\n`)!;
+    assert.equal(parsed.reworkPoints.get(1), 'Fixed.');
+    assert.equal(parsed.steps.length, 3);
   });
 });
 

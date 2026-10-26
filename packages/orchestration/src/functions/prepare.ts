@@ -110,7 +110,7 @@ export function initialNotes(
     `## ${workItem.title}`,
     '',
     workItem.body.trim() || '_No further description was given._',
-    ...(options.rework ? ['', 'This is rework: every point in /workspace/rework.md must be addressed.'] : []),
+    ...(options.rework ? ['', 'This is rework: every numbered point in /workspace/rework.md must be addressed, and answered by its number under `## Rework points` in summary.md.'] : []),
     ...(options.resumedFrom ? ['', ...previousAttemptSection(options.resumedFrom)] : []),
     '',
     '# Plan',
@@ -170,9 +170,7 @@ export async function buildReworkFile(
   if (rework.details.length === 0) {
     lines.push('_No specific points were recorded; see the pull request._');
   }
-  for (const detail of rework.details) {
-    lines.push(...detailSection(detail));
-  }
+  rework.details.forEach((detail, i) => lines.push(...detailSection(detail, i + 1)));
   if (rework.cause === 'checks-failed') {
     const jobs = await client.listJobsForHeadSha(repo, headSha);
     const failing = jobs.filter((job) => job.conclusion === 'failure');
@@ -187,11 +185,16 @@ export async function buildReworkFile(
   return `${lines.join('\n')}\n`;
 }
 
-function detailSection(detail: WorkItemReviewDetail): string[] {
+/**
+ * One point, numbered from 1 in the order the work item lists them: the
+ * builder answers each by its number under `## Rework points` in summary.md,
+ * and the orchestrator pairs the answers with the points in its reply.
+ */
+function detailSection(detail: WorkItemReviewDetail, n: number): string[] {
   const where = detail.path
     ? ` (${detail.path}${detail.line === undefined ? '' : `:${detail.line}`})`
     : '';
-  return [`- **@${detail.author}${where}**`, '', redactSecrets(detail.body.trim()), ''];
+  return [`### Point ${n}: @${detail.author}${where}`, '', redactSecrets(detail.body.trim()), ''];
 }
 
 /**

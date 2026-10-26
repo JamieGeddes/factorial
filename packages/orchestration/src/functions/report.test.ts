@@ -5,7 +5,7 @@ import type { WorkContext } from '../lib/context.ts';
 
 import { builderIncomplete } from '../lib/incomplete.ts';
 
-import { invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
+import { commentTarget, invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -167,5 +167,59 @@ describe('invalid-plan report', () => {
       outcome: 'invalid-plan',
       reason: 'The builder did not produce a valid plan.',
     });
+  });
+});
+
+describe('a rework item', () => {
+  const reworkCtx: WorkContext = {
+    ...ctx,
+    workItem: {
+      ...ctx.workItem,
+      context: {
+        kind: 'rework',
+        pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
+        branch: ctx.branch,
+        baseBranch: 'main',
+        previousWorkItemId: '1f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+        cause: 'review',
+        details: [],
+      },
+    },
+  };
+
+  it('is reported on its pull request; anything else on its issue', () => {
+    assert.equal(commentTarget(reworkCtx.workItem), 26);
+    assert.equal(commentTarget(ctx.workItem), 7);
+    assert.equal(commentTarget({ ...ctx.workItem, source: { type: 'jira', id: 'X-1', url: 'https://x' } }), undefined);
+  });
+
+  it('says the pull request was not updated, never that none was opened', () => {
+    const text = reportMessage({ status: 'no-changes', ctx: reworkCtx, summary: 'Nothing to do.' });
+    assert.match(text, /so the pull request was not updated\./);
+    assert.doesNotMatch(text, /no pull request was opened/);
+  });
+
+  it('says failing commits are on the pull request when its tests fail', () => {
+    const text = reportMessage({ status: 'tests-failed', ctx: reworkCtx, error: { Error: 'TestsFailed', Cause: JSON.stringify({ runUrl: 'https://x/run/9' }) } });
+    assert.match(text, /rework did not pass the repository's checks \(\[run\]\(https:\/\/x\/run\/9\)\)/);
+    assert.match(text, /pull request now includes them\. Do not merge/);
+  });
+
+  it('says saved work is on the pull request untested, without the relabel hint', () => {
+    const note = savedWorkNote({ ctx: reworkCtx, saved: { pushed: true, commitCount: 2 } });
+    assert.match(note, /\(2 commits\) was saved to this pull request's branch, so the pull request now includes it untested/);
+    assert.doesNotMatch(note, /label/);
+  });
+
+  it('says the builder ran out without claiming no pull request was opened', () => {
+    const text = reportMessage({
+      status: 'failed',
+      ctx: reworkCtx,
+      error: { Error: 'States.TaskFailed', Cause: JSON.stringify({ Containers: [{ Name: 'invoker', ExitCode: 3 }] }) },
+      saved: { pushed: true, commitCount: 1 },
+    });
+    assert.match(text, /iteration or time limit before finishing, so the change was not tested and the pull request was not updated\./);
+    assert.match(text, /\(1 commit\) was saved to this pull request's branch/);
+    assert.doesNotMatch(text, /no pull request was opened/);
   });
 });

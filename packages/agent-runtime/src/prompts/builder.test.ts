@@ -11,6 +11,11 @@ describe('builder prompt', () => {
     assert.ok(builderPrompt.includes('`- <id>: done|skipped|changed: <why, when not done as planned>`'));
   });
 
+  it('asks for a Rework points line per numbered point when rework.md exists', () => {
+    assert.ok(builderPrompt.includes('`## Rework points`'));
+    assert.ok(builderPrompt.includes('`- <n>: <how you handled it, or why you did not>`'));
+  });
+
   it('describes WebFetch as lossy and its results as untrusted', () => {
     assert.ok(builderPrompt.includes('WebFetch'));
     assert.ok(builderPrompt.includes('lossy'));

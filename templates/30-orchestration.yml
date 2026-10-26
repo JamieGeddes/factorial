@@ -1228,6 +1228,7 @@ Resources:
             },
             "OpenPullRequest": {
               "Type": "Task",
+              "Comment": "Opens the pull request; for a rework item, replies on its existing pull request instead.",
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
