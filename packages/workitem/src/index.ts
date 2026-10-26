@@ -25,8 +25,19 @@ export const WORKITEM_DETAIL_TYPE = 'WorkItem' as const;
 /** Trigger types known to this version of Factorial. The schema accepts any kebab-case value. */
 export const TRIGGER_TYPES = {
   githubIssue: 'github-issue',
-  /** An event on a pull request Factorial opened: a review, a comment addressed to it, or failed checks. `source.id` is the pull request number. */
+  /**
+   * An event on a pull request Factorial opened: a review, a comment addressed to it, or failed checks. `source.id` is the pull request number.
+   * Superseded by the four types below, which say what the event was and carry `inReplyTo` (#163).
+   */
   githubPullRequest: 'github-pull-request',
+  /** A review submitted on a pull request. `source.id` is the review id. */
+  githubPullRequestReview: 'github-pull-request-review',
+  /** An inline comment on a pull request's diff. `source.id` is the comment id. */
+  githubPullRequestReviewComment: 'github-pull-request-review-comment',
+  /** A comment in a pull request's conversation. `source.id` is the comment id. */
+  githubPullRequestComment: 'github-pull-request-comment',
+  /** A workflow run that completed on a pull request's head. `source.id` is the run id. */
+  githubWorkflowRun: 'github-workflow-run',
 } as const;
 
 export interface WorkItemSource {
@@ -82,6 +93,17 @@ export interface ReworkContext {
 /** Discriminated union over `context.kind`. Only rework exists today. */
 export type WorkItemContext = ReworkContext;
 
+/**
+ * What an item continues: the pull request a review, comment or failed run
+ * belongs to. The pipeline resolves the thread from it and decides what the
+ * item means. Discriminated on `kind`; only `pull-request` exists today.
+ */
+export interface WorkItemInReplyTo {
+  kind: 'pull-request';
+  /** The pull request's number in the item's `repository`. */
+  number: number;
+}
+
 /** The set of WorkItems one trigger produced. */
 export interface WorkItemGroup {
   /** Shared by every WorkItem in the set. */
@@ -106,7 +128,9 @@ export interface WorkItem {
   group?: WorkItemGroup;
   /** Optional: the WorkItem whose Plan stage emitted this one. */
   parentId?: string;
-  /** Optional structured context. A consumer that ignores it still has `body`. */
+  /** Optional: what this item continues. Absent for a new request. Never set together with `context`. */
+  inReplyTo?: WorkItemInReplyTo;
+  /** Optional structured context. A consumer that ignores it still has `body`. Superseded by `inReplyTo`. */
   context?: WorkItemContext;
 }
 
@@ -134,6 +158,8 @@ function describe(error: ErrorObject): string {
     const extra = (error.params as { additionalProperty?: string }).additionalProperty;
     return `${path} has unexpected property "${extra ?? '?'}"`;
   }
+  // A property the schema forbids in this combination, e.g. /context beside /inReplyTo.
+  if (error.keyword === 'false schema') return `${path} must not be present here`;
   return `${path} ${error.message ?? error.keyword}`;
 }
 

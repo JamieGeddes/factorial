@@ -15,6 +15,13 @@
     "requestedBy",
     "createdAt"
   ],
+  "dependentSchemas": {
+    "inReplyTo": {
+      "description": "`inReplyTo` and `context` are two ways to say what an item continues; an item uses one.",
+      "type": "object",
+      "properties": { "context": false }
+    }
+  },
   "properties": {
     "schemaVersion": {
       "description": "Version of this contract. Incremented only for breaking changes.",
@@ -118,8 +125,25 @@
       "type": "string",
       "format": "uuid"
     },
+    "inReplyTo": {
+      "description": "Optional. What this item continues: the record in the source system it was said on, e.g. the pull request a review or comment belongs to. The pipeline resolves the thread from it and decides what the item means; the adapter does not interpret it. Absent for a new request, such as an issue. An item carries this or `context`, never both.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "number"],
+      "properties": {
+        "kind": {
+          "description": "Discriminator for what is continued. Only pull-request exists today; new kinds add a new const here without changing anything else.",
+          "const": "pull-request"
+        },
+        "number": {
+          "description": "The pull request's number in `repository`.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
     "context": {
-      "description": "Optional structured context about the work. Only present for items that need it, e.g. rework of a previous WorkItem. A consumer that ignores this field still has `body`, which carries the human-readable instruction.",
+      "description": "Optional structured context about the work. Only present for items that need it, e.g. rework of a previous WorkItem. A consumer that ignores this field still has `body`, which carries the human-readable instruction. Superseded by `inReplyTo`: adapters stop setting it once the pipeline resolves threads itself (#163).",
       "type": "object",
       "additionalProperties": false,
       "required": [
