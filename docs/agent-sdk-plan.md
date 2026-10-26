@@ -289,7 +289,7 @@ Two fixes came out of the runs:
 
 11b differs from the bullets above in three places:
 
-- **The runtime boundary keeps its Harness denies.** It allows `bedrock-agentcore:*`, so dropping `CreateHarness` and the endpoint actions from its deny list would let a bounded role start an agent of its own if its policy ever allowed it. Denying actions on a resource type Factorial no longer uses costs nothing.
+- **The runtime boundary keeps its Harness deny statements.** It allows `bedrock-agentcore:*`, so dropping `CreateHarness` and the endpoint actions from its deny list would let a bounded role start an agent of its own if its policy ever allowed it. Denying actions on a resource type Factorial no longer uses costs nothing.
 - **The agent boundary's model statement is scoped** to `eu.anthropic.*` inference profiles in the account and `anthropic.*` foundation models, closing the gap `docs/security.md` recorded (every model allowed); `ApplyGuardrail` is limited to the account's guardrails. Each execution role still names its own profiles.
 - **`role/factorial-agent` stays** in the execution role's agent-role rules. No role has that name since 8b, and keeping it in the deny list is the stricter choice.
 
