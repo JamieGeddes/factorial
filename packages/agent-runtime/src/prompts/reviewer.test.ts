@@ -22,6 +22,7 @@ describe('reviewer prompt', () => {
       'before you write /workspace/review.json',
       'write the findings you have so far',
       'the schema and the code that reads it',
+      'a second pass',
     ]) {
       assert.ok(section.includes(text), text);
     }

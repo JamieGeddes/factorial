@@ -11,7 +11,7 @@ import { readConfig } from './config.ts';
 import { preToolUseHooks, reviewerPreToolUseHooks } from './hooks.ts';
 import { queryOptions } from './options.ts';
 import { planBrief, planHooks, readAgentFile, stopHooks, type PlanGate } from './report.ts';
-import { reviewReadHooks, reviewStopHooks, type ReviewReads } from './review.ts';
+import { reviewStopHooks } from './review.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
@@ -50,12 +50,11 @@ function startBuilder(request: RunRequest): AsyncIterable<unknown> {
 }
 
 function startReviewer(request: RunRequest): AsyncIterable<unknown> {
-  const reads: ReviewReads = { count: 0 };
   const options = queryOptions(config, {
     hostEnv: process.env,
     preToolUse: reviewerPreToolUseHooks(config.workspace, onDenied),
-    postToolUse: reviewReadHooks(config.workspace, reads),
-    stop: reviewStopHooks(config.workspace, reads, (reason) => log.info('reviewer sent back', { reason, reads: reads.count })),
+    postToolUse: [],
+    stop: reviewStopHooks(config.workspace, (reason) => log.info('reviewer sent back', { reason })),
     webSearch: undefined,
     abortController,
     stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
