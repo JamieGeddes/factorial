@@ -37,7 +37,7 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 
 `context` is a discriminated union on `kind`. Only one kind exists today:
 
-- **`rework`** — the item reworks a previous `WorkItem`'s pull request. It carries the pull request (number and URL), the Factorial working branch (`factorial/…`), the base branch, the previous `WorkItem`'s `id`, the `cause` (`review` or `checks-failed`) and up to 50 `details` (review comments), each with an author, an optional `path` and `line`, and a `body` of at most 8,000 characters.
+- **`rework`** — the item reworks a previous `WorkItem`'s pull request. It carries the pull request (number and URL), the Factorial working branch (`factorial/…`), the base branch, the previous `WorkItem`'s `id`, the `cause` (`review`, `checks-failed`, or `comment` for a request made in the pull request's conversation) and up to 50 `details` (review comments), each with an author, an optional `path` and `line`, and a `body` of at most 8,000 characters.
 
 New kinds add a new `kind` const without changing anything else in the contract. `body` on the `WorkItem` itself stays the human-readable instruction, so a consumer that ignores `context` still gets something sensible.
 
@@ -81,6 +81,8 @@ Changing this schema is a deliberate, human-approved decision, never a side effe
 4. Update the examples and the tests in `packages/workitem` in the same PR.
 
 ## Change log
+
+- **2026-10: added `comment` to the rework `cause` values.** Additive: existing items validate unchanged. A trusted person who addresses Factorial in a pull request's conversation (`@<slug> rename this to X`) is asking for a change, not reviewing, so the request is answered as theirs and no review is re-requested (#156). Loosening an enum still makes in-flight executions on the previous validator reject the new value, so this needs a drain before promotion.
 
 - **2026-10: added the optional `group` and `parentId` lineage fields.** Additive and backwards-compatible: existing items validate unchanged, and the GitHub issue adapter sets neither. Added while there is one adapter and one consumer, ahead of fan-out across repositories and planner-emitted items. Nothing consumes them yet beyond the ledger. A deliberate contract change: additive, optional, stays in `v1`, and needs a drain before promotion.
 
