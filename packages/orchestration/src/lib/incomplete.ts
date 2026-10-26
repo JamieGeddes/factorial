@@ -1,7 +1,7 @@
 /**
  * Recognising a builder that stopped before finishing. The invoker exits
  * with INCOMPLETE_EXIT_CODE when the builder stops for any reason other than
- * a finished run (end_turn on the harness, success on the Runtime), and the
+ * a finished run (the Agent SDK's success), and the
  * ECS task's failure cause carries that code. Collect uses it to decide
  * whether the build continues in another round; Report uses it to say what
  * happened.
@@ -25,7 +25,7 @@ function safeJson(text: string | undefined): Record<string, unknown> | undefined
   }
 }
 
-/** Whether the failure is the builder's task exiting as incomplete: its iteration or time limit, not an error. */
+/** Whether the failure is the builder's task exiting as incomplete: its turn, budget or time limit, not an error. */
 export function builderIncomplete(error: StepFailure | null | undefined): boolean {
   if (error?.Error !== 'States.TaskFailed') return false;
   const containers = safeJson(error.Cause)?.Containers;

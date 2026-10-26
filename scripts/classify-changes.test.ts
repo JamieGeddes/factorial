@@ -25,7 +25,7 @@ describe('isNonFunctionalPath', () => {
       'templates/30-orchestration.yml',
       'contracts/workitem/v1/workitem.schema.json',
       'scripts/classify-changes.ts',
-      'agent-environment/Dockerfile',
+      'agent-runtime/Dockerfile',
       'invoker/Dockerfile',
       '.github/workflows/deploy.yml',
       'package.json',

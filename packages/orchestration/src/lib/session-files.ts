@@ -185,13 +185,13 @@ export interface ExportSummary {
  * skipped.
  */
 export async function exportSessionFiles(target: SessionTarget, prefix: string): Promise<ExportSummary> {
-  const listing = await mustRun(target, asAgent(target, listScript()), 120);
+  const listing = await mustRun(target, asAgent(listScript()), 120);
   const { files, rejected } = parseListing(listing.stdout);
   const plan = planExport(files);
   const stored: Array<{ name: string; path: string; bytes: number; storedBytes: number; truncated: boolean }> = [];
   const gone: string[] = [];
   for (const group of batches(plan.fetch)) {
-    const result = await mustRun(target, asAgent(target, fetchScript(group)), 300);
+    const result = await mustRun(target, asAgent(fetchScript(group)), 300);
     const contents = parseFetch(result.stdout, group.length);
     for (const [i, file] of group.entries()) {
       const fetched = contents[i];

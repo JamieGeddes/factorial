@@ -1,6 +1,6 @@
 # Finding a run
 
-Everything a run produces is keyed by its work item id: the Step Functions execution name, the harness session id, the ledger row key, the artefact prefix and the `workItemId` field on every log line. Start from the id; it is in the pull request body, the failure comment on the issue and the ledger.
+Everything a run produces is keyed by its work item id: the Step Functions execution name, the Runtime session id, the ledger row key, the artefact prefix and the `workItemId` field on every log line. Start from the id; it is in the pull request body, the failure comment on the issue and the ledger.
 
 All paths are in the AWS console, region **Europe (Ireland) eu-west-1**. Replace `<id>` with the work item id.
 

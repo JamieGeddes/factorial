@@ -89,8 +89,8 @@ export function cloneScript(params: {
 
 /**
  * The starting /workspace/notes.md: the request itself, ahead of the agent's
- * own notes. The harness drops older messages, including the prompt, so the
- * notes file is what keeps the task in view for the whole session.
+ * own notes. Compaction can summarise older messages, including the prompt,
+ * so the notes file is what keeps the task in view for the whole session.
  */
 export function initialNotes(
   workItem: WorkItem,

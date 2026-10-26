@@ -145,18 +145,15 @@ jobs:
           set -euo pipefail
           cfn_role=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-CloudFormationRoleArn'].Value" --output text)
           bucket=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-ArtefactBucketName'].Value" --output text)
-          repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-AgentEnvironmentRepositoryUri'].Value" --output text)
           invoker_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-InvokerRepositoryUri'].Value" --output text)
           runtime_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-AgentRuntimeRepositoryUri'].Value" --output text)
-          test -n "$cfn_role" && test -n "$bucket" && test -n "$repo_uri" && test -n "$invoker_repo_uri" && test -n "$runtime_repo_uri"
+          test -n "$cfn_role" && test -n "$bucket" && test -n "$invoker_repo_uri" && test -n "$runtime_repo_uri"
           echo "::add-mask::$cfn_role"
           echo "::add-mask::$bucket"
-          echo "::add-mask::$repo_uri"
           echo "::add-mask::$invoker_repo_uri"
           echo "::add-mask::$runtime_repo_uri"
           echo "cfn_role=$cfn_role" >> "$GITHUB_OUTPUT"
           echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
-          echo "repo_uri=$repo_uri" >> "$GITHUB_OUTPUT"
           echo "invoker_repo_uri=$invoker_repo_uri" >> "$GITHUB_OUTPUT"
           echo "runtime_repo_uri=$runtime_repo_uri" >> "$GITHUB_OUTPUT"
 
@@ -164,32 +161,6 @@ jobs:
         with:
           platforms: arm64
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
-
-      # No stack uses this image since the reviewer harness went (phase 3.2
-      # of docs/agent-sdk-plan.md); phase 4 removes the step with the
-      # repository.
-      - name: Build and push the agent environment image when its inputs change
-        id: image
-        env:
-          REPO_URI: ${{ steps.foundation.outputs.repo_uri }}
-        run: |
-          set -euo pipefail
-          # The tag is a hash of everything that goes into the image, so an
-          # unchanged image is never rebuilt and a changed one always is.
-          tag=$(git rev-parse HEAD:agent-environment | cut -c1-32)
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if aws ecr describe-images --repository-name factorial/agent-environment --image-ids "imageTag=$tag" >/dev/null 2>&1; then
-            echo "Agent image $tag already exists; skipping the build."
-            exit 0
-          fi
-          # Authenticate to both registries: ECR Public for the base image
-          # (anonymous pulls are rate-limited on shared runners) and the
-          # private repository for the push.
-          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
-          aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
-          docker buildx build --platform linux/arm64 --provenance=false --push \
-            --tag "$REPO_URI:$tag" agent-environment/
-          echo "Pushed agent image $tag."
 
       - name: Build and push the invoker image when its inputs change
         id: invoker
@@ -220,7 +191,7 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.runtime_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/log HEAD:packages/artefacts HEAD:packages/plan HEAD:contracts/plan HEAD:packages/review HEAD:contracts/review HEAD:agent-environment/tools HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/log HEAD:packages/artefacts HEAD:packages/plan HEAD:contracts/plan HEAD:packages/review HEAD:contracts/review HEAD:packages/agent-tools HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/agent-runtime --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Agent runtime image $tag already exists; skipping the build."
@@ -288,41 +259,9 @@ jobs:
       # Promotion is the last step of a successful deployment: the next
       # WorkItem is handled by the version just deployed. Only this role may
       # move a live endpoint; the permissions boundary denies it to every
-      # role Factorial creates for itself. Every harness is promoted: each
-      # role block in the agent template outputs <Role>HarnessId, so a new
-      # role needs no change here.
-      - name: Promote every harness live endpoint
-        run: |
-          set -euo pipefail
-          harness_ids=$(aws cloudformation describe-stacks --stack-name factorial-agent \
-            --query "Stacks[0].Outputs[?ends_with(OutputKey, 'HarnessId')].OutputValue" --output text 2>/dev/null || true)
-          if [ -z "$harness_ids" ] || [ "$harness_ids" = "None" ]; then
-            echo "No agent stack yet; nothing to promote."
-            exit 0
-          fi
-          for harness_id in $harness_ids; do
-            # The CLI applies --query to each page separately, so list every
-            # version and take the highest here.
-            latest=$(aws bedrock-agentcore-control list-harness-versions --harness-id "$harness_id" \
-              --query 'harnessVersions[].harnessVersion' --output text | tr -s '\t ' '\n' | sort -n | tail -n 1)
-            # A freshly created endpoint reports no targetVersion yet; fall back
-            # to the version actually serving traffic.
-            current=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-              --query 'endpoint.[targetVersion, liveVersion] | [?@ != null] | [0]' --output text)
-            status=$(aws bedrock-agentcore-control get-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-              --query 'endpoint.status' --output text)
-            if [ "$latest" = "$current" ] && [ "$status" = "READY" ]; then
-              echo "$harness_id: live endpoint already at harness version $latest."
-              continue
-            fi
-            # Re-issuing the update also repairs an endpoint left in a failed state.
-            aws bedrock-agentcore-control update-harness-endpoint --harness-id "$harness_id" --endpoint-name live \
-              --target-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
-            echo "$harness_id: live endpoint moved from harness version $current to $latest."
-          done
-
-      # The same for every runtime: each runtime block outputs <Role>RuntimeId.
-      # Only a READY version is promoted.
+      # role Factorial creates for itself. Every runtime is promoted: each
+      # role block in the agent template outputs <Role>RuntimeId, so a new
+      # role needs no change here. Only a READY version is promoted.
       - name: Promote every runtime live endpoint
         run: |
           set -euo pipefail
@@ -333,7 +272,8 @@ jobs:
             exit 0
           fi
           for runtime_id in $runtime_ids; do
-            # Paged as for harnesses (#132's deploy failed on page two).
+            # The CLI applies --query to each page separately, so list every
+            # READY version and take the highest here (#132).
             latest=$(aws bedrock-agentcore-control list-agent-runtime-versions --agent-runtime-id "$runtime_id" \
               --query "agentRuntimes[?status=='READY'].agentRuntimeVersion" --output text | tr -s '\t ' '\n' | sort -n | tail -n 1)
             if [ -z "$latest" ] || [ "$latest" = "None" ]; then

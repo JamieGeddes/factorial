@@ -1,6 +1,6 @@
 /**
  * Which agent role this task runs. One task definition serves every role:
- * the state machine passes the role and its harness in the container
+ * the state machine passes the role and its Runtime in the container
  * overrides, and this checks they belong together before anything is invoked.
  */
 import type { WorkItem } from '@factorial/workitem';
@@ -43,8 +43,7 @@ export const INCOMPLETE_EXIT_CODE = 3;
  * what the reviewer left behind.
  */
 export function incompleteReason(role: Role, stopReason: string | undefined): string | undefined {
-  // end_turn is the harness's finished run; success is the Agent SDK's.
-  if (role !== 'builder' || stopReason === 'end_turn' || stopReason === 'success') return undefined;
+  if (role !== 'builder' || stopReason === 'success') return undefined;
   return `incomplete: the builder stopped with ${stopReason ?? 'no stop reason'} before finishing`;
 }
 
@@ -86,40 +85,6 @@ export function outcomeAttributes(role: Role, outcome: RunOutcome): Record<strin
   };
 }
 
-export interface HarnessTarget {
-  role: Role;
-  harnessArn: string;
-  harnessId: string;
-  /** The endpoint invoked, `live` in normal running. */
-  qualifier: string;
-}
-
-function isRole(value: string): value is Role {
-  return (ROLES as readonly string[]).includes(value);
-}
-
-/** Read and check the role and harness from the task's environment. */
-export function harnessTarget(env: Record<string, string | undefined>): HarnessTarget {
-  const required = (name: string): string => {
-    const value = env[name];
-    if (!value) throw new Error(`Missing required environment variable ${name}`);
-    return value;
-  };
-  const role = required('ROLE');
-  if (!isRole(role)) throw new Error(`Unknown agent role "${role}"`);
-  const harnessId = required('HARNESS_ID');
-  if (!new RegExp(`^factorial_${role}-[A-Za-z0-9]+$`).test(harnessId)) {
-    throw new Error(`Harness ${harnessId} is not the ${role} harness`);
-  }
-  const harnessArn = required('HARNESS_ARN');
-  if (!/^arn:aws[a-z-]*:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:harness\//.test(harnessArn) || !harnessArn.endsWith(`:harness/${harnessId}`)) {
-    throw new Error(`HARNESS_ARN does not name harness ${harnessId}`);
-  }
-  const qualifier = required('HARNESS_QUALIFIER');
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(qualifier)) throw new Error(`"${qualifier}" is not an endpoint name`);
-  return { role, harnessArn, harnessId, qualifier };
-}
-
 export interface RuntimeTarget {
   role: Role;
   runtimeArn: string;
@@ -128,18 +93,16 @@ export interface RuntimeTarget {
   qualifier: string;
 }
 
-/** Which kind of agent the task invokes: a harness, or Factorial's host on an AgentCore Runtime. */
-export type AgentTarget = ({ kind: 'harness' } & HarnessTarget) | ({ kind: 'runtime' } & RuntimeTarget);
+function isRole(value: string): value is Role {
+  return (ROLES as readonly string[]).includes(value);
+}
 
 /**
- * Read and check the target from the task's environment. TARGET is
- * `harness` (the default) or `runtime`; a runtime is named by RUNTIME_ARN and
- * RUNTIME_QUALIFIER, and must be the role's runtime, `factorial_<role>-…`.
+ * Read and check the role and its Runtime from the task's environment: the
+ * Runtime is named by RUNTIME_ARN and RUNTIME_QUALIFIER, and must be the
+ * role's own, `factorial_<role>-…`.
  */
-export function agentTarget(env: Record<string, string | undefined>): AgentTarget {
-  const target = env.TARGET || 'harness';
-  if (target === 'harness') return { kind: 'harness', ...harnessTarget(env) };
-  if (target !== 'runtime') throw new Error(`Unknown target "${target}"`);
+export function runtimeTarget(env: Record<string, string | undefined>): RuntimeTarget {
   const required = (name: string): string => {
     const value = env[name];
     if (!value) throw new Error(`Missing required environment variable ${name}`);
@@ -155,7 +118,7 @@ export function agentTarget(env: Record<string, string | undefined>): AgentTarge
   }
   const qualifier = required('RUNTIME_QUALIFIER');
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(qualifier)) throw new Error(`"${qualifier}" is not an endpoint name`);
-  return { kind: 'runtime', role, runtimeArn, runtimeId, qualifier };
+  return { role, runtimeArn, runtimeId, qualifier };
 }
 
 /** A changed file the orchestrator flagged for care, and why. */

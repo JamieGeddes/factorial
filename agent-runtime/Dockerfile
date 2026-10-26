@@ -2,11 +2,12 @@
 # is Factorial's host process around the Claude Agent SDK (packages/agent-runtime).
 # Built for linux/arm64 only (AgentCore Runtime requirement).
 #
-# The toolchain is agent-environment/'s, plus python3 and cfn-lint so the
-# builder can run the repository's full checks (npm run ci ends with
-# cfn-lint). The image holds no
-# credentials and no credential helpers: the model is reached through Bedrock
-# with the execution role, and the orchestrator does all GitHub access.
+# The toolchain is Node 22, git, gh, jq and quiet (packages/agent-tools),
+# plus python3 and cfn-lint so the builder can run the repository's full
+# checks (npm run ci ends with cfn-lint). It is the only agent image. The
+# image holds no credentials and no credential helpers: the model is reached
+# through Bedrock with the execution role, and the orchestrator does all
+# GitHub access.
 #
 # The host process runs as root and starts the SDK's Claude Code subprocess as
 # the agent user through claude-as-agent, so the model's loop, shell and tools

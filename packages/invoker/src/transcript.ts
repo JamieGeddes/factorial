@@ -1,10 +1,9 @@
 /**
- * The build transcript: every harness stream event, one JSON line each,
- * buffered to local disk while the build runs and uploaded when it ends.
- * Lines are redacted as they are written, so no credential the agent echoed
- * reaches the disk or the store. Text and tool input stream in small deltas
- * that can split a credential, so consecutive deltas of one kind are joined
- * into a single line before they are redacted. Past the size cap, events are
+ * A run's transcript: every SDK message, one JSON line each, buffered to
+ * local disk while the run goes on and uploaded when it ends. Lines are
+ * redacted as they are written, so no credential the agent echoed reaches the
+ * disk or the store. The host sends whole messages, never partial ones, so a
+ * credential cannot be split across lines. Past the size cap, events are
  * counted but not kept, and a truncation marker becomes the last line.
  */
 import { closeSync, openSync, writeSync } from 'node:fs';
@@ -22,28 +21,6 @@ export interface TranscriptSummary {
   truncated: boolean;
 }
 
-type DeltaKind = 'text' | 'toolUse';
-
-interface PendingDelta {
-  kind: DeltaKind;
-  at: Date;
-  contentBlockIndex: unknown;
-  parts: string[];
-  length: number;
-  events: number;
-}
-
-/** The streamed text in a delta event, and which kind it is; undefined for any other event. */
-function deltaOf(event: object): { kind: DeltaKind; text: string; contentBlockIndex: unknown } | undefined {
-  const block = (event as { contentBlockDelta?: { contentBlockIndex?: unknown; delta?: { text?: unknown; toolUse?: { input?: unknown } } } })
-    .contentBlockDelta;
-  if (typeof block?.delta?.text === 'string') return { kind: 'text', text: block.delta.text, contentBlockIndex: block.contentBlockIndex };
-  if (typeof block?.delta?.toolUse?.input === 'string') {
-    return { kind: 'toolUse', text: block.delta.toolUse.input, contentBlockIndex: block.contentBlockIndex };
-  }
-  return undefined;
-}
-
 export class TranscriptBuffer {
   readonly path: string;
   private readonly maxBytes: number;
@@ -53,7 +30,6 @@ export class TranscriptBuffer {
   private droppedEvents = 0;
   private truncated = false;
   private closed = false;
-  private pending: PendingDelta | undefined;
 
   constructor(path: string, maxBytes = MAX_TRANSCRIPT_BYTES) {
     this.path = path;
@@ -63,57 +39,29 @@ export class TranscriptBuffer {
 
   append(event: object, at: Date = new Date()): void {
     if (this.closed) return;
-    const delta = deltaOf(event);
-    if (delta && this.pending?.kind === delta.kind && this.pending.contentBlockIndex === delta.contentBlockIndex) {
-      this.pending.parts.push(delta.text);
-      this.pending.length += delta.text.length;
-      this.pending.events += 1;
-      if (this.pending.length >= this.maxBytes) this.flush();
-      return;
-    }
-    this.flush();
-    if (delta) {
-      this.pending = { ...delta, at, parts: [delta.text], length: delta.text.length, events: 1 };
-      return;
-    }
-    this.write(event, at, 1);
+    this.write(event, at);
   }
 
-  /** Write the joined deltas as one event, so a credential split across them is redacted whole. */
-  private flush(): void {
-    const pending = this.pending;
-    if (!pending) return;
-    this.pending = undefined;
-    const text = pending.parts.join('');
-    const delta = pending.kind === 'text' ? { text } : { toolUse: { input: text } };
-    this.write(
-      { contentBlockDelta: { ...(pending.contentBlockIndex === undefined ? {} : { contentBlockIndex: pending.contentBlockIndex }), delta } },
-      pending.at,
-      pending.events,
-    );
-  }
-
-  private write(event: object, at: Date, events: number): void {
+  private write(event: object, at: Date): void {
     if (this.truncated) {
-      this.droppedEvents += events;
+      this.droppedEvents += 1;
       return;
     }
     const line = `${redactSecrets(JSON.stringify({ at: at.toISOString(), ...event }))}\n`;
     const size = Buffer.byteLength(line);
     if (this.bytes + size > this.maxBytes - MARKER_RESERVE_BYTES) {
       this.truncated = true;
-      this.droppedEvents += events;
+      this.droppedEvents += 1;
       return;
     }
     writeSync(this.fd, line);
     this.bytes += size;
-    this.events += events;
+    this.events += 1;
   }
 
   /** Stop writing, add the truncation marker if events were dropped, and say what was kept. */
   close(): TranscriptSummary {
     if (!this.closed) {
-      this.flush();
       this.closed = true;
       if (this.truncated) {
         const marker = `${JSON.stringify({

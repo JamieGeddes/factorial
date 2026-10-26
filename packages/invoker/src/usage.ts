@@ -1,5 +1,5 @@
 /**
- * Token accounting for one harness invocation. The stream carries one usage
+ * Token accounting for one agent run. The stream carries one usage
  * record per model call, each covering only that call; the whole conversation
  * is resent on every call, so the run's consumption is the sum, not the last
  * record (which is roughly the final context size).

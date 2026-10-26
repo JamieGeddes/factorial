@@ -20,12 +20,10 @@ export interface CommandResult {
 }
 
 export interface SessionTarget {
-  /** The harness or Runtime ARN. */
+  /** The role's Runtime ARN. */
   arn: string;
   qualifier: string;
   sessionId: string;
-  /** A harness's agent runs as root; Factorial's Runtime host runs it as `agent`. */
-  kind: 'harness' | 'runtime';
 }
 
 const client = new BedrockAgentCoreClient({});
@@ -40,9 +38,9 @@ export type SessionRole = 'builder' | 'reviewer';
  * qualifier.
  */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
-  const qualifier = requireEnv('HARNESS_QUALIFIER');
+  const qualifier = requireEnv('RUNTIME_QUALIFIER');
   const arn = requireEnv(role === 'builder' ? 'BUILDER_RUNTIME_ARN' : 'REVIEWER_RUNTIME_ARN');
-  return { arn, qualifier, sessionId, kind: 'runtime' };
+  return { arn, qualifier, sessionId };
 }
 
 /** The user the Runtime host runs the model as, and its home. */
@@ -53,11 +51,9 @@ const AGENT_HOME = '/home/agent';
  * A script to run as the user the model runs as, so that root never runs git
  * or reads files in a workspace the model controls: whatever the model
  * planted there acts with no more than its own privileges. The same drop as
- * the host's `claude-as-agent` wrapper. On a harness the model is root, and
- * the script runs unchanged.
+ * the host's `claude-as-agent` wrapper.
  */
-export function asAgent(target: SessionTarget, script: string): string {
-  if (target.kind === 'harness') return script;
+export function asAgent(script: string): string {
   return [
     `exec setpriv --reuid=${AGENT_USER} --regid=${AGENT_USER} --init-groups --no-new-privs --bounding-set=-all -- \\`,
     `  env HOME=${AGENT_HOME} bash -c ${shellQuote(script)}`,
@@ -70,17 +66,16 @@ export function asAgent(target: SessionTarget, script: string): string {
  * be in the tree yet. Call it after the last seeding write.
  */
 export async function handOverWorkspace(target: SessionTarget): Promise<void> {
-  if (target.kind === 'harness') return;
   await mustRun(target, `chown -R ${AGENT_USER}:${AGENT_USER} /workspace`, 120);
 }
 
 /**
- * The command string to send. A harness runs it through a shell. A Runtime
- * splits it into words as a shell would, honouring quotes, but runs the first
- * word as a program, so `set -e` or a pipeline fails unless bash is named.
+ * The command string to send. The Runtime splits it into words as a shell
+ * would, honouring quotes, but runs the first word as a program, so `set -e`
+ * or a pipeline fails unless bash is named.
  */
-export function commandFor(target: SessionTarget, script: string): string {
-  return target.kind === 'runtime' ? `bash -c ${shellQuote(script)}` : script;
+export function commandFor(script: string): string {
+  return `bash -c ${shellQuote(script)}`;
 }
 
 export async function runCommand(target: SessionTarget, command: string, timeoutSeconds = 300): Promise<CommandResult> {
@@ -89,7 +84,7 @@ export async function runCommand(target: SessionTarget, command: string, timeout
       agentRuntimeArn: target.arn,
       qualifier: target.qualifier,
       runtimeSessionId: target.sessionId,
-      body: { command: commandFor(target, command), timeout: timeoutSeconds },
+      body: { command: commandFor(command), timeout: timeoutSeconds },
     }),
   );
 

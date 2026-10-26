@@ -3,7 +3,7 @@ Transform: AWS::Serverless-2016-10-31
 Description: >-
   Factorial orchestration: the work ledger, the Step Functions state machine
   (plan -> build -> test -> PR) with its live alias, the rule that starts it from the
-  work bus, the Fargate invoker that runs the harness, and the Lambda steps
+  work bus, the Fargate invoker that runs the agents, and the Lambda steps
   around the agent. Deployed by GitHub Actions.
 
 Parameters:
@@ -67,7 +67,7 @@ Globals:
         NODE_OPTIONS: --enable-source-maps
         TABLE_NAME: !Ref WorkItemsTable
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
-        HARNESS_QUALIFIER: live
+        RUNTIME_QUALIFIER: live
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
         REVIEWER_RUNTIME_ARN: !ImportValue Factorial-ReviewerRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
@@ -324,6 +324,7 @@ Resources:
     Type: AWS::EC2::SecurityGroup
     Properties:
       GroupName: factorial-invoker
+      # Says harness, but changing a security group's description replaces it.
       GroupDescription: Factorial harness invoker tasks (egress only)
       VpcId: !Ref Vpc
       Tags:
@@ -1036,7 +1037,6 @@ Resources:
                       "Name": "invoker",
                       "Environment": [
                         { "Name": "ROLE", "Value": "builder" },
-                        { "Name": "TARGET", "Value": "runtime" },
                         { "Name": "RUNTIME_ARN", "Value": "${BuilderRuntimeArn}" },
                         { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "BUILD_ROUND", "Value": "{% $string($buildRound) %}" },
@@ -1183,7 +1183,6 @@ Resources:
                       "Name": "invoker",
                       "Environment": [
                         { "Name": "ROLE", "Value": "reviewer" },
-                        { "Name": "TARGET", "Value": "runtime" },
                         { "Name": "RUNTIME_ARN", "Value": "${ReviewerRuntimeArn}" },
                         { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "SENSITIVE_PATHS", "Value": "{% $reviewPrep.sensitivePathsJson %}" },

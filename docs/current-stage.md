@@ -2,7 +2,7 @@
 
 The record of what is deployed and how it behaves, stage by stage. `CLAUDE.md` holds what is agreed and binding (requirements, target architecture, what is fixed from day one, the shape of the current stage and the conventions); this document holds the detail behind its **Current stage** section. When a change completes or alters a stage, both are updated in the same pull request.
 
-Stage 0 is complete: on 2026-10-17 a labelled issue (#2) became a tested pull request (#3) with no human step in between. `docs/finding-a-run.md` goes from a work item id to everything a run produced.
+Stage 0 is complete: on 2026-10-17 a labelled issue (#2) became a tested pull request (#3) with no human step in between. Its agents then moved from AgentCore Harness to the Claude Agent SDK on AgentCore Runtime (`docs/agent-sdk-plan.md`): tag `stage-0-harness` marks the last commit with the harnesses, and `stage-1-agent-sdk` the first with none. `docs/finding-a-run.md` goes from a work item id to everything a run produced.
 
 ## Triggers
 
@@ -16,7 +16,7 @@ The orchestration stack (`factorial-orchestration`) holds the `factorial-work` s
 
 ### Prepare
 
-- Creates the ledger row and the artefact prefix, clones the repository into the builder's session on a new `factorial/<workItemId>` branch, hands `/workspace` to the `agent` user, and seeds `/workspace/notes.md` with the request under `# Task` (the harness drops nothing from the conversation at this model, but the notes file is what a later session starts from).
+- Creates the ledger row and the artefact prefix, clones the repository into the builder's session on a new `factorial/<workItemId>` branch, hands `/workspace` to the `agent` user, and seeds `/workspace/notes.md` with the request under `# Task` (compaction may summarise the conversation, and the notes file is what a later session starts from).
 - **Resume:** a new item from the same source as an earlier attempt that failed after saving work, or whose tests failed, resumes on that attempt's `factorial/*` branch. Prepare finds it through the ledger's `sourceKey-createdAt-index` and adds a "Previous attempt" section to the notes; the builder's first message also says the attempt resumes and to build on the branch's commits. A resumed item's attempt is one more than the attempt it resumes, and its artefact prefix uses its own id. Attempts made before the index existed are not found.
 - **Rework** (`context.kind: "rework"` in the `WorkItem` contract): Prepare checks out the previous item's `factorial/*` branch instead of creating one, and writes `/workspace/rework.md` with the review details and, for failed checks, the failing jobs' logs (last 200 lines, redacted, fetched with a short-lived `actions: read` token outside the sandbox). The agent is told to address each point on the existing branch and to say in `summary.md` how each was handled. The ledger links the rework item to `previousWorkItemId` and the PR number. No trigger produces rework items yet.
 
@@ -59,7 +59,7 @@ The orchestration stack (`factorial-orchestration`) holds the `factorial-work` s
 - A `PreToolUse` hook denies file edits outside `/workspace` or under `/workspace/.claude` (the SDK's own files) and `git push`, `gh auth` and `gh api`; it constrains a prompt injection and is not the access gate. Compaction is the SDK's, as the context nears the model's 1M-token window; no run has reached it yet (the largest peaked at 112k). Web search is the host's in-process `web_search` tool, which signs calls to the `factorial-web-search` gateway with the execution role. `usage.json` records the Runtime version serving `live`, the models, the limits and the SDK's cost at list price, and each subagent run (type, duration, tool calls, and tokens summed from its own calls, output as a lower bound) with a total per type, which the run's own totals already include. The SDK's `totalTokens` on an Agent result is the subagent's last call, so it is kept only as `finalContextTokens`.
 - **Reviewer** (`factorial_reviewer`, since 2026-10-26; `docs/agent-sdk-plan.md` phase 3.2). A second AgentCore Runtime from the same image and host, with `FACTORIAL_ROLE=reviewer` and role `factorial-agent-reviewer`: its own system prompt (ported from its harness), Claude Sonnet 5.5 for the loop and Haiku 5.5 for background calls, no subagents and no web search. Tools: Read, Grep, Glob, Bash, and Write and Edit, which the `PreToolUse` hook lets reach only `/workspace/review.json`; the hook also denies shell commands that redirect to a file, commit or otherwise change git state, install, or write with `tee`, `sed -i`, `rm` and the like, and the `bash -c` style wrappers that would hide one. Limits: 60 turns, $2 and 900 seconds (below `ReviewTimeoutSeconds`). Its harness (GLM 5.3 Flash via Z.ai through LiteLLM) was removed with the model key's credential provider the same day; the `factorial/zai/api-key` secret is deleted by hand in phase 4.
 - The deploy workflow tags each image with a hash of its inputs, builds it only when that hash is new, and passes the tags to the agent stack.
-- The template is laid out one block per role (see **Agent roles** in `CLAUDE.md` Conventions). The deploy workflow's final step moves every harness's and runtime's `live` endpoint to its newest version.
+- The template is laid out one block per role (see **Agent roles** in `CLAUDE.md` Conventions). The deploy workflow's final step moves every runtime's `live` endpoint to its newest READY version.
 
 ## The artefact store and the ledger
 
@@ -69,7 +69,7 @@ The artefact store (`factorial-work-artefacts-<account>`, in the orchestration s
 |---|---|---|
 | `workitem.json`, `prepare/branch.json` | Prepare | The work item and the branch |
 | `plan/plan.md`, `plan/plan.json`, `plan/validation.json` | Collect (SaveWork too; the latest round's) | The builder's plan, valid or not, and its validation; the plan subagent's run is in the build transcript (`plan/transcript.jsonl` and `plan/usage.json` are the planner harness's, before phase 3.1) |
-| `build/transcript.jsonl`, `build/usage.json` (round 1), `build/round-<n>/transcript.jsonl`, `build/round-<n>/usage.json` (later rounds) | Invoker | Every harness stream event or SDK message (redacted, capped at 50 MB with a truncation marker) and the usage: summed and per-call tokens, harness version, model id, stop reason, tool calls, duration; written on every exit including a stopped task (`stopReason: "interrupted"`) |
+| `build/transcript.jsonl`, `build/usage.json` (round 1), `build/round-<n>/transcript.jsonl`, `build/round-<n>/usage.json` (later rounds) | Invoker | Every SDK message (redacted, capped at 50 MB with a truncation marker) and the usage: summed and per-call tokens, runtime version, model id, stop reason, tool calls, duration; written on every exit including a stopped task (`stopReason: "interrupted"`) |
 | `build/round-<n>/continuing.json` | ContinueBuild | The round's session id and the commit it started from |
 | `build/summary.md`, `build/notes.md`, `build/rework.md`, `build/logs/<name>`, `build/logs/index.json`, `build/bundle.git` | Collect, before the push (SaveWork too; the latest round's) | The session's files; command logs 5 MB per file keeping the end and 50 MB in total, with the index listing what was stored, truncated or skipped |
 | `test/result.json` | OpenPullRequest, or Report when tests fail | The test outcome and run |
@@ -79,7 +79,7 @@ The artefact store (`factorial-work-artefacts-<account>`, in the orchestration s
 | `pr/pr.json` | OpenPullRequest | The pull request |
 | `report.json` | Every terminal path | The outcome and a short reason |
 
-The ledger row points at the build records with `build.transcriptKey` and `build.usageKey` (the latest round's), holds `buildRounds`, `buildSessionId` (the latest round's session) and `buildUsageTotal` (usage summed over rounds; `usage` is the latest round's), and keeps the existing `usage` totals until the progress record (#15) defines per-stage fields. Token usage is recorded the way Z.ai reports it: `inputTokens` is the gross prompt size including cache reads, and `uncachedInputTokens` is what is billed at full rate.
+The ledger row points at the build records with `build.transcriptKey` and `build.usageKey` (the latest round's), holds `buildRounds`, `buildSessionId` (the latest round's session) and `buildUsageTotal` (usage summed over rounds; `usage` is the latest round's), and keeps the existing `usage` totals until the progress record (#15) defines per-stage fields. Token usage keeps the shape it had under the Harness: `inputTokens` is the gross prompt size including cache reads and writes, and `uncachedInputTokens` is what is billed at full rate.
 
 ## Logging and correlation
 
@@ -88,4 +88,4 @@ Every orchestrator Lambda and the invoker log one JSON object per line through `
 ## Stacks and deployment
 
 - `factorial-foundation` (deployed by a human, `docs/bootstrap.md`): GitHub OIDC provider, deploy role, CloudFormation execution role, the two permissions boundaries, the artefact bucket and the agent environment ECR repository. The deploy role ARN is the `AWS_DEPLOY_ROLE_ARN` repository secret.
-- The deploy workflow runs after CI on `main`, deploys every numbered template above `00`, and then promotes the harness and runtime `live` endpoints. It skips itself when nothing functional changed since the last deploy (`scripts/classify-changes.ts`).
+- The deploy workflow runs after CI on `main`, deploys every numbered template above `00`, and then promotes the runtime `live` endpoints. It skips itself when nothing functional changed since the last deploy (`scripts/classify-changes.ts`).

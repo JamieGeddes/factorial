@@ -2,7 +2,7 @@
   "name": "@factorial/invoker",
   "version": "0.1.0",
   "private": true,
-  "description": "Fargate task that runs one harness invocation to completion",
+  "description": "Fargate task that runs one agent invocation to completion",
   "type": "module",
   "scripts": {
     "build": "node --disable-warning=ExperimentalWarning build.ts",

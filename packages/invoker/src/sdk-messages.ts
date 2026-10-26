@@ -1,9 +1,9 @@
 /**
  * What the invoker reads from a Claude Agent SDK run on an AgentCore Runtime
  * (packages/agent-runtime): the SDK's messages, numbered by the host, plus the
- * host's own end markers. The tally keeps what the harness path keeps from
- * its stream events (tool calls, per-call usage, the stop reason, an error)
- * and adds what only the SDK reports: the result's cost estimate, per-model
+ * host's own end markers. The tally keeps tool calls, per-call usage, the
+ * stop reason and any error, as the Harness path did until phase 4 of
+ * docs/agent-sdk-plan.md, and adds what only the SDK reports: the result's cost estimate, per-model
  * usage including subagents, turns and permission denials.
  */
 import { addCallUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
@@ -50,9 +50,10 @@ export interface HostStatus {
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
 
 /**
- * One model call's usage in the harness path's shape. Anthropic reports
- * input_tokens excluding cache reads and writes; the harness's inputTokens
- * includes them, so they are added back to keep the two comparable.
+ * One model call's usage in the shape usage.json has always had. Anthropic
+ * reports input_tokens excluding cache reads and writes; usage.json's
+ * inputTokens includes them (as the Harness reported it), so they are added
+ * back to keep records comparable across the move.
  */
 export function callUsageOf(usage: AnthropicUsage | undefined): CallUsage | undefined {
   if (!usage) return undefined;
