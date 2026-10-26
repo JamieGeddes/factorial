@@ -5,12 +5,13 @@
 import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
-import { issueNumber, reworkContext, type WorkContext } from '../lib/context.ts';
+import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { builderIncomplete } from '../lib/incomplete.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { logged, runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { attemptRecord, recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
+import { continuedPullRequest } from '../lib/turn.ts';
 
 interface ReportInput {
   status: 'no-changes' | 'tests-failed' | 'failed' | 'invalid-plan';
@@ -33,8 +34,9 @@ interface ReportInput {
  * the requester is told there rather than on an issue.
  */
 function isRework(input: Pick<ReportInput, 'ctx' | 'workItem'>): boolean {
-  const workItem = input.ctx?.workItem ?? (input.workItem as WorkItem | undefined);
-  return typeof workItem === 'object' && workItem !== null && reworkContext(workItem) !== undefined;
+  if (input.ctx) return input.ctx.rework !== undefined;
+  const workItem = resolveWorkItem(input);
+  return workItem !== undefined && continuedPullRequest(workItem) !== undefined;
 }
 
 /** A sentence pointing at the pushed branch, when there is one. */
@@ -173,10 +175,10 @@ function safeJson(text: string | undefined): Record<string, unknown> | undefined
 
 /** Where the requester is told: the pull request for rework, otherwise the source issue, if any. */
 export function commentTarget(workItem: WorkItem): number | undefined {
-  return reworkContext(workItem)?.pullRequest.number ?? issueNumber(workItem);
+  return continuedPullRequest(workItem)?.number ?? issueNumber(workItem);
 }
 
-function resolveWorkItem(input: ReportInput): WorkItem | undefined {
+function resolveWorkItem(input: Pick<ReportInput, 'ctx' | 'workItem'>): WorkItem | undefined {
   if (input.ctx) return input.ctx.workItem;
   try {
     assertWorkItem(input.workItem);
@@ -206,6 +208,6 @@ export const handler = logged('report', reportKey, async (input: ReportInput, lo
   if (target === undefined) return;
 
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const client = await repositoryClient(repo, { issues: 'write', ...(reworkContext(workItem) ? { pull_requests: 'write' } : {}) });
+  const client = await repositoryClient(repo, { issues: 'write', ...(continuedPullRequest(workItem) ? { pull_requests: 'write' } : {}) });
   await client.commentOnIssue(repo, target, message);
 });

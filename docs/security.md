@@ -56,11 +56,13 @@ Each layer is independent: it stops a class of attack on its own, and it does no
 
   | Step | Token permissions |
   |---|---|
+  | Intake (resume check; the pull request and an inline comment's review) | `contents: read`; `pull_requests: read` |
+  | Intake (refusal reply, acknowledging reaction) | `issues: write`, `pull_requests: write` |
   | Prepare, ContinueBuild, PrepareReview (clone) | `contents: read` |
-  | Prepare (fetch failing-check logs for rework) | `contents: read`, `actions: read` |
+  | Prepare (fetch failing-check logs and review comments for rework) | `contents: read`, `actions: read`, `pull_requests: read` |
   | Collect (clean-room push) | `contents: write`, plus `workflows: write` only when the change edits a workflow |
   | OpenPullRequest | `contents: read`, `pull_requests: write`, `issues: write` |
-  | Report | `issues: write` |
+  | Report | `issues: write`, plus `pull_requests: write` for a turn on a pull request |
 
 - A token is sent as an HTTP header on the single git command that needs it and is never written to disk or to the session's environment.
 - **Model access is IAM, not a key.** Every agent reaches Claude on Bedrock. Its execution role may call only its named EU inference profiles and the foundation models behind them, and the agent boundary caps every agent role at Anthropic models, so there is no model credential to hold, rotate, leak or vault. Until 2026-10-26 the harnesses reached a third-party provider (Z.ai) with a key in AgentCore Identity's token vault, resolved only through the service; the credential provider, the secret and the boundary's credential statements were removed in phase 4 of `docs/agent-sdk-plan.md`.

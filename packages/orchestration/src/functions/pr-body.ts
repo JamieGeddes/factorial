@@ -1,4 +1,4 @@
-import type { ReworkContext, WorkItem } from '@factorial/workitem';
+import type { WorkItem } from '@factorial/workitem';
 
 import type { Plan } from '@factorial/plan';
 
@@ -11,11 +11,11 @@ import {
   type BuilderSummary,
   type StepReport,
 } from '../lib/builder-summary.ts';
-import type { WorkContext } from '../lib/context.ts';
+import type { ReworkTurn, WorkContext } from '../lib/context.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
 import { GUARD_FINDING_PREFIX, type ReviewDigest } from '../lib/review-files.ts';
-import type { ReworkPoint } from '../lib/rework-admission.ts';
+import type { ReworkPoint } from '../lib/rework-points.ts';
 
 export interface TestResult {
   runUrl?: string;
@@ -409,7 +409,7 @@ const MAX_REWORK_POINTS = 50;
  * (with a review's inline comments); the work item's details for runs that
  * started before it recorded one.
  */
-export function reworkPointsSection(rework: ReworkContext, points: readonly ReworkPoint[], summary: BuilderSummary | undefined): string {
+export function reworkPointsSection(rework: Pick<ReworkTurn, 'cause'>, points: readonly ReworkPoint[], summary: BuilderSummary | undefined): string {
   const heading = { review: '## Points raised', 'checks-failed': '## Failing checks', comment: '## Request' }[rework.cause];
   if (points.length === 0) {
     return [heading, '', '_No specific points were recorded for this rework._'].join('\n');
@@ -429,7 +429,7 @@ export function reworkPointsSection(rework: ReworkContext, points: readonly Rewo
  */
 export function reworkComment(
   ctx: WorkContext,
-  rework: ReworkContext,
+  rework: Pick<ReworkTurn, 'cause'>,
   summaryText: string,
   test: TestResult,
   headSha: string,
@@ -446,7 +446,7 @@ export function reworkComment(
   const tested = test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
   const body = [
     `Factorial has reworked this pull request after ${why}. The branch is now at \`${headSha.slice(0, 12)}\`, and ${tested}. The description above still describes the change as first opened; this comment covers the rework.`,
-    reworkPointsSection(rework, ctx.reworkPoints ?? rework.details, summary),
+    reworkPointsSection(rework, ctx.reworkPoints ?? [], summary),
     summarySection(summary, summaryText, undefined),
     reviewSection(extras.review),
     testsSection(test, summary, extras.facts ?? null, undefined),

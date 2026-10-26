@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:intake:v1",
+  "title": "IntakeRecord",
+  "description": "What Intake decided about one WorkItem: the thread it belongs to and the route it takes. Written by the orchestrator to intake/intake.json and validated before the state machine acts on the route. Internal to Factorial, not part of the WorkItem API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workItemId", "route", "turn", "reason"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "workItemId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "route": {
+      "description": "Which path through the fixed stage graph the item takes: change (Prepare, Build, Collect, Test, Review, OpenPullRequest), or refuse (nothing runs; the refusal is recorded and, when a person asked, answered).",
+      "enum": ["change", "refuse"]
+    },
+    "turn": {
+      "description": "What kind of turn the item is: a new request, a resumed attempt at an earlier request, or a turn on a pull request Factorial opened.",
+      "enum": ["new", "resume", "rework"]
+    },
+    "reason": {
+      "description": "Why this route, in a sentence.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "threadKey": {
+      "description": "The thread the item belongs to, `<owner>/<name>#<branch>`. Absent when the item was refused before its thread was found.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 600
+    },
+    "branch": {
+      "description": "The thread's branch.",
+      "type": "string",
+      "pattern": "^factorial/"
+    },
+    "pullRequest": {
+      "description": "For a turn on a pull request, its number.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "cause": {
+      "description": "For a turn on a pull request, why it needs rework, derived from what happened.",
+      "enum": ["review", "checks-failed", "comment"]
+    },
+    "previousWorkItemId": {
+      "description": "For a turn on a pull request, the item that opened it, from the thread.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "resumedFrom": {
+      "description": "For a resumed attempt, the attempt it continues.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "refusal": {
+      "description": "For the refuse route: the ledger status recorded and whether the refusal was answered on the pull request.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "replied"],
+      "properties": {
+        "status": {
+          "enum": ["not-eligible", "busy", "rework-limit", "covered-by-review"]
+        },
+        "replied": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

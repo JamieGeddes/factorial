@@ -22,6 +22,7 @@ const ctx: WorkContext = {
     requestedBy: 'JamieGeddes',
     createdAt: '2026-10-17T09:00:00Z',
   },
+  threadKey: 'jamiegeddes/factorial#factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   sessionId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   baseBranch: 'main',
@@ -412,7 +413,7 @@ describe('reworkComment', () => {
       { author: 'carol', body: 'And a doc.' },
     ],
   };
-  const reworkCtx: WorkContext = { ...ctx, workItem: { ...ctx.workItem, context: rework } };
+  const reworkCtx: WorkContext = { ...ctx, workItem: { ...ctx.workItem, context: rework }, reworkPoints: [{ author: 'alice', path: 'src/a.ts', line: 3 }, { author: 'bob' }, { author: 'carol' }] };
   const summary = `${summaryMd()}\n\n## Rework points\n- 1: Renamed it to \`b.ts\`.\n- 2: Added \`a.test.ts\`.\n`;
 
   it('answers each point by number, mentioning who raised it and where', () => {
@@ -440,7 +441,7 @@ describe('reworkComment', () => {
 
   it("answers a conversation request as the requester's", () => {
     const asked = { ...rework, cause: 'comment' as const, details: [{ author: 'alice', body: 'Rename it.' }] };
-    const askedCtx: WorkContext = { ...reworkCtx, workItem: { ...reworkCtx.workItem, requestedBy: 'alice', context: asked } };
+    const askedCtx: WorkContext = { ...reworkCtx, workItem: { ...reworkCtx.workItem, requestedBy: 'alice', context: asked }, reworkPoints: [{ author: 'alice' }] };
     const text = reworkComment(askedCtx, asked, '## Rework points\n- 1: Renamed.\n## Summary\nok', PASS, HEAD, {});
     assert.match(text, /^Factorial has reworked this pull request after the request from @alice\./);
     assert.match(text, /## Request\n\n1\. @alice: Renamed\./);
@@ -448,14 +449,14 @@ describe('reworkComment', () => {
 
   it('heads the points as failing checks for a checks-failed rework, and copes with none recorded', () => {
     const failed = { ...rework, cause: 'checks-failed' as const, details: [] };
-    const text = reworkComment(reworkCtx, failed, summaryMd(), PASS, HEAD, {});
+    const text = reworkComment({ ...reworkCtx, reworkPoints: [] }, failed, summaryMd(), PASS, HEAD, {});
     assert.match(text, /after the failing checks\./);
     assert.match(text, /## Failing checks\n\n_No specific points were recorded for this rework\._/);
   });
 
   it('never mentions an author that is not a valid login, and keeps answers to one capped line', () => {
     const odd = { ...rework, details: [{ author: 'x @everyone', body: 'b' }] };
-    const text = reworkComment(reworkCtx, odd, `## Rework points\n- 1: ${'long '.repeat(200)}\n## Summary\nok`, PASS, HEAD, {});
+    const text = reworkComment({ ...reworkCtx, reworkPoints: [{ author: 'x @everyone' }] }, odd, `## Rework points\n- 1: ${'long '.repeat(200)}\n## Summary\nok`, PASS, HEAD, {});
     assert.match(text, /1\. `x @everyone`: /);
     assert.ok(!text.split('`x @everyone`').join('').includes('@everyone'), 'the author appears only inside its code span');
     const line = text.split('\n').find((l) => l.startsWith('1. '))!;

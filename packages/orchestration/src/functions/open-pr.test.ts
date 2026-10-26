@@ -23,15 +23,15 @@ const rework: ReworkContext = {
 
 describe('reviewersToRequest', () => {
   it('asks each person who raised a point once, never a bot or an invalid login', () => {
-    assert.deepEqual(reviewersToRequest(rework), ['alice', 'bob']);
+    assert.deepEqual(reviewersToRequest(rework, rework.details), ['alice', 'bob']);
   });
 
-  it("uses Prepare's numbered points when the context has them, so a review's inline commenters are asked too", () => {
+  it("uses Prepare's numbered points, so a review's inline commenters are asked too", () => {
     assert.deepEqual(reviewersToRequest(rework, [{ author: 'carol', path: 'a.ts' }, { author: 'alice' }]), ['carol', 'alice']);
   });
 
   it('asks nobody after a checks-failed rework or a conversation request', () => {
-    assert.deepEqual(reviewersToRequest({ ...rework, cause: 'checks-failed' }), []);
-    assert.deepEqual(reviewersToRequest({ ...rework, cause: 'comment' }), []);
+    assert.deepEqual(reviewersToRequest({ ...rework, cause: 'checks-failed' }, rework.details), []);
+    assert.deepEqual(reviewersToRequest({ ...rework, cause: 'comment' }, rework.details), []);
   });
 });

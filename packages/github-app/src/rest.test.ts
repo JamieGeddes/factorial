@@ -124,6 +124,13 @@ describe('GitHubClient', () => {
     ]);
   });
 
+  it("reads an inline comment's file and line, falling back to the original line", async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { path: 'a.ts', line: null, original_line: 7, body: 'x' }, seen) });
+    assert.deepEqual(await client.getReviewComment(repo, 5), { path: 'a.ts', line: 7 });
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/comments/5');
+  });
+
   it('reacts to a conversation comment and to an inline comment at their own endpoints', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { id: 1 }, seen) });

@@ -1,12 +1,26 @@
-import type { ReworkContext, WorkItem } from '@factorial/workitem';
+import type { WorkItem, WorkItemReworkCause } from '@factorial/workitem';
 
 import type { Attempt } from './resume.ts';
-import type { ReworkPoint } from './rework-admission.ts';
-import { assertGitBranch } from './shell.ts';
+import type { ReworkPoint } from './rework-points.ts';
+
+/**
+ * A turn on a pull request Factorial opened, as Intake established it: from
+ * the thread and GitHub, not from what the adapter guessed.
+ */
+export interface ReworkTurn {
+  pullRequest: { number: number; url: string };
+  cause: WorkItemReworkCause;
+  /** The item that opened the pull request, from its thread. */
+  previousWorkItemId: string;
+  /** The branch the pull request targets, as GitHub reports it. */
+  baseBranch: string;
+}
 
 /** What the state machine carries from Prepare to every later step. */
 export interface WorkContext {
   workItem: WorkItem;
+  /** The thread the item is a turn in, `<owner>/<name>#<branch>` (#163). */
+  threadKey: string;
   sessionId: string;
   branch: string;
   baseBranch: string;
@@ -29,26 +43,12 @@ export interface WorkContext {
    * carry. The reply on the pull request and the review re-request use it.
    */
   reworkPoints?: ReworkPoint[];
-  /** For rework, the item that opened the pull request, from the ledger; the work item's own field is the branch name's guess. */
-  previousWorkItemId?: string;
+  /** Set when the item is a turn on a pull request Factorial opened. */
+  rework?: ReworkTurn;
 }
 
 export function branchFor(workItem: WorkItem): string {
   return `factorial/${workItem.id}`;
-}
-
-/** The rework context, when this item reworks a previous item's pull request. */
-export function reworkContext(workItem: WorkItem): ReworkContext | undefined {
-  return workItem.context?.kind === 'rework' ? workItem.context : undefined;
-}
-
-/**
- * The branch this item's work happens on: the previous item's branch for
- * rework, a fresh branch otherwise.
- */
-export function workBranchFor(workItem: WorkItem): string {
-  const rework = reworkContext(workItem);
-  return rework ? assertGitBranch(rework.branch, 'rework branch') : branchFor(workItem);
 }
 
 export function issueNumber(workItem: WorkItem): number | undefined {

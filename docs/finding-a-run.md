@@ -8,7 +8,9 @@ All paths are in the AWS console, region **Europe (Ireland) eu-west-1**. Replace
 
 **DynamoDB** → left nav **Tables** → **Explore items** → table **factorial-work-items** → **Query**, partition key `workItemId` = `<id>` → **Run**.
 
-Note `attempt`, `artefactPrefix`, `status` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way). A build that ran in more than one session has `buildRounds` and `buildSessionId`: round 1's builder session is the work item id, round *n*'s is `<id>-r<n>`.
+Note `attempt`, `artefactPrefix`, `status`, `route`, `threadKey` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way). A build that ran in more than one session has `buildRounds` and `buildSessionId`: round 1's builder session is the work item id, round *n*'s is `<id>-r<n>`. Items accepted before #163 have no `route` or `threadKey`.
+
+**The thread.** Table **factorial-threads** → **Query**, partition key `threadKey` = the row's `threadKey` → **Run**: the branch, the pull request (`prNumber`, `prOpenedBy`), the turn holding it (`inFlight`) and the automatic rework count. To list every turn on the thread: table **factorial-work-items** → **Query** → **Select a table or index**: `threadKey-createdAt-index`, partition key `threadKey` = the same value → **Run**. To start from a pull request instead: table **factorial-threads** → **Query** → index `pullRequestKey-index`, partition key `<owner>/<name>#<number>` in lower case → **Run**.
 
 ## 2. The execution
 
@@ -23,6 +25,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 **CloudWatch** → left nav **Logs** → **Logs Insights** → select the log groups:
 
 - `/factorial/invoker`
+- `/aws/lambda/factorial-intake`
 - `/aws/lambda/factorial-prepare`
 - `/aws/lambda/factorial-collect`
 - `/aws/lambda/factorial-dispatch-tests`
@@ -46,7 +49,7 @@ Add `| filter level = "error"` to see only failures. The invoker's own stream is
 
 **S3** → **Buckets** → `factorial-work-artefacts-<account id>` → open the folder `<id>/` → `<attempt>/` (the ledger's `artefactPrefix`).
 
-It holds `workitem.json`, `prepare/`, `plan/` (the builder's plan as markdown and JSON and its validation result; before phase 3.1 also the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
+It holds `workitem.json`, `intake/intake.json` (the thread and route Intake chose, and why), `prepare/`, `plan/` (the builder's plan as markdown and JSON and its validation result; before phase 3.1 also the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/` and `report.json`. A resumed item's artefacts are under its own id, with the next attempt number.
 
 ## 5. The AgentCore trace
 

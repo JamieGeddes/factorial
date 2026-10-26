@@ -66,6 +66,7 @@ Globals:
       Variables:
         NODE_OPTIONS: --enable-source-maps
         TABLE_NAME: !Ref WorkItemsTable
+        THREADS_TABLE_NAME: !Ref ThreadsTable
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
         RUNTIME_QUALIFIER: live
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
@@ -86,6 +87,7 @@ Resources:
   # one trigger produced (WorkItem `group`) and the items a parent emitted
   # (`parentId`); both are sparse, holding only items with that field. A table
   # update can add only one index, so each new index needs its own deploy.
+  # The thread index lists the turns in one thread (#163).
   # ---------------------------------------------------------------------------
   WorkItemsTable:
     Type: AWS::DynamoDB::Table
@@ -104,6 +106,8 @@ Resources:
         - AttributeName: parentId
           AttributeType: S
         - AttributeName: pullRequestKey
+          AttributeType: S
+        - AttributeName: threadKey
           AttributeType: S
       KeySchema:
         - AttributeName: workItemId
@@ -147,8 +151,9 @@ Resources:
               - groupId
               - groupIndex
         # The item that opened a pull request (`<owner>/<name>#<number>`,
-        # lower case), written by OpenPullRequest: Prepare admits rework only
-        # for pull requests Factorial has a record of opening.
+        # lower case), written by OpenPullRequest. Before threads (#163) this
+        # was how rework found its pull request; Intake now reads it only to
+        # create the thread of a pull request opened before threads existed.
         - IndexName: pullRequestKey-index
           KeySchema:
             - AttributeName: pullRequestKey
@@ -157,6 +162,67 @@ Resources:
             ProjectionType: INCLUDE
             NonKeyAttributes:
               - branch
+        - IndexName: threadKey-createdAt-index
+          KeySchema:
+            - AttributeName: threadKey
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - status
+              - route
+              - sourceKey
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      SSESpecification:
+        SSEEnabled: true
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # Threads (#163): one row per branch Factorial works on, the unit of
+  # continuity. Intake resolves every item to a thread and admits it with a
+  # conditional write on the row: which turn holds the thread, and how many
+  # automatic reworks have run since a person last asked. Pointers and counts
+  # only, never content. A pull request maps to its thread through the
+  # pull request index, a request to the threads it opened through the
+  # source index; both are sparse and project only the key.
+  # ---------------------------------------------------------------------------
+  ThreadsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: factorial-threads
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: threadKey
+          AttributeType: S
+        - AttributeName: pullRequestKey
+          AttributeType: S
+        - AttributeName: sourceKey
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: threadKey
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: pullRequestKey-index
+          KeySchema:
+            - AttributeName: pullRequestKey
+              KeyType: HASH
+          Projection:
+            ProjectionType: KEYS_ONLY
+        - IndexName: sourceKey-createdAt-index
+          KeySchema:
+            - AttributeName: sourceKey
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: KEYS_ONLY
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
@@ -521,6 +587,11 @@ Resources:
   # ---------------------------------------------------------------------------
   # Lambda steps around the agent. Each has only the permissions its step needs.
   # ---------------------------------------------------------------------------
+  IntakeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-intake
+      RetentionInDays: !Ref LogRetentionDays
   PrepareLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -562,16 +633,18 @@ Resources:
       LogGroupName: /aws/lambda/factorial-report
       RetentionInDays: !Ref LogRetentionDays
 
-  PrepareFunction:
+  # Reads GitHub with read-only tokens, and answers a refusal on the pull
+  # request when a person asked. Touches no session.
+  IntakeFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: factorial-prepare
-      Description: Accept a WorkItem once, admit a rework item, clone the repository into the agent session and create the work branch.
-      CodeUri: ../packages/orchestration/dist/prepare/
+      FunctionName: factorial-intake
+      Description: Accept a WorkItem once, resolve its thread and choose its route.
+      CodeUri: ../packages/orchestration/dist/intake/
       Handler: index.handler
-      Timeout: 900
+      Timeout: 120
       LoggingConfig:
-        LogGroup: !Ref PrepareLogGroup
+        LogGroup: !Ref IntakeLogGroup
       Policies:
         - Statement:
             - Sid: Ledger
@@ -581,12 +654,44 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-            - Sid: LedgerSourceIndex
+            # Resume finds earlier attempts at a source; a pull request opened
+            # before threads is found through the item that opened it.
+            - Sid: LedgerIndexes
               Effect: Allow
               Action: dynamodb:Query
               Resource:
                 - !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
                 - !Sub ${WorkItemsTable.Arn}/index/pullRequestKey-index
+            - Sid: Threads
+              Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+              Resource: !GetAtt ThreadsTable.Arn
+            - Sid: ThreadIndex
+              Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Sub ${ThreadsTable.Arn}/index/pullRequestKey-index
+        - !Ref GitHubAppPolicy
+        - !Ref WorkArtefactsWritePolicy
+
+  PrepareFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-prepare
+      Description: Clone the repository into the builder's session on the thread's branch and seed it.
+      CodeUri: ../packages/orchestration/dist/prepare/
+      Handler: index.handler
+      Timeout: 900
+      LoggingConfig:
+        LogGroup: !Ref PrepareLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
@@ -724,6 +829,11 @@ Resources:
               Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
+            # The pull request on its thread, so later turns on it find the branch.
+            - Sid: Threads
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt ThreadsTable.Arn
             # The full plan, for the pull request's step list: the state carries only a shortened copy.
             - Sid: ReadPlanArtefacts
               Effect: Allow
@@ -876,6 +986,7 @@ Resources:
                 Effect: Allow
                 Action: lambda:InvokeFunction
                 Resource:
+                  - !Ref IntakeFunction.Alias
                   - !Ref PrepareFunction.Alias
                   - !Ref CollectFunction.Alias
                   - !Ref ContinueBuildFunction.Alias
@@ -960,6 +1071,7 @@ Resources:
         MaxBuildRounds: !FindInMap [Builder, MaxRounds, Value]
         TestTimeoutSeconds: !Ref TestTimeoutSeconds
         ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
+        IntakeFunctionAlias: !Ref IntakeFunction.Alias
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
         CollectFunctionAlias: !Ref CollectFunction.Alias
         ContinueBuildFunctionAlias: !Ref ContinueBuildFunction.Alias
@@ -977,7 +1089,7 @@ Resources:
         SecurityGroup: !Ref InvokerSecurityGroup
       DefinitionString: |
         {
-          "Comment": "Factorial: build (planning first) -> test -> review -> PR. Deterministic; the agents run inside Build and Review.",
+          "Comment": "Factorial: intake -> build (planning first) -> test -> review -> PR. Deterministic; Intake chooses the route from a fixed set, and the agents run inside Build and Review.",
           "QueryLanguage": "JSONata",
           "StartAt": "Start",
           "States": {
@@ -985,6 +1097,7 @@ Resources:
               "Type": "Pass",
               "Assign": {
                 "workItemInput": "{% $states.input %}",
+                "intake": null,
                 "ctx": null,
                 "collect": null,
                 "test": null,
@@ -998,7 +1111,45 @@ Resources:
                 "review": null
               },
               "Output": { "workItemId": "{% $states.input.id %}" },
-              "Next": "Prepare"
+              "Next": "Intake"
+            },
+            "Intake": {
+              "Type": "Task",
+              "Comment": "Accept the WorkItem once, resolve its thread and choose its route. A refusal is recorded, and answered on the pull request when a person asked.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${IntakeFunctionAlias}",
+                "Payload": {
+                  "workItem": "{% $workItemInput %}",
+                  "factorialVersion": "${FactorialVersion}"
+                }
+              },
+              "Assign": { "intake": "{% $states.result.Payload %}" },
+              "Output": {
+                "workItemId": "{% $workItemInput.id %}",
+                "attempt": "{% $states.result.Payload.attempt %}",
+                "route": "{% $states.result.Payload.route %}",
+                "threadKey": "{% $exists($states.result.Payload.threadKey) ? $states.result.Payload.threadKey : null %}"
+              },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["DuplicateWorkItem"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "Duplicate" },
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "Route"
+            },
+            "Route": {
+              "Type": "Choice",
+              "Comment": "The route Intake chose, from the enum in contracts/intake/v1. Anything but change runs nothing further.",
+              "Choices": [ { "Condition": "{% $intake.route = 'change' %}", "Next": "Prepare" } ],
+              "Default": "NotAdmitted"
             },
             "Prepare": {
               "Type": "Task",
@@ -1007,7 +1158,8 @@ Resources:
                 "FunctionName": "${PrepareFunctionAlias}",
                 "Payload": {
                   "workItem": "{% $workItemInput %}",
-                  "factorialVersion": "${FactorialVersion}"
+                  "factorialVersion": "${FactorialVersion}",
+                  "intake": "{% $intake %}"
                 }
               },
               "Assign": { "ctx": "{% $states.result.Payload %}", "buildSession": "{% $states.result.Payload.sessionId %}" },
@@ -1025,14 +1177,12 @@ Resources:
                 }
               ],
               "Catch": [
-                { "ErrorEquals": ["DuplicateWorkItem"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "Duplicate" },
-                { "ErrorEquals": ["ReworkNotAdmitted"], "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "NotAdmitted" },
                 { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $workItemInput.id %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "Build"
             },
             "Duplicate": { "Type": "Succeed", "Comment": "This WorkItem was already accepted; nothing to do." },
-            "NotAdmitted": { "Type": "Succeed", "Comment": "A rework item that may not run: its pull request is not Factorial's or no longer on its branch, another item holds it, or failed checks reached their limit. Prepare recorded why and replied on the pull request when a person asked." },
+            "NotAdmitted": { "Type": "Succeed", "Comment": "Intake refused the item: its pull request is not Factorial's or no longer on its branch, another turn holds the thread, or failed checks reached their limit. Intake recorded why and replied on the pull request when a person asked." },
             "Build": {
               "Type": "Task",
               "Resource": "arn:aws:states:::ecs:runTask.sync",
@@ -1396,6 +1546,8 @@ Outputs:
     Value: !Ref WorkItemsTable
     Export:
       Name: Factorial-WorkItemsTableName
+  ThreadsTableName:
+    Value: !Ref ThreadsTable
   BuildClusterArn:
     Value: !GetAtt BuildCluster.Arn
   WorkArtefactsBucketName:

@@ -15,7 +15,7 @@
 import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
 import { parsePlanJson } from '@factorial/plan';
 
-import { reworkContext, type WorkContext } from '../lib/context.ts';
+import type { WorkContext } from '../lib/context.ts';
 import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId, continuingSection, seedRoundScript } from '../lib/continue-files.ts';
 import { logged, runKey } from '../lib/log.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
@@ -74,7 +74,7 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
     at,
     existing: pushed || ctx.resumedFrom !== undefined,
     ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}),
-    ...(ctx.previousWorkItemId ? { previousWorkItemId: ctx.previousWorkItemId } : {}),
+    ...(ctx.rework ? { rework: ctx.rework } : {}),
   });
 
   const notes =
@@ -87,6 +87,6 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
   await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0, planned: plan !== undefined });
   await recordProgress(ctx.workItem.id, 'build-continuing', { buildRounds: round, buildSessionId: sessionId });
   log.info('build continues in a new session', { round, sessionId, from: at, pushed });
-  const existing = pushed || ctx.resumedFrom !== undefined || reworkContext(ctx.workItem) !== undefined;
+  const existing = pushed || ctx.resumedFrom !== undefined || ctx.rework !== undefined;
   return { sessionId, round, roundStart: { commit: at, existing, pushed } };
 });

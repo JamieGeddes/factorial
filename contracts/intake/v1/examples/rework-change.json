@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "3e9b1f4a-2c6d-4e8f-9a0b-1c2d3e4f5a6b",
+  "route": "change",
+  "turn": "rework",
+  "reason": "A request in the conversation of pull request #87, which Factorial opened.",
+  "threadKey": "jamiegeddes/factorial#factorial/146b11c0-ca7d-11f1-9d6b-acd4bff0d455",
+  "branch": "factorial/146b11c0-ca7d-11f1-9d6b-acd4bff0d455",
+  "pullRequest": 87,
+  "cause": "comment",
+  "previousWorkItemId": "146b11c0-ca7d-11f1-9d6b-acd4bff0d455"
+}

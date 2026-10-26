@@ -177,7 +177,7 @@ describe('roundStartFor', () => {
   });
 
   it('starts round 1 on the existing branch for rework or a resumed attempt', () => {
-    const rework = ctx({ workItem: { id: 'w', context: { kind: 'rework' } } as unknown as WorkContext['workItem'] });
+    const rework = ctx({ rework: { pullRequest: { number: 26, url: 'https://x' }, cause: 'review', previousWorkItemId: 'p', baseBranch: 'main' } });
     assert.equal(roundStartFor(rework, undefined).existing, true);
     const resumed = ctx({ resumedFrom: { workItemId: 'a', status: 'failed', savedWork: true, branch: 'factorial/a' } });
     assert.equal(roundStartFor(resumed, undefined).existing, true);

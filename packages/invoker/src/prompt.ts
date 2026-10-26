@@ -2,6 +2,15 @@ import type { WorkItem } from '@factorial/workitem';
 
 import type { SensitivePath } from './role.ts';
 
+/**
+ * Whether the item is a turn on a pull request, in either shape: the
+ * superseded rework `context`, or `inReplyTo` (#163). The orchestrator
+ * seeds such a session with /workspace/rework.md.
+ */
+export function continuesPullRequest(workItem: WorkItem): boolean {
+  return workItem.context?.kind === 'rework' || workItem.inReplyTo?.kind === 'pull-request';
+}
+
 /** The rework instructions added to the prompt when the item carries rework context. */
 export function reworkInstructions(): string[] {
   return [
@@ -14,7 +23,7 @@ export function reworkInstructions(): string[] {
 
 /** The user message that starts the builder's session. The system prompt is the Runtime version's. */
 export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: string, round = 1, resumed = false): string {
-  const isRework = workItem.context?.kind === 'rework';
+  const isRework = continuesPullRequest(workItem);
   return [
     `# Work item ${workItem.source.id} (${workItem.source.type})`,
     '',
@@ -48,7 +57,7 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
 
 /** The user message that starts the reviewer's session. Its system prompt is its Runtime version's. */
 export function reviewPrompt(workItem: WorkItem, branch: string, baseBranch: string, sensitivePaths: readonly SensitivePath[]): string {
-  const isRework = workItem.context?.kind === 'rework';
+  const isRework = continuesPullRequest(workItem);
   return [
     `# Work item ${workItem.source.id} (${workItem.source.type})`,
     '',
