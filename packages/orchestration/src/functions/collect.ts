@@ -202,7 +202,7 @@ async function storeSessionFiles(target: SessionTarget, ctx: WorkContext, log: L
 async function collectPlan(target: SessionTarget, ctx: WorkContext, log: Logger): Promise<CheckedPlan> {
   let checked: CheckedPlan;
   try {
-    const read = await mustRun(target, asAgent(target, readPlanScript()), 120);
+    const read = await mustRun(target, asAgent(readPlanScript()), 120);
     checked = checkPlanFiles(parsePlanRead(read.stdout));
   } catch (error) {
     log.error('plan not read from the session', { error });
@@ -275,7 +275,7 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
   // as the user the model ran as (asAgent).
   const inspection = await runCommand(
     agentSession,
-    asAgent(agentSession, inspectScript(start.commit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE)),
+    asAgent(inspectScript(start.commit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE)),
     300,
   );
   if (inspection.exitCode !== 0) {
@@ -308,7 +308,7 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     return { pushed: false, commitCount, headSha, summary, incomplete, ...digest };
   }
 
-  const bundle = await mustRun(agentSession, asAgent(agentSession, bundleScript(start.commit, headSha)), 300);
+  const bundle = await mustRun(agentSession, asAgent(bundleScript(start.commit, headSha)), 300);
   const bundleBase64 = bundle.stdout.trim();
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');

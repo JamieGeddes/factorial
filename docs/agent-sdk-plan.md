@@ -280,6 +280,13 @@ Two fixes came out of the runs:
 - The invoker's Harness path, `HARNESS_*` variables and the `@aws-sdk/client-bedrock-agentcore-control` harness calls are removed.
 - Tag `main` as `stage-1-agent-sdk` and add a one-line pointer from `stage-0-harness` in `docs/current-stage.md`.
 
+**Two pull requests (2026-10-26).** The deploy workflow reads the `factorial/agent-environment` repository's export and the deploy role still holds the Harness promotion actions, so the foundation can change only after a workflow that no longer needs them is on `main`. 11a removes the Harness code paths, the `agent-environment/` image and the workflow's Harness build and promotion, and rewrites the docs; 11b, once 11a is deployed, is the foundation clean-up, deployed by a human, then the hand deletions and the tag. 11a also:
+
+- **Moves `quiet`** from `agent-environment/tools` to `packages/agent-tools`, since the Runtime image bundles it and the directory it lived in is gone.
+- **Renames the Lambdas' `HARNESS_QUALIFIER` to `RUNTIME_QUALIFIER`**, and the state machine stops passing `TARGET`, which the invoker no longer reads.
+- **Drops the invoker's delta joining.** The transcript buffer joined the Harness's streamed text deltas so a split credential was redacted whole; the host sends whole SDK messages, so there are no deltas to join.
+- **Supersedes `docs/security.md` section 8** (root in the session) rather than deleting it, and records the reviewer's Bash denylist as a known gap in section 7.
+
 ## 4. Pull requests, in order
 
 | # | Phase | Contents | Depends on | Done when |
@@ -297,7 +304,8 @@ Two fixes came out of the runs:
 | 9b | 3 | Planner Harness block, its role and its LiteLLM share removed; the reviewer block takes over the explanations; the foundation's planner references wait for phase 4 | 9a deployed | Deploy succeeds; the next item unchanged |
 | 10a | 3 | Reviewer Runtime; Review, PrepareReview and CollectReview moved to it | 9b | A real review validated from the Runtime |
 | 10b | 3 | Reviewer Harness, model key, LiteLLM and their parameters removed | 10a deployed | Deploy succeeds; the next item unchanged |
-| 11 | 4 | Harness code paths and image removed; foundation clean-up (human); docs rewrite; tag `stage-1-agent-sdk` | 10b | `npm run ci`; deploy; record updated |
+| 11a | 4 | Harness code paths, image and workflow loops removed; `quiet` moved; docs rewrite | 10b | `npm run ci`; deploy; the next item unchanged |
+| 11b | 4 | Foundation clean-up (human deploy); Z.ai secret and `agent-environment` repository deleted by hand; tag `stage-1-agent-sdk` | 11a deployed | Foundation deployed; record updated |
 
 Pull requests 3 to 6 can be reviewed independently but deploy in order; each is small enough to read in one sitting. Nothing before 8 changes what a work item sees.
 

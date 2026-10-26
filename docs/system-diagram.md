@@ -46,15 +46,15 @@ flowchart TB
     %% ----------------------------------------------------------------- Agent
     subgraph agent["Stack 20: factorial-agent"]
         direction TB
-        harness["AgentCore Runtime:<br/>factorial_builder<br/>host process + Claude Agent SDK,<br/>plan and explore subagents,<br/>Sonnet 5.5 on Bedrock,<br/>immutable versions"]
+        builderruntime["AgentCore Runtime:<br/>factorial_builder<br/>host process + Claude Agent SDK,<br/>plan and explore subagents,<br/>Sonnet 5.5 on Bedrock,<br/>immutable versions"]
         liveendpoint["Runtime endpoint 'live'<br/>(promoted by deploy workflow)"]
         agentrole["factorial-agent-builder role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents;<br/>named Bedrock profiles only)"]
         bedrock["Amazon Bedrock<br/>EU inference profiles"]
-        otherharnesses["AgentCore Runtime:<br/>factorial_reviewer<br/>same image and host, review mode,<br/>Sonnet 5.5 on Bedrock"]
-        harness --- agentrole
-        harness -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
-        otherharnesses -->|"InvokeModel with<br/>its execution role<br/>(data)"| bedrock
-        liveendpoint --- harness
+        reviewerruntime["AgentCore Runtime:<br/>factorial_reviewer<br/>same image and host, review mode,<br/>Sonnet 5.5 on Bedrock"]
+        builderruntime --- agentrole
+        builderruntime -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
+        reviewerruntime -->|"InvokeModel with<br/>its execution role<br/>(data)"| bedrock
+        liveendpoint --- builderruntime
     end
 
     %% --------------------------------------------------------- Orchestration
@@ -79,10 +79,10 @@ flowchart TB
 
     bus -->|"rule factorial-work-item<br/>StartExecution on live alias<br/>(control)"| sfn
 
-    prepare -->|"session command API:<br/>clone with token as header<br/>(data)"| harness
+    prepare -->|"session command API:<br/>clone with token as header<br/>(data)"| builderruntime
     invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| liveendpoint
-    invoker -->|"InvokeAgentRuntime: review<br/>qualifier 'live'<br/>(control)"| otherharnesses
-    collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| harness
+    invoker -->|"InvokeAgentRuntime: review<br/>qualifier 'live'<br/>(control)"| reviewerruntime
+    collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| builderruntime
     collect -->|"push branch with<br/>App installation token<br/>(data)"| github
     dispatch -->|"workflow_dispatch<br/>(control)"| testwf
     testwf --> oidc
@@ -122,4 +122,4 @@ Each part is independently versioned and referenced only through its `live` alia
 | State machine | Step Functions versions | Alias named `live` |
 | Adapters and Lambdas | Lambda versions | Alias named `live` |
 
-The deploy workflow (GitHub Actions assuming `factorial-deploy`) is the only principal that promotes: it moves every runtime's and harness's `live` endpoint to the newest version as its final step, so the next `WorkItem` is handled by the newly deployed version. Lambda aliases and the state machine alias move during the deploy itself; separating all three promotions comes with the staging canary (a known Stage 0 gap).
+The deploy workflow (GitHub Actions assuming `factorial-deploy`) is the only principal that promotes: it moves every runtime's `live` endpoint to the newest READY version as its final step, so the next `WorkItem` is handled by the newly deployed version. Lambda aliases and the state machine alias move during the deploy itself; separating all three promotions comes with the staging canary (a known Stage 0 gap).

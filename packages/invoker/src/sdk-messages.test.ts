@@ -21,7 +21,7 @@ const result = (subtype: string, extra: object = {}) => ({
 });
 
 describe('callUsageOf', () => {
-  it('counts cache reads and writes as input, as the harness path does', () => {
+  it('counts cache reads and writes as input, as usage.json always has', () => {
     assert.deepEqual(callUsageOf({ input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 900, cache_creation_input_tokens: 90 }), {
       inputTokens: 1000,
       outputTokens: 5,

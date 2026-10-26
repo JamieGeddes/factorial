@@ -122,8 +122,8 @@ What needs a foundation change:
 
 | Change | Foundation change? |
 |---|---|
-| Another resource of a type Factorial already uses (Lambda, state machine, queue, table, bus rule, ECR repository, harness), named with the `factorial-` / `factorial_` prefix | No |
-| A new agent: execution role named `factorial-agent-*` with `Factorial-AgentPermissionsBoundaryArn`, harness named `factorial_*` | No |
+| Another resource of a type Factorial already uses (Lambda, state machine, queue, table, bus rule, ECR repository, AgentCore Runtime), named with the `factorial-` / `factorial_` prefix | No |
+| A new agent: execution role named `factorial-agent-*` with `Factorial-AgentPermissionsBoundaryArn`, Runtime named `factorial_*` | No |
 | A new AWS service, or a new AgentCore resource type (memory, gateway, ...) | Yes, in the execution role |
 | A runtime role or agent needing an action outside its boundary | Yes, in the relevant boundary |
 

@@ -12,7 +12,7 @@ export function reworkInstructions(): string[] {
   ];
 }
 
-/** The user message that starts the agent's session. The system prompt lives on the harness. */
+/** The user message that starts the builder's session. The system prompt is the Runtime version's. */
 export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: string, round = 1, resumed = false): string {
   const isRework = workItem.context?.kind === 'rework';
   return [
@@ -46,7 +46,7 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
   ].join('\n');
 }
 
-/** The user message that starts the reviewer's session. Its system prompt lives on its harness. */
+/** The user message that starts the reviewer's session. Its system prompt is its Runtime version's. */
 export function reviewPrompt(workItem: WorkItem, branch: string, baseBranch: string, sensitivePaths: readonly SensitivePath[]): string {
   const isRework = workItem.context?.kind === 'rework';
   return [

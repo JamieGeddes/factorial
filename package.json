@@ -8,8 +8,7 @@
     "node": ">=22.18"
   },
   "workspaces": [
-    "packages/*",
-    "agent-environment/tools"
+    "packages/*"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",

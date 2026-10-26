@@ -1,4 +1,4 @@
-# Harness invoker: a small Fargate task that runs one harness invocation to
+# Agent invoker: a small Fargate task that runs one agent invocation to
 # completion, streaming the transcript to its logs, so Step Functions can wait
 # on it with ecs:runTask.sync for as long as a build takes.
 #

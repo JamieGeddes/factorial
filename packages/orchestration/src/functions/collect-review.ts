@@ -35,7 +35,7 @@ export const handler = logged('collect-review', (input: CollectReviewInput) => r
   const { ctx } = input;
   // The model has had the workspace, so the file is read as the user it ran as.
   const target = sessionTarget(ctx.sessionId, 'reviewer');
-  const read = await mustRun(target, asAgent(target, readReviewScript()), 120);
+  const read = await mustRun(target, asAgent(readReviewScript()), 120);
   const checked = checkReviewFile(parseReviewRead(read.stdout));
 
   if (!checked.ok) {

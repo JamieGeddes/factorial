@@ -1,21 +1,20 @@
 /**
  * Agent invoker. Runs as a Fargate task started by Step Functions with
  * ecs:runTask.sync. It reads the WorkItem from the ledger, invokes one agent
- * role (the builder or reviewer; the role and its target come in the
- * task input) once in the prepared session, on its harness or, with
- * TARGET=runtime, on Factorial's host on an AgentCore Runtime
- * (packages/agent-runtime), logs its progress as
+ * role (the builder or reviewer; the role and its Runtime come in the task
+ * input) once in the prepared session, on Factorial's host on the role's
+ * AgentCore Runtime (packages/agent-runtime), logs its progress as
  * structured lines (CloudWatch Logs; text and tool input capped at 4000
  * characters each), records the outcome, and exits. Step Functions resumes
  * when the task stops, however long the run took. A builder that stops
- * before end_turn (its iteration or time limit) exits with
+ * before it succeeds (its turn, budget or time limit) exits with
  * INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
  * pull request. Nothing inside the agent sandbox can influence this process:
  * it runs under its own task role.
  *
- * On a runtime, the run's SDK messages are read as server-sent events; a
- * stream that ends before the run is re-attached (runtime-stream.ts), and
- * the host's status decides how the run ended (sdk-messages.ts).
+ * The run's SDK messages are read as server-sent events; a stream that ends
+ * before the run is re-attached (runtime-stream.ts), and the host's status
+ * decides how the run ended (sdk-messages.ts).
  *
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
@@ -26,14 +25,8 @@
  */
 import { readFileSync } from 'node:fs';
 
-import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand, InvokeHarnessCommand } from '@aws-sdk/client-bedrock-agentcore';
-import {
-  BedrockAgentCoreControlClient,
-  GetAgentRuntimeCommand,
-  GetAgentRuntimeEndpointCommand,
-  GetHarnessCommand,
-  GetHarnessEndpointCommand,
-} from '@aws-sdk/client-bedrock-agentcore-control';
+import { BedrockAgentCoreClient, InvokeAgentRuntimeCommand } from '@aws-sdk/client-bedrock-agentcore';
+import { BedrockAgentCoreControlClient, GetAgentRuntimeCommand, GetAgentRuntimeEndpointCommand } from '@aws-sdk/client-bedrock-agentcore-control';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
@@ -41,8 +34,8 @@ import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts'
 import { createLogger } from '@factorial/log';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, agentTarget, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor, type RuntimeTarget } from './role.ts';
-import { modelIdOf, runtimeInfoOf, usageRecord, type HarnessInfo, type SdkRecord } from './run-record.ts';
+import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor, runtimeTarget, type RuntimeTarget } from './role.ts';
+import { runtimeInfoOf, usageRecord, type SdkRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
 import { SdkTally, runUsageOf, runtimeStop, subagentsOf, type HostStatus } from './sdk-messages.ts';
 import { traceBaggage } from './trace.ts';
@@ -57,7 +50,7 @@ function requireEnv(name: string): string {
 
 const tableName = requireEnv('TABLE_NAME');
 // The role and its target arrive in the task input, so one task definition serves every role.
-const target = agentTarget(process.env);
+const target = runtimeTarget(process.env);
 const { role, qualifier } = target;
 const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
@@ -75,9 +68,9 @@ const { stage, running, done, failed } = ROLE_STAGES[role];
 const recordPath = (name: string): string => (role === 'builder' && buildRound > 1 ? `${stage}/round-${buildRound}/${name}` : `${stage}/${name}`);
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
-// The harness version's own loop timeout ends the stream; this only guards
-// against a connection that never closes. The state machine's timeout for
-// the stage stops the task first in any case.
+// The host's own time limit ends the run; this only guards against a
+// connection that never closes. The state machine's timeout for the stage
+// stops the task first in any case.
 const agentcore = new BedrockAgentCoreClient({ requestHandler: { requestTimeout: 4 * 60 * 60 * 1000 } });
 const control = new BedrockAgentCoreControlClient({});
 
@@ -111,7 +104,7 @@ async function record(status: string, attributes: Record<string, unknown>): Prom
 const run = {
   prefix: undefined as string | undefined,
   attempt: undefined as number | undefined,
-  harness: {} as HarnessInfo,
+  version: {} as VersionInfo,
   startedAt: Date.now(),
   stopReason: undefined as string | undefined,
   interrupted: false,
@@ -121,35 +114,13 @@ const run = {
   error: undefined as string | undefined,
   /** The build's usage over earlier rounds, from the ledger row, when continuing. */
   previousRoundsUsage: undefined as RunUsage | undefined,
-  /** What only the Agent SDK reports, on a runtime. */
+  /** What only the Agent SDK reports. */
   sdk: undefined as SdkRecord | undefined,
 };
 const transcript = new TranscriptBuffer('/tmp/transcript.jsonl');
 
-/** The version `live` serves and its model. Best effort: the build goes ahead without it. */
-async function harnessInfo(): Promise<HarnessInfo> {
-  if (target.kind === 'runtime') return runtimeInfo(target);
-  const { harnessId } = target;
-  try {
-    const { endpoint } = await control.send(new GetHarnessEndpointCommand({ harnessId, endpointName: qualifier }));
-    const harnessVersion = endpoint?.liveVersion ?? endpoint?.targetVersion;
-    const { harness } = await control.send(new GetHarnessCommand({ harnessId, ...(harnessVersion ? { harnessVersion } : {}) }));
-    const modelId = modelIdOf(harness?.model);
-    return {
-      ...(harness?.harnessName ? { harnessName: harness.harnessName } : {}),
-      ...(harnessVersion ? { harnessVersion } : {}),
-      ...(modelId ? { modelId } : {}),
-      ...(harness?.maxIterations === undefined ? {} : { maxIterations: harness.maxIterations }),
-      ...(harness?.timeoutSeconds === undefined ? {} : { timeoutSeconds: harness.timeoutSeconds }),
-    };
-  } catch (error) {
-    log.error('harness version unknown', { error });
-    return {};
-  }
-}
-
-/** The runtime version `live` serves, its model and limits. Best effort, like harnessInfo. */
-async function runtimeInfo({ runtimeId }: RuntimeTarget): Promise<HarnessInfo> {
+/** The runtime version `live` serves, its model and limits. Best effort: the run goes ahead without it. */
+async function runtimeInfo({ runtimeId }: RuntimeTarget): Promise<VersionInfo> {
   try {
     const endpoint = await control.send(new GetAgentRuntimeEndpointCommand({ agentRuntimeId: runtimeId, endpointName: qualifier }));
     const runtimeVersion = endpoint.liveVersion ?? endpoint.targetVersion;
@@ -198,7 +169,7 @@ function finish(succeeded: boolean): Promise<void> {
     const stored = await storeRunRecord();
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
-    log.info('agent finished', { target: target.kind, stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.sdk?.costUsd });
+    log.info('agent finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.sdk?.costUsd });
     const outcome = outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
     // The builder's figures are this round's; the total across rounds is kept beside them.
     const rounds = role === 'builder' ? { buildRounds: buildRound, buildUsageTotal: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage } : {};
@@ -230,19 +201,15 @@ async function main(): Promise<number> {
 
   const resumed = typeof row.Item?.resumedFrom === 'string';
   const prompt = promptFor(role, workItem, branch, baseBranch, { sensitivePaths, buildRound, resumed });
-  run.harness = await harnessInfo();
-  log.info('invoking agent', { role, target: target.kind, sessionId, qualifier, ...(role === 'builder' ? { buildRound } : {}), ...run.harness });
+  run.version = await runtimeInfo(target);
+  log.info('invoking agent', { role, sessionId, qualifier, ...(role === 'builder' ? { buildRound } : {}), ...run.version });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();
-  transcript.append({ request: { role, prompt, ...run.harness } });
-  if (target.kind === 'runtime') {
-    await invokeRuntime(target, prompt);
-  } else {
-    await invokeHarness(target.harnessArn, prompt);
-  }
+  transcript.append({ request: { role, prompt, ...run.version } });
+  await invokeRuntime(target, prompt);
 
-  // A builder that hit its iteration or time limit has not finished the
+  // A builder that hit its turn, budget or time limit has not finished the
   // plan: fail the task so its work is saved and reported, not tested and
   // opened as a pull request.
   const incomplete = run.error ? undefined : incompleteReason(role, run.stopReason);
@@ -250,58 +217,6 @@ async function main(): Promise<number> {
   await finish(!run.error);
   if (incomplete) return INCOMPLETE_EXIT_CODE;
   return run.error ? 1 : 0;
-}
-
-async function invokeHarness(harnessArn: string, prompt: string): Promise<void> {
-  const response = await agentcore.send(
-    new InvokeHarnessCommand({
-      harnessArn,
-      qualifier,
-      runtimeSessionId: sessionId,
-      baggage: traceBaggage(sessionId, workItemId, run.attempt),
-      // No maxIterations or timeoutSeconds: values passed here override the
-      // harness version's, and the limits, like the model, belong to the version.
-      messages: [{ role: 'user', content: [{ text: prompt }] }],
-    }),
-  );
-
-  let text = '';
-  let toolInput = '';
-  for await (const event of response.stream ?? []) {
-    transcript.append(event);
-    if (event.messageStart) {
-      log.info('message start', { role: event.messageStart.role });
-    } else if (event.contentBlockStart?.start?.toolUse) {
-      run.toolCalls += 1;
-      log.info('tool use', { tool: event.contentBlockStart.start.toolUse.name });
-    } else if (event.contentBlockDelta?.delta?.text) {
-      text += event.contentBlockDelta.delta.text;
-    } else if (event.contentBlockDelta?.delta?.toolUse?.input) {
-      // Tool input arrives in deltas; log it whole when the block ends.
-      toolInput += event.contentBlockDelta.delta.toolUse.input;
-    } else if (event.contentBlockStop) {
-      if (text.trim()) {
-        log.info('assistant text', { text: text.slice(-4000) });
-        text = '';
-      }
-      if (toolInput) {
-        log.info('tool input', { input: toolInput.slice(0, 4000), bytes: Buffer.byteLength(toolInput) });
-        toolInput = '';
-      }
-    } else if (event.messageStop) {
-      run.stopReason = event.messageStop.stopReason;
-      log.info('message stop', { stopReason: run.stopReason });
-    } else if (event.metadata) {
-      // One usage record arrives per model call; the run's consumption is their sum.
-      const call = event.metadata.usage as CallUsage | undefined;
-      run.usage = addCallUsage(run.usage, call);
-      if (call) run.calls.push(call);
-    } else if (event.internalServerException || event.validationException || event.runtimeClientError) {
-      const error = event.internalServerException ?? event.validationException ?? event.runtimeClientError;
-      run.error = `${error?.name ?? 'StreamError'}: ${error?.message ?? ''}`;
-      log.error('stream error', { error: run.error });
-    }
-  }
 }
 
 /** The JSON a runtime invocation sends; the model, limits and tools are the version's, never the request's. */

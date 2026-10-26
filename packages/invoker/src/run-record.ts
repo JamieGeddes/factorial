@@ -1,38 +1,34 @@
 /**
- * What the build stage records about the harness run: `build/usage.json`.
- * Holds counts and identifiers only, never content.
+ * What a stage records about its agent's run: `build/usage.json` or
+ * `review/usage.json`. Holds counts and identifiers only, never content.
  */
 import type { CallUsage, RunUsage } from './usage.ts';
 import type { SubagentRun, SubagentTotal } from './sdk-messages.ts';
 
 /**
- * The version the `live` endpoint served, and its model and limits, read when
- * the run started: a harness's, or a runtime's (from the version's
- * environment, packages/agent-runtime/src/config.ts).
+ * The Runtime version the `live` endpoint served, and its model and limits,
+ * read when the run started (from the version's environment,
+ * packages/agent-runtime/src/config.ts).
  */
-export interface HarnessInfo {
-  harnessName?: string;
-  harnessVersion?: string;
+export interface VersionInfo {
   runtimeName?: string;
   runtimeVersion?: string;
   modelId?: string;
   exploreModelId?: string;
   /** The version's own limits; the invoker passes none at invoke time. */
-  maxIterations?: number;
-  timeoutSeconds?: number;
   maxTurns?: number;
   maxBudgetUsd?: number;
   maxDurationSeconds?: number;
 }
 
 /** A runtime version's model and limits, from its environment variables. */
-export function runtimeInfoOf(environment: Record<string, string> | undefined): HarnessInfo {
+export function runtimeInfoOf(environment: Record<string, string> | undefined): VersionInfo {
   const env = environment ?? {};
   const number = (name: string): number | undefined => {
     const value = Number(env[name]);
     return env[name] !== undefined && Number.isFinite(value) ? value : undefined;
   };
-  const info: HarnessInfo = {};
+  const info: VersionInfo = {};
   if (env.FACTORIAL_MODEL) info.modelId = env.FACTORIAL_MODEL;
   if (env.FACTORIAL_EXPLORE_MODEL) info.exploreModelId = env.FACTORIAL_EXPLORE_MODEL;
   const maxTurns = number('FACTORIAL_MAX_TURNS');
@@ -44,26 +40,15 @@ export function runtimeInfoOf(environment: Record<string, string> | undefined): 
   return info;
 }
 
-/** The model id from whichever provider block the harness configuration uses. */
-export function modelIdOf(model: object | undefined): string | undefined {
-  if (!model) return undefined;
-  for (const config of Object.values(model)) {
-    if (config && typeof config === 'object' && 'modelId' in config && typeof config.modelId === 'string') {
-      return config.modelId;
-    }
-  }
-  return undefined;
-}
-
-export interface UsageRecord extends HarnessInfo {
-  /** The harness's own stop reason, or `interrupted` when the task was stopped first. */
+export interface UsageRecord extends VersionInfo {
+  /** How the run ended (the SDK's result subtype, or the host's own stop), or `interrupted` when the task was stopped first. */
   stopReason: string;
   toolCalls: number;
   durationSeconds: number;
   usage: RunUsage;
   /** One entry per model call, in order. */
   calls: CallUsage[];
-  /** From the Agent SDK's result message, on a runtime only. */
+  /** From the Agent SDK's result message. */
   sdk?: SdkRecord;
   error?: string;
 }
@@ -85,7 +70,7 @@ export interface SdkRecord {
 }
 
 export function usageRecord(params: {
-  harness: HarnessInfo;
+  version: VersionInfo;
   stopReason: string | undefined;
   interrupted: boolean;
   toolCalls: number;
@@ -97,7 +82,7 @@ export function usageRecord(params: {
   error?: string | undefined;
 }): UsageRecord {
   return {
-    ...params.harness,
+    ...params.version,
     stopReason: params.interrupted ? 'interrupted' : (params.stopReason ?? (params.error ? 'error' : 'unknown')),
     toolCalls: params.toolCalls,
     durationSeconds: Math.round((params.endedAt - params.startedAt) / 1000),

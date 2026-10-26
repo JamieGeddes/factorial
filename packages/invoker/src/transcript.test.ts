@@ -22,12 +22,12 @@ function lines(path: string): Array<Record<string, unknown>> {
 describe('TranscriptBuffer', () => {
   it('writes one JSON line per event, with its time', () => {
     const transcript = buffer();
-    transcript.append({ messageStart: { role: 'assistant' } }, at);
-    transcript.append({ messageStop: { stopReason: 'end_turn' } }, at);
+    transcript.append({ type: 'assistant', message: { content: [] } }, at);
+    transcript.append({ type: 'result', subtype: 'success' }, at);
     const summary = transcript.close();
     assert.deepEqual(lines(transcript.path), [
-      { at: '2026-10-19T09:00:00.000Z', messageStart: { role: 'assistant' } },
-      { at: '2026-10-19T09:00:00.000Z', messageStop: { stopReason: 'end_turn' } },
+      { at: '2026-10-19T09:00:00.000Z', type: 'assistant', message: { content: [] } },
+      { at: '2026-10-19T09:00:00.000Z', type: 'result', subtype: 'success' },
     ]);
     assert.equal(summary.events, 2);
     assert.equal(summary.truncated, false);
@@ -37,7 +37,7 @@ describe('TranscriptBuffer', () => {
   it('redacts a planted token before it reaches the disk', () => {
     const transcript = buffer();
     const token = `ghs_${'A'.repeat(36)}`;
-    transcript.append({ contentBlockDelta: { delta: { text: `export GH_TOKEN=${token}` } } }, at);
+    transcript.append({ type: 'assistant', message: { content: [{ type: 'text', text: `export GH_TOKEN=${token}` }] } }, at);
     transcript.close();
     const text = readFileSync(transcript.path, 'utf8');
     assert.doesNotMatch(text, /AAAAAAAAAAAA/);
@@ -48,7 +48,7 @@ describe('TranscriptBuffer', () => {
   it('stops at the cap and ends with a truncation marker', () => {
     const transcript = buffer(4096);
     for (let i = 0; i < 100; i += 1) {
-      transcript.append({ messageStart: { role: 'x'.repeat(100) } }, at);
+      transcript.append({ type: 'assistant', text: 'x'.repeat(100) }, at);
     }
     const summary = transcript.close();
     const written = lines(transcript.path);
@@ -57,37 +57,6 @@ describe('TranscriptBuffer', () => {
     assert.ok(readFileSync(transcript.path).length <= 4096);
     assert.deepEqual(written.at(-1), { truncated: true, keptEvents: summary.events, droppedEvents: summary.droppedEvents, maxBytes: 4096 });
     assert.equal(written.length, summary.events + 1);
-  });
-
-  it('redacts a token split across streamed deltas', () => {
-    const transcript = buffer();
-    const token = `ghs_${'B'.repeat(36)}`;
-    for (const part of ['token is ', token.slice(0, 6), token.slice(6, 20), token.slice(20), ' done']) {
-      transcript.append({ contentBlockDelta: { contentBlockIndex: 0, delta: { text: part } } }, at);
-    }
-    transcript.append({ contentBlockStop: { contentBlockIndex: 0 } }, at);
-    transcript.close();
-    assert.doesNotMatch(readFileSync(transcript.path, 'utf8'), /BBBB/);
-    assert.deepEqual(lines(transcript.path)[0], {
-      at: '2026-10-19T09:00:00.000Z',
-      contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'token is ghs_*** done' } },
-    });
-  });
-
-  it('joins tool input deltas and keeps blocks apart', () => {
-    const transcript = buffer();
-    transcript.append({ contentBlockDelta: { contentBlockIndex: 0, delta: { text: 'a' } } }, at);
-    transcript.append({ contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: '{"cmd":' } } } }, at);
-    transcript.append({ contentBlockDelta: { contentBlockIndex: 1, delta: { toolUse: { input: '"ls"}' } } } }, at);
-    const summary = transcript.close();
-    assert.deepEqual(
-      lines(transcript.path).map((line) => line.contentBlockDelta),
-      [
-        { contentBlockIndex: 0, delta: { text: 'a' } },
-        { contentBlockIndex: 1, delta: { toolUse: { input: '{"cmd":"ls"}' } } },
-      ],
-    );
-    assert.equal(summary.events, 3);
   });
 
   it('ignores events after it is closed, and closes once', () => {

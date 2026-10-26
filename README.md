@@ -14,7 +14,7 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 | `scripts/` | Repository tooling, in TypeScript, run directly by Node. |
 | `.factorial/` | How Factorial treats this repository as a target, like any other: `sensitive-paths.json` lists the changes its reviews flag for care. |
 | `.github/workflows/` | CI and deployment. All deployments run through GitHub Actions. |
-| `docs/` | `current-stage.md` (how the deployed system works), `finding-a-run.md`, `security.md`, `architecture-principles.md`, the bootstrap and GitHub App guides, `harness-vs-runtime.md` (why agents are Harnesses, not Runtimes), `agent-sdk-plan.md` (the plan to move the agents to the Claude Agent SDK on Runtime), and background material including the original design conversation. |
+| `docs/` | `current-stage.md` (how the deployed system works), `finding-a-run.md`, `security.md`, `architecture-principles.md`, the bootstrap and GitHub App guides, `harness-vs-runtime.md` (the Harness-or-Runtime evaluation, since superseded), `agent-sdk-plan.md` (how the agents moved to the Claude Agent SDK on Runtime), and background material including the original design conversation. |
 
 ## Running the checks locally
 
