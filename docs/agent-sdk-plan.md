@@ -228,6 +228,25 @@ The planner moves before the reviewer (changed 2026-10-25; the first version of 
 
 **Gate:** two real items through the merged graph, each producing a valid stored plan, a tested branch and a review. One of them is #87 again, recorded beside the spike's run and the Harness's #92, so the record shows what moving the planner added.
 
+**Result (2026-10-26): passed.** Both items went from label to pull request with no human step, each with a plan valid on its first write, one build round, passing tests and an approving review (two low findings each). #87 could not be one of them: the spike's PR #128 had already merged it, so a rerun would build on a `main` that has the change. Measured against the spike's records instead:
+
+| | #125, `WebFetch` for the builder (PR #138) | #140, subagent usage in `usage.json` (PR #141) |
+|---|---|---|
+| Plan | 4 steps, 5 files | 3 steps, 7 files |
+| Plan subagent | 37 s, 14 tool calls, 6 model calls, 86,952 input tokens (32% of the run's) | 68 s, 13 tool calls, 4 model calls, 59,372 input tokens (17%) |
+| Build | 182 s, 11 turns, $0.23 | 210 s, 13 turns, $0.23 |
+| Label to pull request | about 7 min | about 9 min |
+
+Against the spike's small items ($0.06 to $0.14 with a GLM plan already written) and #87 ($1.05), planning in the session added little cost. Both items needed a change before merging, and both changes trace back to Factorial or to the issue, not to the plan:
+
+- **#125:** the plan left the plan subagent's `WebFetch` (the issue's step 5) as a follow-up; added by hand on the PR.
+- **#140:** the issue took the Agent result's `totalTokens` and `usage` as the subagent's totals; they are its last call. The issue and #141 were corrected to sum the subagent's own calls.
+
+Two fixes came out of the runs:
+
+- **Foreground subagents (#139).** Claude Code started the plan subagent in the background by default, and on #125 the builder slept 90 seconds for a plan ready after 37. `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` now makes subagents and commands finish before the builder continues; #140 ran that way.
+- **Subagent usage (#141)** makes the plan subagent's share of a run visible in `usage.json` from the next run on, which the figures above had to be summed by hand to give.
+
 **Consequences (2026-10-25).** Planning inside the builder's session is consistent with `docs/security.md` section 3.4 (roles may share a session when neither judges or ships the other's output) and matches how Claude Code plans locally, with a read-only plan step before edits in one session. It also narrows four things, recorded here so they are decided rather than discovered:
 
 - **The plan is the builder session's claim.** The subagent writes `plan.json` itself (see the 9a notes above), but the builder can still change it afterwards: its prompt says not to, and nothing enforces that. So the stored plan is what the session left, not evidence of what the planner wrote. The transcript under `/var/lib/factorial` holds both.
