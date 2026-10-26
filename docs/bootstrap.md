@@ -10,9 +10,8 @@ The foundation stack (`templates/00-foundation.yml`) creates:
 | `factorial-deploy` role | Assumed only by Actions jobs in the `production` environment of this repository, which only `main` may use. Drives CloudFormation (always through the execution role), publishes artefacts, and is the only principal that may move `live` aliases. It is explicitly denied from touching the foundation stack. |
 | `factorial-cloudformation` role | Assumed by CloudFormation to create resources in Factorial's stacks. Scoped to `factorial-*` resource names (`factorial_*` for AgentCore), and may only create IAM roles that carry one of the two permissions boundaries. Roles named `factorial-agent` or `factorial-agent-*` must carry the agent boundary, and only they may be passed to AgentCore. |
 | `factorial-permissions-boundary` | Upper bound for every runtime role (Lambdas, the state machine, Fargate tasks). An allowlist of the services Factorial uses at runtime, so IAM, CloudFormation changes and everything else are outside it by construction, plus explicit denies on promotion, credentials, deployment artefacts and the foundation itself. |
-| `factorial-agent-permissions-boundary` | Upper bound for every agent execution role. Allows only running a harness: model calls, resolving its model key through the service, pulling its image, web search through a `factorial-*` gateway and telemetry. Also carried by the web search gateway's service role, which AgentCore assumes. |
+| `factorial-agent-permissions-boundary` | Upper bound for every agent execution role. Allows only running a Runtime: calls to Anthropic models on Bedrock, pulling its image, web search through a `factorial-*` gateway and telemetry; no credentials of any kind. Also carried by the web search gateway's service role, which AgentCore assumes. |
 | Artefact bucket | Packaged templates and Lambda bundles. |
-| `factorial/agent-environment` ECR repository | The agent harness container image. |
 | `factorial/invoker` ECR repository | The Fargate task that invokes an agent and records its run. |
 | `factorial/agent-runtime` ECR repository | The AgentCore Runtime image: Factorial's host process around the Claude Agent SDK (`docs/agent-sdk-plan.md`). |
 
@@ -99,20 +98,7 @@ Everything else is deployed by the `deploy` workflow on merge to `main`, which p
 
 ## Human-provided secrets
 
-Two kinds of secret are created by a human, never by a template, because their values must not pass through CloudFormation or the repository. Templates reference them by name.
-
-**Model provider API key** (no longer needed). Since 2026-10-26 (`docs/agent-sdk-plan.md` phase 3.2) every agent reaches Claude on Bedrock with its execution role and no stack references this secret; skip it on a new installation. An existing installation deletes it by hand in phase 4. It was created with:
-
-```sh
-printf 'Model provider API key: '; read -rs MODEL_API_KEY; echo
-aws secretsmanager create-secret \
-  --name factorial/zai/api-key \
-  --description "Z.ai API key used by the Factorial builder harness" \
-  --secret-string "$(jq -n --arg apiKey "$MODEL_API_KEY" '{apiKey: $apiKey}')"
-unset MODEL_API_KEY
-```
-
-**GitHub App private key and identifiers**: see `docs/github-app.md`.
+The GitHub App's private key and identifiers are created by a human, never by a template, because their values must not pass through CloudFormation or the repository; templates reference them by name. See `docs/github-app.md`. There is no model key: every agent reaches Claude on Bedrock with its execution role (the Z.ai key the harnesses used was deleted in phase 4 of `docs/agent-sdk-plan.md`).
 
 ## Changing the foundation
 
