@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  TRIGGER_TYPES,
   WORKITEM_SCHEMA_VERSION,
   WorkItemValidationError,
   assertWorkItem,
@@ -222,6 +223,56 @@ describe('WorkItem rework context', () => {
   it('still accepts the issue example without a context field', async () => {
     const item = parseWorkItem(await loadExample('github-issue.json'));
     assert.equal(item.context, undefined);
+  });
+});
+
+describe('WorkItem inReplyTo', () => {
+  it('accepts an item that continues a pull request', async () => {
+    const item = parseWorkItem(await loadExample('github-pr-comment.json'));
+    assert.deepEqual(item.inReplyTo, { kind: 'pull-request', number: 87 });
+    assert.equal(item.source.type, TRIGGER_TYPES.githubPullRequestComment);
+    assert.equal(item.context, undefined);
+  });
+
+  it('still accepts an item without it', async () => {
+    const item = parseWorkItem(await loadExample('github-issue.json'));
+    assert.equal(item.inReplyTo, undefined);
+  });
+
+  it('rejects an unknown kind', async () => {
+    const item = clone(await loadExample('github-pr-comment.json')) as { inReplyTo: Record<string, unknown> };
+    item.inReplyTo.kind = 'issue';
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/inReplyTo/kind')));
+  });
+
+  it('rejects a missing, zero or fractional number', async () => {
+    const base = await loadExample('github-pr-comment.json');
+    const missing = clone(base) as { inReplyTo: Record<string, unknown> };
+    delete missing.inReplyTo.number;
+    assert.equal(validateWorkItem(missing).ok, false);
+    for (const value of [0, 2.5, '87']) {
+      const item = clone(base) as { inReplyTo: Record<string, unknown> };
+      item.inReplyTo.number = value;
+      assert.equal(validateWorkItem(item).ok, false, String(value));
+    }
+  });
+
+  it('rejects unknown properties', async () => {
+    const item = clone(await loadExample('github-pr-comment.json')) as { inReplyTo: Record<string, unknown> };
+    item.inReplyTo.branch = 'factorial/146b11c0-ca7d-11f1-9d6b-acd4bff0d455';
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.some((e) => e.includes('"branch"')));
+  });
+
+  it('rejects an item that carries both inReplyTo and context', async () => {
+    const item = clone(await loadExample('github-pr-rework.json')) as Record<string, unknown>;
+    item.inReplyTo = { kind: 'pull-request', number: 7 };
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.includes('/context must not be present here'));
   });
 });
 
