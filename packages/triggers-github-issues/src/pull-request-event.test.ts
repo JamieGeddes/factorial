@@ -7,7 +7,7 @@ import type { WorkItem } from '@factorial/workitem';
 import { addressedRequest, decidePullRequestEvent, type PullRequestDecideOptions, type PullRequestDecision } from './pull-request-event.ts';
 
 /** The work item of a decision that must be `kind`. */
-function work(decision: PullRequestDecision, kind: 'rework-review' | 'rework-checks-failed'): WorkItem {
+function work(decision: PullRequestDecision, kind: Exclude<PullRequestDecision['kind'], 'ignore'>): WorkItem {
   if (decision.kind !== kind) assert.fail(`expected ${kind}, got ${decision.kind}${decision.kind === 'ignore' ? `: ${decision.reason}` : ''}`);
   return (decision as { workItem: WorkItem }).workItem;
 }
@@ -161,8 +161,9 @@ describe('decidePullRequestEvent: an inline review comment', () => {
 });
 
 describe('decidePullRequestEvent: a conversation comment', () => {
-  it('is rework after a review, with the branch from the Run details of the description', () => {
-    const workItem = work(decidePullRequestEvent('issue_comment', issueComment(`@${SLUG}: please add a test`), options), 'rework-review');
+  it("is rework on the commenter's request, with the branch from the Run details of the description", () => {
+    const workItem = work(decidePullRequestEvent('issue_comment', issueComment(`@${SLUG}: please add a test`), options), 'rework-comment');
+    assert.equal(workItem.context?.cause, 'comment');
     assert.equal(workItem.context?.branch, BRANCH);
     assert.equal(workItem.context?.baseBranch, 'main');
     assert.deepEqual(workItem.context?.details, [{ author: 'owner', body: 'please add a test' }]);

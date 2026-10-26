@@ -93,7 +93,7 @@ export function admitRework(
       ok: false,
       status: 'busy',
       reason: `work item ${running.workItemId} is still running on this pull request`,
-      ...(current.cause === 'review'
+      ...(current.cause !== 'checks-failed'
         ? { reply: `Factorial is already working on this pull request (work item \`${running.workItemId}\`), so this request was not started. Ask again once it has replied.` }
         : {}),
     };
@@ -125,6 +125,20 @@ export function admitRework(
 export function inlineCommentIdFromUrl(url: string): number | undefined {
   const match = /#discussion_r([1-9][0-9]{0,15})$/.exec(url);
   return match ? Number(match[1]) : undefined;
+}
+
+/** A comment that can carry a reaction: one in the conversation, or one inline on the diff. */
+export interface CommentRef {
+  kind: 'conversation' | 'inline';
+  id: number;
+}
+
+/** The comment a source URL points at, if it points at one (a review or a workflow run does not). */
+export function commentToAcknowledge(url: string): CommentRef | undefined {
+  const conversation = /#issuecomment-([1-9][0-9]{0,15})$/.exec(url);
+  if (conversation) return { kind: 'conversation', id: Number(conversation[1]) };
+  const inline = inlineCommentIdFromUrl(url);
+  return inline === undefined ? undefined : { kind: 'inline', id: inline };
 }
 
 /** The review id in a source URL that points at a review (`…/pull/26#pullrequestreview-77`). */

@@ -238,17 +238,27 @@ describe('buildReworkFile', () => {
         );
       }) as typeof fetch,
     });
-    const { text, points } = await buildReworkFile(client, repo, HEAD_SHA, rework, 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77');
+    const { text, points } = await buildReworkFile(client, repo, HEAD_SHA, rework, { sourceUrl: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' });
     assert.deepEqual(seen, ['https://api.github.com/repos/JamieGeddes/factorial/pulls/26/reviews/77/comments?per_page=100']);
     assert.equal(points.length, 3);
     assert.match(text, /### Point 3: @JamieGeddes \(src\/b\.ts:4\)\n\nInline one\./);
     assert.doesNotMatch(text, /Bot noise/);
   });
 
+  it("names the ledger's opener as the previous work item when Prepare found it", async () => {
+    const { text } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework, { previousWorkItemId: '11111111-2222-4333-8444-555555555555' });
+    assert.match(text, /Previous work item: 11111111-2222-4333-8444-555555555555/);
+  });
+
+  it('describes a conversation request as such', async () => {
+    const { text } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'comment' });
+    assert.match(text, /Cause: a request made in the pull request's conversation/);
+  });
+
   it('fetches no review comments when the source is a comment rather than a review', async () => {
     let called = false;
     const client = new GitHubClient({ token: 'ghs_x', fetchImpl: (async () => { called = true; return new Response('[]', { status: 200 }); }) as typeof fetch });
-    const { points } = await buildReworkFile(client, repo, HEAD_SHA, rework, 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9');
+    const { points } = await buildReworkFile(client, repo, HEAD_SHA, rework, { sourceUrl: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' });
     assert.equal(called, false);
     assert.equal(points.length, 2);
   });

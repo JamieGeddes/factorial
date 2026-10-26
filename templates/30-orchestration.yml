@@ -103,6 +103,8 @@ Resources:
           AttributeType: S
         - AttributeName: parentId
           AttributeType: S
+        - AttributeName: pullRequestKey
+          AttributeType: S
       KeySchema:
         - AttributeName: workItemId
           KeyType: HASH
@@ -144,6 +146,17 @@ Resources:
               - status
               - groupId
               - groupIndex
+        # The item that opened a pull request (`<owner>/<name>#<number>`,
+        # lower case), written by OpenPullRequest: Prepare admits rework only
+        # for pull requests Factorial has a record of opening.
+        - IndexName: pullRequestKey-index
+          KeySchema:
+            - AttributeName: pullRequestKey
+              KeyType: HASH
+          Projection:
+            ProjectionType: INCLUDE
+            NonKeyAttributes:
+              - branch
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
       SSESpecification:
@@ -571,7 +584,9 @@ Resources:
             - Sid: LedgerSourceIndex
               Effect: Allow
               Action: dynamodb:Query
-              Resource: !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
+              Resource:
+                - !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
+                - !Sub ${WorkItemsTable.Arn}/index/pullRequestKey-index
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy

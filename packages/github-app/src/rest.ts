@@ -149,6 +149,12 @@ export class GitHubClient {
     return review.state;
   }
 
+  /** React to a comment in a pull request's conversation (`conversation`) or inline on its diff (`inline`). */
+  async addReaction(repo: Repo, comment: { kind: 'conversation' | 'inline'; id: number }, content: '+1' | 'eyes' | 'rocket'): Promise<void> {
+    const kind = comment.kind === 'conversation' ? 'issues' : 'pulls';
+    await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/${kind}/comments/${comment.id}/reactions`, { content });
+  }
+
   /** The inline comments submitted with one review, at most 100. */
   async listReviewComments(repo: Repo, pullNumber: number, reviewId: number): Promise<ReviewComment[]> {
     const comments = await this.#request<

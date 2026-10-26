@@ -21,7 +21,7 @@ import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import type { ReworkPoint } from '../lib/rework-admission.ts';
-import { recordProgress } from '../lib/table.ts';
+import { pullRequestKey, recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
 import { pullRequestBody, reworkComment, safeLogin, type ReviewOutcome, type TestResult } from './pr-body.ts';
@@ -149,7 +149,12 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
     await client.commentOnIssue(repo, issue, `Factorial has opened ${pr.htmlUrl} for review.`);
   }
 
-  await recordProgress(ctx.workItem.id, 'pr-opened', { prUrl: pr.htmlUrl, prNumber: pr.number, testRunUrl: input.test.runUrl });
+  await recordProgress(ctx.workItem.id, 'pr-opened', {
+    prUrl: pr.htmlUrl,
+    prNumber: pr.number,
+    pullRequestKey: pullRequestKey(repo, pr.number),
+    testRunUrl: input.test.runUrl,
+  });
   // The pull request is open, so a failure to record it must not turn the run
   // into a reported failure.
   try {

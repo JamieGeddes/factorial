@@ -17,14 +17,14 @@
  * written anywhere in the session.
  */
 import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
-import type { CheckJob, GitHubClient, PullRequestState } from '@factorial/github-app';
+import type { CheckJob, GitHubClient, PullRequestState, Repo } from '@factorial/github-app';
 import { assertWorkItem, type ReworkContext, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
 import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.ts';
 import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
 import { botLogin, repositoryClient, repositoryToken } from '../lib/github.ts';
-import { REFUSED_STATUSES, acceptedBefore, admitRework, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints, type EarlierItem } from '../lib/rework-admission.ts';
+import { REFUSED_STATUSES, acceptedBefore, admitRework, commentToAcknowledge, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints, type EarlierItem } from '../lib/rework-admission.ts';
 import { handOverWorkspace, mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
@@ -35,7 +35,7 @@ import {
   gitAuthHeader,
   shellQuote,
 } from '../lib/shell.ts';
-import { TooManyItemsError, acceptWorkItem, attemptRecord, attemptsAtSource, itemsAtSource, recordProgress, reworkCauseOf } from '../lib/table.ts';
+import { TooManyItemsError, acceptWorkItem, attemptRecord, attemptsAtSource, itemsAtSource, openerOf, recordProgress, reworkCauseOf } from '../lib/table.ts';
 
 interface PrepareInput {
   workItem: unknown;
@@ -146,6 +146,12 @@ export function logSection(job: CheckJob, log: string, tailLines = 200): string 
   ].join('\n');
 }
 
+const REWORK_CAUSES: Record<ReworkContext['cause'], string> = {
+  review: 'review comments',
+  'checks-failed': 'failed checks',
+  comment: "a request made in the pull request's conversation",
+};
+
 /**
  * `/workspace/rework.md`: the points to address, plus — when the cause is
  * failed checks — the failing jobs and the tail of each of their logs. When
@@ -161,16 +167,16 @@ export async function buildReworkFile(
   repo: { owner: string; name: string },
   headSha: string,
   rework: ReworkContext,
-  sourceUrl = '',
+  options: { sourceUrl?: string; previousWorkItemId?: string } = {},
 ): Promise<{ text: string; points: WorkItemReviewDetail[] }> {
-  const reviewId = rework.cause === 'review' ? reviewIdFromUrl(sourceUrl) : undefined;
+  const reviewId = rework.cause === 'review' ? reviewIdFromUrl(options.sourceUrl ?? '') : undefined;
   const points = reworkPoints(rework.details, reviewId === undefined ? [] : await client.listReviewComments(repo, rework.pullRequest.number, reviewId));
   const lines: string[] = [
     `# Rework of pull request #${rework.pullRequest.number}`,
     '',
-    `Previous work item: ${rework.previousWorkItemId}`,
+    `Previous work item: ${options.previousWorkItemId ?? rework.previousWorkItemId}`,
     `Pull request: ${rework.pullRequest.url}`,
-    `Cause: ${rework.cause === 'review' ? 'review comments' : 'failed checks'}`,
+    `Cause: ${REWORK_CAUSES[rework.cause]}`,
     '',
     '## Points to address',
     '',
@@ -244,6 +250,8 @@ export async function seedSession(params: {
   sessionId?: string;
   /** For rework, the pull request's actual base, which Prepare read from GitHub. */
   baseBranch?: string;
+  /** For rework, the item that opened the pull request, from the ledger. */
+  previousWorkItemId?: string;
 }): Promise<{ baseCommit: string; baseBranch: string; reworkPoints?: WorkItemReviewDetail[] }> {
   const { workItem, branch, resumedFrom } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
@@ -270,7 +278,10 @@ export async function seedSession(params: {
 
   if (rework) {
     const client = await repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' });
-    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework, workItem.source.url);
+    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework, {
+      sourceUrl: workItem.source.url,
+      ...(params.previousWorkItemId ? { previousWorkItemId: params.previousWorkItemId } : {}),
+    });
     const encoded = Buffer.from(reworkFile.text, 'utf8').toString('base64');
     await mustRun(
       target,
@@ -293,7 +304,8 @@ export class ReworkNotAdmittedError extends Error {
  * Check that a rework item may run (`lib/rework-admission.ts`). A refusal is
  * recorded on the ledger and in `report.json`, answered on the pull request
  * when a person asked, and ends the execution through ReworkNotAdmitted.
- * Returns the pull request as GitHub reports it.
+ * Returns the pull request as GitHub reports it, and the item that opened
+ * it: the ledger's record, which the branch name only approximates.
  */
 async function admitReworkItem(
   workItem: WorkItem,
@@ -301,7 +313,7 @@ async function admitReworkItem(
   createdAt: string,
   prefix: string,
   log: Logger,
-): Promise<PullRequestState> {
+): Promise<{ pr: PullRequestState; openedBy: string }> {
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const refuse = async (status: string, reason: string, reply?: string): Promise<never> => {
     if (reply) {
@@ -322,6 +334,9 @@ async function admitReworkItem(
   const pr = await client.getPullRequest(repo, rework.pullRequest.number);
   const mismatch = pullRequestMismatch(pr, rework, await botLogin());
   if (mismatch) return refuse('not-eligible', mismatch);
+  const opener = await openerOf(repo, pr.number);
+  if (!opener) return refuse('not-eligible', `Factorial has no record of opening pull request #${pr.number}`);
+  if (opener.branch !== rework.branch) return refuse('not-eligible', `the item that opened pull request #${pr.number} worked on ${opener.branch ?? 'no branch'}, not ${rework.branch}`);
 
   // An inline comment addressed to Factorial inside a review that requests
   // changes also arrives as that review, whose item takes all its comments.
@@ -351,7 +366,24 @@ async function admitReworkItem(
   }
   const admission = admitRework({ workItemId: workItem.id, createdAt, cause: rework.cause }, earlier, new Date());
   if (!admission.ok) return refuse(admission.status, admission.reason, admission.reply);
-  return pr;
+  await acknowledge(repo, workItem, log);
+  return { pr, openedBy: opener.workItemId };
+}
+
+/**
+ * React to the comment that asked for the work (eyes), so the person sees
+ * at once that it was taken; the reply comes when the rework finishes. A
+ * review has no reaction API, and a failed run no comment. Never fatal.
+ */
+async function acknowledge(repo: Repo, workItem: WorkItem, log: Logger): Promise<void> {
+  const target = commentToAcknowledge(workItem.source.url);
+  if (!target) return;
+  try {
+    const client = await repositoryClient(repo, { issues: 'write', pull_requests: 'write' });
+    await client.addReaction(repo, target, 'eyes');
+  } catch (error) {
+    log.error('comment not acknowledged', { error });
+  }
 }
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
@@ -372,7 +404,7 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
 
   const createdAt = await acceptWorkItem(workItem, input.factorialVersion, attempt);
   await putJsonArtefact(prefix, 'workitem.json', workItem);
-  const reworkPr = rework ? await admitReworkItem(workItem, rework, createdAt, prefix, log) : undefined;
+  const admitted = rework ? await admitReworkItem(workItem, rework, createdAt, prefix, log) : undefined;
 
   const branch = resumedFrom?.branch ?? workBranchFor(workItem);
   const { baseCommit, baseBranch, reworkPoints: points } = await seedSession({
@@ -380,7 +412,7 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     workItem,
     branch,
     ...(resumedFrom ? { resumedFrom } : {}),
-    ...(reworkPr ? { baseBranch: reworkPr.baseRef } : {}),
+    ...(admitted ? { baseBranch: admitted.pr.baseRef, previousWorkItemId: admitted.openedBy } : {}),
   });
   await handOverWorkspace(sessionTarget(workItem.id, 'builder'));
 
@@ -395,7 +427,7 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     branch,
     baseBranch,
     sessionId: workItem.id,
-    ...(rework ? { reworkOf: { previousWorkItemId: rework.previousWorkItemId, prNumber: rework.pullRequest.number } } : {}),
+    ...(rework ? { reworkOf: { previousWorkItemId: admitted?.openedBy ?? rework.previousWorkItemId, prNumber: rework.pullRequest.number } } : {}),
     ...(resumedFrom ? { resumedFrom: resumedFrom.workItemId } : {}),
   });
   log.info('session prepared', { branch, baseBranch, rework: rework !== undefined, resumedFrom: resumedFrom?.workItemId });
@@ -411,5 +443,6 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     artefactPrefix: prefix,
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(points ? { reworkPoints: pointOrigins(points) } : {}),
+    ...(admitted ? { previousWorkItemId: admitted.openedBy } : {}),
   };
 });

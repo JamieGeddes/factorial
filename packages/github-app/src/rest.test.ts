@@ -124,6 +124,16 @@ describe('GitHubClient', () => {
     ]);
   });
 
+  it('reacts to a conversation comment and to an inline comment at their own endpoints', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { id: 1 }, seen) });
+    await client.addReaction(repo, { kind: 'conversation', id: 9 }, 'eyes');
+    await client.addReaction(repo, { kind: 'inline', id: 5 }, 'eyes');
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/comments/9/reactions');
+    assert.equal(seen[1]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/comments/5/reactions');
+    assert.deepEqual(seen[0]?.body, { content: 'eyes' });
+  });
+
   it('reads a branch head through the git refs API', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { object: { sha: 'b'.repeat(40) } }, seen) });
