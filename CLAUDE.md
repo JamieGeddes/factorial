@@ -4,7 +4,7 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 
 This file is what is agreed and binding. **Requirements** and **Target architecture** are where Factorial is heading, not yet implemented. **Fixed from day one** must never be weakened. **Current stage** is what exists and what to build next: work to it, and implement target features only when the task asks. **Conventions** apply to every change.
 
-Also binding: `docs/architecture-principles.md`. `docs/security.md` is the threat model. `docs/current-stage.md` is the detailed record of how the deployed system behaves. `docs/design-conversation.md` and `docs/design-plan.md` are background and proposals, not agreed.
+Also binding: `docs/architecture-principles.md`. `docs/security.md` is the threat model. `docs/current-stage.md` is the detailed record of how the deployed system behaves. `docs/design-conversation.md`, `docs/design-plan.md` and `docs/design-extension-points.md` are background and proposals, not agreed.
 
 ## Requirements
 
