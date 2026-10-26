@@ -44,8 +44,11 @@ export interface WorkItemRepository {
   name: string;
 }
 
-/** Why rework of a previous WorkItem is needed. */
-export type WorkItemReworkCause = 'review' | 'checks-failed';
+/**
+ * Why rework of a previous WorkItem is needed: a review, failed checks, or a
+ * request someone made in the pull request's conversation.
+ */
+export type WorkItemReworkCause = 'review' | 'checks-failed' | 'comment';
 
 export interface WorkItemReviewDetail {
   /** Author of the comment, as a source-system login. */

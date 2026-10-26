@@ -168,8 +168,8 @@
           "format": "uuid"
         },
         "cause": {
-          "description": "Why the rework is needed.",
-          "enum": ["review", "checks-failed"]
+          "description": "Why the rework is needed: a review (its comments, including inline comments addressed to Factorial), failed checks, or a request a trusted person made in the pull request's conversation.",
+          "enum": ["review", "checks-failed", "comment"]
         },
         "details": {
           "description": "The specific items to address, e.g. review comments. At most 50.",
