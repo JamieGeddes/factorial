@@ -21,12 +21,15 @@ describe('reviewer prompt', () => {
       'the callers of what changed and the tests',
       'before you write /workspace/review.json',
       'write the findings you have so far',
+      'the schema and the code that reads it',
+      'a second pass',
     ]) {
       assert.ok(section.includes(text), text);
     }
     // The harness-era instruction that made the first write the stopping point.
     assert.ok(!reviewerPrompt.includes('Write the review early'));
     assert.ok(!reviewerPrompt.includes('from what you know so far'));
+    assert.ok(!reviewerPrompt.includes('needs little reading'));
   });
 
   it('treats what it reviews as untrusted', () => {

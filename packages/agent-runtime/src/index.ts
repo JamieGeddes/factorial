@@ -54,7 +54,7 @@ function startReviewer(request: RunRequest): AsyncIterable<unknown> {
     hostEnv: process.env,
     preToolUse: reviewerPreToolUseHooks(config.workspace, onDenied),
     postToolUse: [],
-    stop: reviewStopHooks(config.workspace, (reason) => log.info('review missing or invalid; reviewer sent back', { reason })),
+    stop: reviewStopHooks(config.workspace, (reason) => log.info('reviewer sent back', { reason })),
     webSearch: undefined,
     abortController,
     stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
