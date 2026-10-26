@@ -144,6 +144,14 @@ describe('WorkItem rework context', () => {
     assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/context/kind')));
   });
 
+  it('accepts each cause, including a request made in a comment', async () => {
+    for (const cause of ['review', 'checks-failed', 'comment']) {
+      const item = clone(await loadExample('github-pr-rework.json')) as { context: Record<string, unknown> };
+      item.context.cause = cause;
+      assert.equal(validateWorkItem(item).ok, true, cause);
+    }
+  });
+
   it('rejects an unknown cause', async () => {
     const item = clone(await loadExample('github-pr-rework.json')) as {
       context: Record<string, unknown>;
