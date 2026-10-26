@@ -28,6 +28,14 @@ describe('readConfig', () => {
     assert.equal(config.workspace, '/workspace');
   });
 
+  it('reads a reviewer, which has no explore subagent', () => {
+    const { FACTORIAL_EXPLORE_MODEL: _, ...reviewer } = env;
+    const config = readConfig({ ...reviewer, FACTORIAL_ROLE: 'reviewer' });
+    assert.equal(config.role, 'reviewer');
+    assert.equal(config.exploreModel, undefined);
+    assert.throws(() => readConfig({ ...reviewer, FACTORIAL_ROLE: 'builder' }), /FACTORIAL_EXPLORE_MODEL/);
+  });
+
   it('turns web search off when no gateway is set', () => {
     assert.equal(readConfig(env).webSearchGatewayUrl, undefined);
   });

@@ -18,7 +18,7 @@ import {
   type ReviewDigest,
   type SensitiveChange,
 } from '../lib/review-files.ts';
-import { mustRun, sessionTarget } from '../lib/session.ts';
+import { asAgent, mustRun, sessionTarget } from '../lib/session.ts';
 import { recordProgress } from '../lib/table.ts';
 
 interface CollectReviewInput {
@@ -33,7 +33,9 @@ export type CollectReviewResult = { ok: true; review: ReviewDigest } | { ok: fal
 
 export const handler = logged('collect-review', (input: CollectReviewInput) => runKey(input.ctx), async (input, log): Promise<CollectReviewResult> => {
   const { ctx } = input;
-  const read = await mustRun(sessionTarget(ctx.sessionId, 'reviewer'), readReviewScript(), 120);
+  // The model has had the workspace, so the file is read as the user it ran as.
+  const target = sessionTarget(ctx.sessionId, 'reviewer');
+  const read = await mustRun(target, asAgent(target, readReviewScript()), 120);
   const checked = checkReviewFile(parseReviewRead(read.stdout));
 
   if (!checked.ok) {

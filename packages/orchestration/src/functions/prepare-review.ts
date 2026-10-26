@@ -37,7 +37,7 @@ import {
   testFileChanges,
   type PrFacts,
 } from '../lib/pr-facts.ts';
-import { mustRun, sessionTarget } from '../lib/session.ts';
+import { handOverWorkspace, mustRun, sessionTarget } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
@@ -97,6 +97,8 @@ export const handler = logged('prepare-review', (input: PrepareReviewInput) => r
     dependenciesUnknown = true;
     log.error('could not read the package files for the pull request', { error });
   }
+  // The last root command in the session: from here the workspace is the model's.
+  await handOverWorkspace(sessionTarget(ctx.sessionId, 'reviewer'));
   const deploySettings = parseDeploySettings(settingsText);
   if (deploySettings.problems.length > 0) log.error("ignoring the repository's pull request settings", { problems: deploySettings.problems });
   const prFacts = prFactsDigest({

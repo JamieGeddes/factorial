@@ -2,9 +2,9 @@
  * Run deterministic shell commands inside an agent's session, with no model
  * involved. The session is identified by the WorkItem id and must always be
  * addressed through the same endpoint qualifier as the agent invocation,
- * otherwise it is a different microVM. Commands run as root. On the builder's
- * Runtime the model runs as the `agent` user, so the workspace is handed to
- * it after seeding and git runs as it once the model has had the repository.
+ * otherwise it is a different microVM. Commands run as root. On a Runtime
+ * the model runs as the `agent` user, so the workspace is handed to it after
+ * seeding and git runs as it once the model has had the repository.
  */
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand } from '@aws-sdk/client-bedrock-agentcore';
 
@@ -34,14 +34,15 @@ const client = new BedrockAgentCoreClient({});
 export type SessionRole = 'builder' | 'reviewer';
 
 /**
- * The builder, which plans with its subagent, and its clean room run on
- * Factorial's host on BUILDER_RUNTIME_ARN; the reviewer on its harness. Both
- * kinds are addressed through the `live` qualifier.
+ * Every role runs on Factorial's host on its own Runtime: the builder, which
+ * plans with its subagent, and its clean room on BUILDER_RUNTIME_ARN, the
+ * reviewer on REVIEWER_RUNTIME_ARN. Both are addressed through the `live`
+ * qualifier.
  */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
   const qualifier = requireEnv('HARNESS_QUALIFIER');
-  if (role === 'builder') return { arn: requireEnv('BUILDER_RUNTIME_ARN'), qualifier, sessionId, kind: 'runtime' };
-  return { arn: requireEnv('REVIEWER_HARNESS_ARN'), qualifier, sessionId, kind: 'harness' };
+  const arn = requireEnv(role === 'builder' ? 'BUILDER_RUNTIME_ARN' : 'REVIEWER_RUNTIME_ARN');
+  return { arn, qualifier, sessionId, kind: 'runtime' };
 }
 
 /** The user the Runtime host runs the model as, and its home. */

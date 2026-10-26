@@ -18,7 +18,7 @@ Parameters:
   ReviewTimeoutSeconds:
     Type: Number
     Default: 1200
-    Description: Upper bound for one reviewer run, above the reviewer harness's own 900-second loop timeout.
+    Description: Upper bound for one reviewer run, above the reviewer host's own time limit (FACTORIAL_MAX_DURATION_SECONDS, 900).
   BuildTimeoutSeconds:
     Type: Number
     Default: 7200
@@ -67,9 +67,9 @@ Globals:
         NODE_OPTIONS: --enable-source-maps
         TABLE_NAME: !Ref WorkItemsTable
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
-        REVIEWER_HARNESS_ARN: !ImportValue Factorial-ReviewerHarnessArn
         HARNESS_QUALIFIER: live
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
+        REVIEWER_RUNTIME_ARN: !ImportValue Factorial-ReviewerRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
         GITHUB_PRIVATE_KEY_SECRET: factorial/github/app-private-key
@@ -333,7 +333,7 @@ Resources:
           Value: Factorial
 
   # ---------------------------------------------------------------------------
-  # The invoker: a Fargate task that runs one harness invocation to completion.
+  # The invoker: a Fargate task that runs one agent invocation to completion.
   # Step Functions waits on it with runTask.sync, so a build may take hours
   # without any Lambda or integration time limit, and completion is observed
   # by a process the agent cannot influence.
@@ -415,33 +415,9 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Each role's harness the state machine runs is listed here
-              # when its stage is added.
-              - Sid: InvokeHarnesses
-                Effect: Allow
-                Action:
-                  - bedrock-agentcore:InvokeHarness
-                  - bedrock-agentcore:InvokeAgentRuntime
-                Resource:
-                  - !ImportValue Factorial-ReviewerHarnessArn
-                  - !Sub
-                    - ${HarnessArn}/harness-endpoint/*
-                    - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
-              # Which version live serves, its model and its limits, for usage.json.
-              - Sid: ReadHarnessVersions
-                Effect: Allow
-                Action:
-                  - bedrock-agentcore:GetHarness
-                  - bedrock-agentcore:GetHarnessEndpoint
-                Resource:
-                  - !ImportValue Factorial-ReviewerHarnessArn
-                  - !Sub
-                    - ${HarnessArn}/harness-endpoint/*
-                    - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
-              # The builder on AgentCore Runtime (docs/agent-sdk-plan.md): the
-              # run, attach and status actions, and which version live serves.
+              # Every role on AgentCore Runtime (docs/agent-sdk-plan.md): the
+              # run, attach and status actions, and which version live serves,
+              # its model and its limits, for usage.json.
               - Sid: InvokeRuntimes
                 Effect: Allow
                 Action: bedrock-agentcore:InvokeAgentRuntime
@@ -450,6 +426,10 @@ Resources:
                   - !Sub
                     - ${RuntimeArn}/runtime-endpoint/*
                     - RuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
+                  - !ImportValue Factorial-ReviewerRuntimeArn
+                  - !Sub
+                    - ${RuntimeArn}/runtime-endpoint/*
+                    - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
               - Sid: ReadRuntimeVersions
                 Effect: Allow
                 Action:
@@ -460,6 +440,10 @@ Resources:
                   - !Sub
                     - ${RuntimeArn}/runtime-endpoint/*
                     - RuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
+                  - !ImportValue Factorial-ReviewerRuntimeArn
+                  - !Sub
+                    - ${RuntimeArn}/runtime-endpoint/*
+                    - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
@@ -502,10 +486,8 @@ Resources:
           Essential: true
           # Time to store the transcript and usage after ECS sends SIGTERM.
           StopTimeout: 120
-          # The role and where it runs, a harness for the reviewer (ROLE,
-          # HARNESS_ARN, HARNESS_ID, HARNESS_QUALIFIER) and the Runtime for
-          # the builder, which plans with its subagent (TARGET, RUNTIME_ARN,
-          # RUNTIME_QUALIFIER), come from the state machine's container
+          # The role and its Runtime (ROLE, TARGET, RUNTIME_ARN,
+          # RUNTIME_QUALIFIER) come from the state machine's container
           # overrides, so this one task definition serves every agent role.
           Environment:
             - Name: TABLE_NAME
@@ -769,19 +751,8 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          - Effect: Allow
-            Action:
-              - bedrock-agentcore:InvokeAgentRuntimeCommand
-              - bedrock-agentcore:InvokeAgentRuntime
-            Resource:
-              - !ImportValue Factorial-ReviewerHarnessArn
-              - !Sub
-                - ${HarnessArn}/harness-endpoint/*
-                - HarnessArn: !ImportValue Factorial-ReviewerHarnessArn
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*
-              - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/harness_factorial_reviewer-*/runtime-endpoint/*
-          # The builder's Runtime and its clean room: commands only, since the
-          # invoker runs the agent.
+          # Each role's Runtime (the builder's also holds its clean room):
+          # commands only, since the invoker runs the agent.
           - Effect: Allow
             Action:
               - bedrock-agentcore:InvokeAgentRuntimeCommand
@@ -790,6 +761,10 @@ Resources:
               - !Sub
                 - ${RuntimeArn}/runtime-endpoint/*
                 - RuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
+              - !ImportValue Factorial-ReviewerRuntimeArn
+              - !Sub
+                - ${RuntimeArn}/runtime-endpoint/*
+                - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
 
   # Only orchestrator functions, outside the agent sandbox, may read the App
   # key and mint tokens.
@@ -980,8 +955,7 @@ Resources:
         ClusterArn: !GetAtt BuildCluster.Arn
         TaskDefinitionArn: !Ref InvokerTaskDefinition
         BuilderRuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
-        ReviewerHarnessArn: !ImportValue Factorial-ReviewerHarnessArn
-        ReviewerHarnessId: !ImportValue Factorial-ReviewerHarnessId
+        ReviewerRuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
         SubnetA: !Ref SubnetA
         SubnetB: !Ref SubnetB
         SecurityGroup: !Ref InvokerSecurityGroup
@@ -1209,9 +1183,9 @@ Resources:
                       "Name": "invoker",
                       "Environment": [
                         { "Name": "ROLE", "Value": "reviewer" },
-                        { "Name": "HARNESS_ARN", "Value": "${ReviewerHarnessArn}" },
-                        { "Name": "HARNESS_ID", "Value": "${ReviewerHarnessId}" },
-                        { "Name": "HARNESS_QUALIFIER", "Value": "live" },
+                        { "Name": "TARGET", "Value": "runtime" },
+                        { "Name": "RUNTIME_ARN", "Value": "${ReviewerRuntimeArn}" },
+                        { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "SENSITIVE_PATHS", "Value": "{% $reviewPrep.sensitivePathsJson %}" },
                         { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
                         { "Name": "SESSION_ID", "Value": "{% $ctx.sessionId %}" },

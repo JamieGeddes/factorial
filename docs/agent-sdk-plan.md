@@ -260,6 +260,14 @@ Two fixes came out of the runs:
 - Tools: `Read`, `Grep`, `Glob` and `Bash`; a `PreToolUse` hook denies every `Edit` and `Write` except `/workspace/review.json`, and denies `Bash` commands that write (`>`, `tee`, `git commit`, `git checkout`, `npm install`). The reviewer's system prompt is ported from its harness block.
 - The state machine's Review state passes `TARGET=runtime` and the reviewer's Runtime ARN; PrepareReview and CollectReview address the Runtime through `session.ts`. The reviewer Harness block, the LiteLLM configuration and the `ModelApiKey` credential provider go (the `MaxIterations` parameter, used only by the builder Harness, went in 8b).
 
+**Two pull requests, as in phases 2 and 3.1 (2026-10-26).** The orchestration stack imports the reviewer Harness's exports. So 10a adds the reviewer Runtime and moves Review, PrepareReview and CollectReview to it, and 10b, once 10a is deployed, removes the reviewer Harness, the `ModelApiKey` credential provider, the LiteLLM configuration and the parameters only they use. 10a differs from the bullets above in five places:
+
+- **The role is kept, not re-created.** `factorial-agent-reviewer` keeps its logical id and name and gains the Bedrock statements, so it serves both the Harness and the Runtime in 10a; a new logical id with the same `RoleName` would fail to create. 10b drops its token-vault and workload-identity statements and narrows its trust to `runtime/factorial_reviewer-*`.
+- **Tools.** Read, Grep, Glob, Bash, and Write and Edit limited to `/workspace/review.json`. The `PreToolUse` hook's Bash rules are matched with quoted text removed, so `grep -n '=>'` or `git grep 'git commit'` stay allowed, and deny redirection to a file (other than `/dev/null` or between streams), git commands that change state, installs, file-changing commands in command position (`tee`, `rm`, `mv`, `cp`, `sed -i` and the like), and `bash -c`, `eval`, `python -c` and `node -e`, which would hide one inside quotes. As for the builder, this narrows what an injection can drive; CollectReview reading one validated file is the gate.
+- **A `Stop` hook checks the review**, as the builder's checks its report: while `review.json` is missing or fails `@factorial/review`, the reviewer is sent back with the errors, at most twice. #87's first harness review read until its step limit and wrote nothing.
+- **Model and limits.** Sonnet 5.5 for the loop and Haiku 5.5 for background calls, through the same EU profiles and pinned by the role as the builder's are; no subagents and no web search. 60 turns, $2 and 900 seconds, under `ReviewTimeoutSeconds` (1200). The prompt loses the GLM-era read and step budgets.
+- **Ownership.** PrepareReview hands `/workspace` to the `agent` user after its last command, and CollectReview reads `review.json` as `agent`, as Collect does for the builder.
+
 **Gate:** a review that validates against `contracts/review/v1/` on a real item; the reviewer is advisory, so nothing more.
 
 ### Phase 4: retire the Harness and tidy the record
@@ -285,8 +293,9 @@ Two fixes came out of the runs:
 | 8b | 2 | Builder Harness block, `factorial-agent` role and their outputs removed | 8a deployed | Deploy succeeds; the next item unchanged |
 | 9a | 3 | Plan subagent, plan hook, Collect validation; Plan states, CollectPlan and the invoker's planner role removed | 8b | Two real items through the merged graph, one of them #87 |
 | 9b | 3 | Planner Harness block, its role and its LiteLLM share removed; the reviewer block takes over the explanations; the foundation's planner references wait for phase 4 | 9a deployed | Deploy succeeds; the next item unchanged |
-| 10 | 3 | Reviewer Runtime; reviewer Harness, model key and LiteLLM removed | 9b | A real review validated from the Runtime |
-| 11 | 4 | Harness code paths and image removed; foundation clean-up (human); docs rewrite; tag `stage-1-agent-sdk` | 10 | `npm run ci`; deploy; record updated |
+| 10a | 3 | Reviewer Runtime; Review, PrepareReview and CollectReview moved to it | 9b | A real review validated from the Runtime |
+| 10b | 3 | Reviewer Harness, model key, LiteLLM and their parameters removed | 10a deployed | Deploy succeeds; the next item unchanged |
+| 11 | 4 | Harness code paths and image removed; foundation clean-up (human); docs rewrite; tag `stage-1-agent-sdk` | 10b | `npm run ci`; deploy; record updated |
 
 Pull requests 3 to 6 can be reviewed independently but deploy in order; each is small enough to read in one sitting. Nothing before 8 changes what a work item sees.
 

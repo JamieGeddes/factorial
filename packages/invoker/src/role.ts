@@ -8,9 +8,9 @@ import type { WorkItem } from '@factorial/workitem';
 import { buildPrompt, reviewPrompt } from './prompt.ts';
 
 /**
- * Roles the invoker knows how to start, each `factorial_<role>`: the builder
- * on a Runtime, the reviewer on a harness. The planner is the builder's plan
- * subagent since phase 3.1 of docs/agent-sdk-plan.md.
+ * Roles the invoker knows how to start, each `factorial_<role>` on its own
+ * Runtime (the reviewer since phase 3.2 of docs/agent-sdk-plan.md). The
+ * planner is the builder's plan subagent since phase 3.1.
  */
 export const ROLES = ['builder', 'reviewer'] as const;
 export type Role = (typeof ROLES)[number];
