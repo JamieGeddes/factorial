@@ -80,7 +80,7 @@ export interface SdkRecord {
   modelUsage?: Record<string, unknown>;
   permissionDenials?: number;
   reconnects?: number;
-  /** Each subagent run in order and a total per agent type. Already inside the run's own totals. */
+  /** Each subagent run in order and a total per agent type (see SubagentRun for where each figure comes from). Already inside the run's own totals. */
   subagents?: { runs: SubagentRun[]; totals: SubagentTotal[] };
 }
 

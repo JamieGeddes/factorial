@@ -155,33 +155,89 @@ describe('runUsageOf', () => {
 });
 
 describe('subagent results', () => {
-  const toolResult = (toolUseResult: unknown, parent: string | null = null) => ({ type: 'user', parent_tool_use_id: parent, tool_use_result: toolUseResult });
-  const usage = { input_tokens: 5, output_tokens: 50 };
+  const call = (id: string, parent: string, usage: Record<string, number>) => ({
+    type: 'assistant',
+    parent_tool_use_id: parent,
+    message: { id, content: [], usage },
+  });
+  const agentResult = (toolUseId: string, toolUseResult: unknown, parent: string | null = null) => ({
+    type: 'user',
+    parent_tool_use_id: parent,
+    message: { content: [{ type: 'tool_result', tool_use_id: toolUseId, content: 'done' }] },
+    tool_use_result: toolUseResult,
+  });
+  const completed = (agentType: string, extra: Record<string, unknown> = {}) => ({
+    status: 'completed',
+    agentId: 'a',
+    agentType,
+    totalTokens: 900,
+    totalDurationMs: 2000,
+    totalToolUseCount: 4,
+    usage: { input_tokens: 2, output_tokens: 50 },
+    ...extra,
+  });
 
-  it('records a completed plan result and an explore result, with a total per type', () => {
+  it("sums a subagent's tokens from its own calls, and keeps the SDK's figure as its final context", () => {
     const tally = new SdkTally();
-    tally.add(toolResult({ status: 'completed', agentId: 'a1', agentType: 'plan', totalTokens: 1000, totalDurationMs: 2000, totalToolUseCount: 4, usage }));
-    tally.add(toolResult({ agentId: 'a2', agentType: 'explore', totalTokens: 300, totalDurationMs: 500, totalToolUseCount: 2, usage }));
-    tally.add(toolResult({ agentId: 'a3', agentType: 'explore', totalTokens: 200, totalDurationMs: 100, totalToolUseCount: 1, usage }));
-    assert.deepEqual(tally.subagentRuns[0], { agentType: 'plan', totalTokens: 1000, totalDurationMs: 2000, totalToolUseCount: 4, usage });
-    assert.deepEqual(tally.subagentRuns.map((run) => run.agentType), ['plan', 'explore', 'explore']);
-    assert.deepEqual(subagentsOf(tally.subagentRuns).totals, [
-      { agentType: 'plan', runs: 1, totalTokens: 1000, totalDurationMs: 2000, totalToolUseCount: 4 },
-      { agentType: 'explore', runs: 2, totalTokens: 500, totalDurationMs: 600, totalToolUseCount: 3 },
+    tally.add(call('m1', 'toolu_plan', { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, output_tokens: 5 }));
+    // The SDK repeats a response's usage on each message it splits it into.
+    tally.add(call('m1', 'toolu_plan', { input_tokens: 10, cache_read_input_tokens: 100, cache_creation_input_tokens: 20, output_tokens: 5 }));
+    tally.add(call('m2', 'toolu_plan', { input_tokens: 2, cache_read_input_tokens: 300, cache_creation_input_tokens: 0, output_tokens: 40 }));
+    tally.add(agentResult('toolu_plan', completed('plan')));
+    assert.deepEqual(tally.subagentRuns, [
+      {
+        agentType: 'plan',
+        durationMs: 2000,
+        toolUseCount: 4,
+        modelCalls: 2,
+        inputTokens: 432,
+        cacheReadInputTokens: 400,
+        cacheWriteInputTokens: 20,
+        outputTokensAtLeast: 45,
+        finalContextTokens: 900,
+      },
     ]);
+  });
+
+  it('keeps each run in order with a total per type, and counts no calls for a run whose calls were not seen', () => {
+    const tally = new SdkTally();
+    tally.add(call('p1', 'toolu_p', { input_tokens: 100, output_tokens: 10 }));
+    tally.add(agentResult('toolu_p', completed('plan')));
+    tally.add(call('e1', 'toolu_e1', { input_tokens: 30, output_tokens: 3 }));
+    tally.add(agentResult('toolu_e1', completed('explore', { totalDurationMs: 500, totalToolUseCount: 2 })));
+    tally.add(agentResult('toolu_e2', completed('explore', { totalDurationMs: 100, totalToolUseCount: 1 })));
+    assert.deepEqual(tally.subagentRuns.map((run) => [run.agentType, run.modelCalls, run.inputTokens]), [
+      ['plan', 1, 100],
+      ['explore', 1, 30],
+      ['explore', 0, 0],
+    ]);
+    assert.deepEqual(subagentsOf(tally.subagentRuns).totals[1], {
+      agentType: 'explore',
+      runs: 2,
+      durationMs: 600,
+      toolUseCount: 3,
+      modelCalls: 1,
+      inputTokens: 30,
+      cacheReadInputTokens: 0,
+      cacheWriteInputTokens: 0,
+      outputTokensAtLeast: 3,
+    });
   });
 
   it('ignores an async_launched result', () => {
     const tally = new SdkTally();
-    tally.add(toolResult({ status: 'async_launched', agentId: 'a1', agentType: 'plan', description: 'x', prompt: 'y' }));
+    tally.add(agentResult('toolu_1', { status: 'async_launched', agentId: 'a1', agentType: 'plan', description: 'x', prompt: 'y' }));
     assert.equal(tally.subagentRuns.length, 0);
   });
 
-  it('ignores malformed results and subagents own messages without failing', () => {
+  it("ignores malformed results and a subagent's own tool results without failing", () => {
     const tally = new SdkTally();
-    for (const bad of [undefined, null, 'text', 7, [], {}, { agentType: 5 }, { agentType: '' }]) tally.add(toolResult(bad));
-    tally.add(toolResult({ agentType: 'plan', totalTokens: 'many', usage: 'none' }));
-    tally.add(toolResult({ agentType: 'plan', totalTokens: 1 }, 'toolu_1'));
-    assert.deepEqual(tally.subagentRuns, [{ agentType: 'plan', totalTokens: 0, totalDurationMs: 0, totalToolUseCount: 0 }]);
+    for (const bad of [undefined, null, 'text', 7, [], {}, { agentType: 5 }, { agentType: '' }]) tally.add(agentResult('toolu_x', bad));
+    tally.add({ type: 'user', tool_use_result: completed('plan'), message: { content: 'not blocks' } });
+    tally.add(agentResult('toolu_y', completed('plan'), 'toolu_parent'));
+    assert.deepEqual(
+      tally.subagentRuns.map((run) => [run.agentType, run.modelCalls, run.finalContextTokens]),
+      [['plan', 0, 900]],
+    );
   });
 });
