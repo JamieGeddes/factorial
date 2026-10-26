@@ -359,8 +359,10 @@ Resources:
   # Review stage, after Test, runs it.
   # Factorial's host in review mode (FACTORIAL_ROLE: reviewer), on Claude
   # through Bedrock with this role, as the builder is. The role keeps its
-  # logical id and name, and serves the harness too until that is removed:
-  # a new logical id with the same RoleName would fail to create.
+  # logical id and name (a new logical id with the same RoleName would fail
+  # to create) and no longer reaches the model key: the harness below is
+  # unused and goes in the next pull request, and the runtime's shell shares
+  # this role, so the key must not be readable from it.
   # ---------------------------------------------------------------------------
   ReviewerAgentRole:
     Type: AWS::IAM::Role
@@ -408,23 +410,6 @@ Resources:
                     bedrock:InferenceProfileArn:
                       - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
                       - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
-              # The harness's model key, until the harness is removed.
-              - Sid: WorkloadIdentity
-                Effect: Allow
-                Action:
-                  - bedrock-agentcore:GetWorkloadAccessToken
-                  - bedrock-agentcore:GetWorkloadAccessTokenForJWT
-                Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_reviewer-*
-              - Sid: ModelApiKey
-                Effect: Allow
-                Action: bedrock-agentcore:GetResourceApiKey
-                Resource:
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:token-vault/default/apikeycredentialprovider/factorial-model-api-key
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default
-                  - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:workload-identity-directory/default/workload-identity/harness_factorial_reviewer-*
       Tags:
         - Key: Project
           Value: Factorial
