@@ -268,6 +268,8 @@ Two fixes came out of the runs:
 - **Model and limits.** Sonnet 5.5 for the loop and Haiku 5.5 for background calls, through the same EU profiles and pinned by the role as the builder's are; no subagents and no web search. 60 turns, $2 and 900 seconds, under `ReviewTimeoutSeconds` (1200). The prompt loses the GLM-era read and step budgets.
 - **Ownership.** PrepareReview hands `/workspace` to the `agent` user after its last command, and CollectReview reads `review.json` as `agent`, as Collect does for the builder.
 
+10b removes the reviewer Harness and its `live` endpoint and outputs, the `ModelApiKey` credential provider, the shared policy's secret and `agent-environment` image grants, and the `AgentImageTag`, `ModelApiBase` and `ModelApiKeySecretName` parameters, and narrows the reviewer role's trust to `runtime/factorial_reviewer-*`. The deploy workflow stops passing `AgentImageTag`; the `agent-environment` image build and the Harness promotion loop stay for phase 4, which removes them with the repository. The shared policy keeps its description, which still says harness, since changing it replaces the policy and the fixed name collides (#130).
+
 **Gate:** a review that validates against `contracts/review/v1/` on a real item; the reviewer is advisory, so nothing more.
 
 ### Phase 4: retire the Harness and tidy the record

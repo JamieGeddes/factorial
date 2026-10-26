@@ -1,6 +1,6 @@
 # System diagram
 
-The current implementation (Stage 0): a labelled GitHub issue becomes a tested pull request with no human step in between. `CLAUDE.md` is the authoritative description; this diagram shows the same system visually. Human-provided inputs (the bootstrap, the GitHub App, the model key) are shown greyed with dotted borders; everything else is deployed by the deploy workflow from the templates in `templates/`.
+The current implementation (Stage 0): a labelled GitHub issue becomes a tested pull request with no human step in between. `CLAUDE.md` is the authoritative description; this diagram shows the same system visually. Human-provided inputs (the bootstrap, the GitHub App) are shown greyed with dotted borders; everything else is deployed by the deploy workflow from the templates in `templates/`.
 
 The four CloudFormation stacks are shown as subgraphs: `factorial-foundation` (`00`), `factorial-triggers` (`10`), `factorial-agent` (`20`) and `factorial-orchestration` (`30`). Arrows labelled **control** carry a trigger or an invocation; arrows labelled **data** carry the work itself.
 

@@ -101,7 +101,7 @@ Everything else is deployed by the `deploy` workflow on merge to `main`, which p
 
 Two kinds of secret are created by a human, never by a template, because their values must not pass through CloudFormation or the repository. Templates reference them by name.
 
-**Model provider API key** (required before the agent stack can deploy). Enter the key at the prompt so it does not land in your shell history:
+**Model provider API key** (no longer needed). Since 2026-10-26 (`docs/agent-sdk-plan.md` phase 3.2) every agent reaches Claude on Bedrock with its execution role and no stack references this secret; skip it on a new installation. An existing installation deletes it by hand in phase 4. It was created with:
 
 ```sh
 printf 'Model provider API key: '; read -rs MODEL_API_KEY; echo
@@ -111,8 +111,6 @@ aws secretsmanager create-secret \
   --secret-string "$(jq -n --arg apiKey "$MODEL_API_KEY" '{apiKey: $apiKey}')"
 unset MODEL_API_KEY
 ```
-
-To rotate it later, use `put-secret-value` with the same shape. The harness reads the current value on every invocation.
 
 **GitHub App private key and identifiers**: see `docs/github-app.md`.
 

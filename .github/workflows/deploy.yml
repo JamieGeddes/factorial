@@ -165,6 +165,9 @@ jobs:
           platforms: arm64
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
+      # No stack uses this image since the reviewer harness went (phase 3.2
+      # of docs/agent-sdk-plan.md); phase 4 removes the step with the
+      # repository.
       - name: Build and push the agent environment image when its inputs change
         id: image
         env:
@@ -234,7 +237,6 @@ jobs:
         env:
           CFN_ROLE: ${{ steps.foundation.outputs.cfn_role }}
           BUCKET: ${{ steps.foundation.outputs.bucket }}
-          AGENT_IMAGE_TAG: ${{ steps.image.outputs.tag }}
           INVOKER_IMAGE_TAG: ${{ steps.invoker.outputs.tag }}
           AGENT_RUNTIME_IMAGE_TAG: ${{ steps.runtime_image.outputs.tag }}
         run: |
@@ -260,7 +262,7 @@ jobs:
             fi
             params=()
             case "$stack" in
-              factorial-agent) params=(--parameter-overrides "AgentImageTag=$AGENT_IMAGE_TAG" "AgentRuntimeImageTag=$AGENT_RUNTIME_IMAGE_TAG") ;;
+              factorial-agent) params=(--parameter-overrides "AgentRuntimeImageTag=$AGENT_RUNTIME_IMAGE_TAG") ;;
               factorial-orchestration) params=(--parameter-overrides "InvokerImageTag=$INVOKER_IMAGE_TAG" "FactorialVersion=$GITHUB_SHA") ;;
             esac
             # package uploads local artefacts (Lambda bundles) and rewrites
