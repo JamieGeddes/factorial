@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type { PullRequestState } from '@factorial/github-app';
 import type { ReworkContext } from '@factorial/workitem';
 
-import { admitRework, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints, type EarlierItem } from './rework-admission.ts';
+import { admitRework, commentToAcknowledge, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints, type EarlierItem } from './rework-admission.ts';
 
 const BRANCH = 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 const BOT = 'factorial-x[bot]';
@@ -70,6 +70,16 @@ describe('admitRework: one item in flight', () => {
     assert.match(admission.reply ?? '', /already working on this pull request \(work item `a`\)/);
   });
 
+  it('replies to a conversation request refused while an item runs', () => {
+    const admission = admitRework({ ...review, cause: 'comment' }, [item('a', 10, 'testing')], NOW);
+    assert.ok(!admission.ok && admission.status === 'busy' && admission.reply !== undefined);
+  });
+
+  it('starts the automatic count again after a conversation request', () => {
+    const earlier = [item('c', 10, 'pr-updated', 'checks-failed'), item('b', 20, 'pr-updated', 'comment'), item('a', 30, 'pr-updated', 'checks-failed')];
+    assert.equal(admitRework(checks, earlier, NOW).ok, true);
+  });
+
   it('refuses failed checks quietly while an item runs, since they arrive during its own tests', () => {
     const admission = admitRework(checks, [item('a', 10, 'building')], NOW);
     assert.ok(!admission.ok && admission.status === 'busy' && admission.reply === undefined);
@@ -124,6 +134,13 @@ describe('admitRework: automatic reworks after failed checks', () => {
 });
 
 describe('review points', () => {
+  it('finds the comment to acknowledge, of either kind, and none for a review or a run', () => {
+    assert.deepEqual(commentToAcknowledge('https://github.com/o/r/pull/26#issuecomment-9'), { kind: 'conversation', id: 9 });
+    assert.deepEqual(commentToAcknowledge('https://github.com/o/r/pull/26#discussion_r5'), { kind: 'inline', id: 5 });
+    assert.equal(commentToAcknowledge('https://github.com/o/r/pull/26#pullrequestreview-77'), undefined);
+    assert.equal(commentToAcknowledge('https://github.com/o/r/actions/runs/3'), undefined);
+  });
+
   it('reads the comment id from an inline comment URL only', () => {
     assert.equal(inlineCommentIdFromUrl('https://github.com/o/r/pull/26#discussion_r5'), 5);
     assert.equal(inlineCommentIdFromUrl('https://github.com/o/r/pull/26#issuecomment-9'), undefined);

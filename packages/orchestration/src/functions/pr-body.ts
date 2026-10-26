@@ -410,7 +410,7 @@ const MAX_REWORK_POINTS = 50;
  * started before it recorded one.
  */
 export function reworkPointsSection(rework: ReworkContext, points: readonly ReworkPoint[], summary: BuilderSummary | undefined): string {
-  const heading = rework.cause === 'checks-failed' ? '## Failing checks' : '## Points raised';
+  const heading = { review: '## Points raised', 'checks-failed': '## Failing checks', comment: '## Request' }[rework.cause];
   if (points.length === 0) {
     return [heading, '', '_No specific points were recorded for this rework._'].join('\n');
   }
@@ -436,7 +436,12 @@ export function reworkComment(
   extras: Pick<BodyExtras, 'review' | 'facts'> = {},
 ): string {
   const summary = parseBuilderSummary(summaryText);
-  const why = rework.cause === 'checks-failed' ? 'the failing checks' : 'the review';
+  const requester = safeLogin(ctx.workItem.requestedBy);
+  const why = {
+    review: 'the review',
+    'checks-failed': 'the failing checks',
+    comment: requester ? `the request from @${requester}` : 'the request in the conversation',
+  }[rework.cause];
   // Only a run whose tests passed reaches this reply.
   const tested = test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
   const body = [

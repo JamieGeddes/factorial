@@ -29,6 +29,8 @@ export interface WorkContext {
    * carry. The reply on the pull request and the review re-request use it.
    */
   reworkPoints?: ReworkPoint[];
+  /** For rework, the item that opened the pull request, from the ledger; the work item's own field is the branch name's guess. */
+  previousWorkItemId?: string;
 }
 
 export function branchFor(workItem: WorkItem): string {

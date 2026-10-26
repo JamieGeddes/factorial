@@ -74,6 +74,7 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
     at,
     existing: pushed || ctx.resumedFrom !== undefined,
     ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}),
+    ...(ctx.previousWorkItemId ? { previousWorkItemId: ctx.previousWorkItemId } : {}),
   });
 
   const notes =

@@ -2,7 +2,8 @@
  * Events on Factorial's own pull requests that become rework.
  *
  * `decidePullRequestEvent` is the one place that maps a webhook to a
- * decision: ignore, rework after a review, or rework after failed checks.
+ * decision: ignore, rework after a review, rework on a request made in the
+ * conversation, or rework after failed checks.
  * It is deliberately rule-based. A triage agent that reads a comment to tell
  * a change request from a question or noise would replace this function and
  * nothing else.
@@ -23,6 +24,7 @@ import { BadPayloadError } from './issue-event.ts';
 export type PullRequestDecision =
   | { kind: 'ignore'; reason: string }
   | { kind: 'rework-review'; workItem: WorkItem }
+  | { kind: 'rework-comment'; workItem: WorkItem }
   | { kind: 'rework-checks-failed'; workItem: WorkItem };
 
 export interface PullRequestDecideOptions {
@@ -155,7 +157,7 @@ function notFactorials(pr: PullRequest, repo: Repository, appSlug: string): stri
 }
 
 interface Rework {
-  cause: 'review' | 'checks-failed';
+  cause: 'review' | 'checks-failed' | 'comment';
   repo: Repository;
   prNumber: number;
   prUrl: string;
@@ -274,9 +276,10 @@ function fromReviewComment(payload: Record<string, unknown>, options: PullReques
 }
 
 /**
- * A comment in the pull request's conversation that addresses the App. The
- * payload describes the pull request as an issue, without its branches: the
- * work branch is read from the Run details of the description Factorial
+ * A comment in the pull request's conversation that addresses the App: a
+ * request from the commenter, not a review point, so its cause is `comment`.
+ * The payload describes the pull request as an issue, without its branches:
+ * the work branch is read from the Run details of the description Factorial
  * wrote, and Prepare checks it against the pull request's real head.
  */
 function fromIssueComment(payload: Record<string, unknown>, options: PullRequestDecideOptions): PullRequestDecision {
@@ -304,7 +307,7 @@ function fromIssueComment(payload: Record<string, unknown>, options: PullRequest
   if (!branch || !WORK_BRANCH.test(branch)) return { kind: 'ignore', reason: `pull request #${number} has no Factorial work branch in its description` };
   const workItem = workItemFor(
     {
-      cause: 'review',
+      cause: 'comment',
       repo,
       prNumber: number,
       prUrl: str(rec(issue.pull_request, 'issue.pull_request').html_url, 'issue.pull_request.html_url'),
@@ -320,7 +323,7 @@ function fromIssueComment(payload: Record<string, unknown>, options: PullRequest
     },
     options,
   );
-  return { kind: 'rework-review', workItem };
+  return { kind: 'rework-comment', workItem };
 }
 
 /**

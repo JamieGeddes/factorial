@@ -69,7 +69,14 @@ export const handler = logged('prepare-review', (input: PrepareReviewInput) => r
   const [planJson, planMarkdown] = await Promise.all([planArtefact(ctx, 'plan/plan.json'), planArtefact(ctx, 'plan/plan.md')]);
 
   // Fails unless the remote branch is still at the tested commit.
-  await seedSession({ role: 'reviewer', workItem: ctx.workItem, branch: ctx.branch, at: headSha, existing: true });
+  await seedSession({
+    role: 'reviewer',
+    workItem: ctx.workItem,
+    branch: ctx.branch,
+    at: headSha,
+    existing: true,
+    ...(ctx.previousWorkItemId ? { previousWorkItemId: ctx.previousWorkItemId } : {}),
+  });
   const seeded = await mustRun(
     sessionTarget(ctx.sessionId, 'reviewer'),
     seedReviewScript({ baseBranch: ctx.baseBranch, planJson, planMarkdown, summary: input.collect.summary }),

@@ -121,6 +121,25 @@ export async function reworkCauseOf(workItemId: string): Promise<string | undefi
   return typeof cause === 'string' ? cause : undefined;
 }
 
+/** The ledger's key for a pull request, `<owner>/<name>#<number>` in lower case: GitHub names ignore case. */
+export function pullRequestKey(repo: { owner: string; name: string }, number: number): string {
+  return `${repo.owner}/${repo.name}#${number}`.toLowerCase();
+}
+
+/** The item that opened a pull request, and its branch, if Factorial opened it. */
+export async function openerOf(repo: { owner: string; name: string }, number: number): Promise<{ workItemId: string; branch?: string } | undefined> {
+  const result = await documents.send(
+    new QueryCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      IndexName: 'pullRequestKey-index',
+      KeyConditionExpression: 'pullRequestKey = :key',
+      ExpressionAttributeValues: { ':key': pullRequestKey(repo, number) },
+      Limit: 1,
+    }),
+  );
+  return result.Items?.[0] as { workItemId: string; branch?: string } | undefined;
+}
+
 /** The attempt number and artefact prefix on a ledger row, if the row exists. */
 export async function attemptRecord(workItemId: string): Promise<{ attempt?: number; artefactPrefix?: string } | undefined> {
   const result = await documents.send(

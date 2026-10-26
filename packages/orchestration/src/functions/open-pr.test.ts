@@ -30,7 +30,8 @@ describe('reviewersToRequest', () => {
     assert.deepEqual(reviewersToRequest(rework, [{ author: 'carol', path: 'a.ts' }, { author: 'alice' }]), ['carol', 'alice']);
   });
 
-  it('asks nobody after a checks-failed rework', () => {
+  it('asks nobody after a checks-failed rework or a conversation request', () => {
     assert.deepEqual(reviewersToRequest({ ...rework, cause: 'checks-failed' }), []);
+    assert.deepEqual(reviewersToRequest({ ...rework, cause: 'comment' }), []);
   });
 });

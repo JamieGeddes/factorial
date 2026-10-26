@@ -438,6 +438,14 @@ describe('reworkComment', () => {
     assert.match(text, /4\. @dave on `src\/d\.ts:9`: _Not reported by the builder\._/);
   });
 
+  it("answers a conversation request as the requester's", () => {
+    const asked = { ...rework, cause: 'comment' as const, details: [{ author: 'alice', body: 'Rename it.' }] };
+    const askedCtx: WorkContext = { ...reworkCtx, workItem: { ...reworkCtx.workItem, requestedBy: 'alice', context: asked } };
+    const text = reworkComment(askedCtx, asked, '## Rework points\n- 1: Renamed.\n## Summary\nok', PASS, HEAD, {});
+    assert.match(text, /^Factorial has reworked this pull request after the request from @alice\./);
+    assert.match(text, /## Request\n\n1\. @alice: Renamed\./);
+  });
+
   it('heads the points as failing checks for a checks-failed rework, and copes with none recorded', () => {
     const failed = { ...rework, cause: 'checks-failed' as const, details: [] };
     const text = reworkComment(reworkCtx, failed, summaryMd(), PASS, HEAD, {});
