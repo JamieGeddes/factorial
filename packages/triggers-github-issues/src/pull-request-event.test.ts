@@ -6,10 +6,10 @@ import type { WorkItem } from '@factorial/workitem';
 
 import { addressedRequest, decidePullRequestEvent, type PullRequestDecideOptions, type PullRequestDecision } from './pull-request-event.ts';
 
-/** The work item of a decision that must be `kind`. */
-function work(decision: PullRequestDecision, kind: Exclude<PullRequestDecision['kind'], 'ignore'>): WorkItem {
-  if (decision.kind !== kind) assert.fail(`expected ${kind}, got ${decision.kind}${decision.kind === 'ignore' ? `: ${decision.reason}` : ''}`);
-  return (decision as { workItem: WorkItem }).workItem;
+/** The work item a decision emits; fails the test when it ignores the event. */
+function work(decision: PullRequestDecision): WorkItem {
+  if (decision.kind === 'ignore') assert.fail(`expected a work item, got ignore: ${decision.reason}`);
+  return decision.workItem;
 }
 
 const SLUG = 'factorial-x';
@@ -66,8 +66,6 @@ const reviewComment = (body: string, overrides: Record<string, unknown> = {}) =>
   ...overrides,
 });
 
-const prBody = `## Summary\n\nx\n\n<details>\n<summary>Run details</summary>\n\n| | |\n|---|---|\n| Branch | \`${BRANCH}\` |\n\n</details>\n`;
-
 const issueComment = (body: string, issue: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) => ({
   action: 'created',
   issue: {
@@ -75,7 +73,7 @@ const issueComment = (body: string, issue: Record<string, unknown> = {}, overrid
     title: 'Add a thing',
     html_url: 'https://github.com/JamieGeddes/factorial/pull/26',
     state: 'open',
-    body: prBody,
+    body: 'No Run details are read.',
     user: BOT,
     pull_request: { html_url: 'https://github.com/JamieGeddes/factorial/pull/26' },
     ...issue,
@@ -107,31 +105,31 @@ const workflowRun = (run: Record<string, unknown> = {}) => ({
 
 function ignored(event: string, payload: unknown, reason: RegExp, opts = options): void {
   const decision = decidePullRequestEvent(event, payload, opts);
-  if (decision.kind !== 'ignore') assert.fail(`expected ignore, got ${decision.kind}`);
+  if (decision.kind !== 'ignore') assert.fail(`expected ignore, got a work item`);
   assert.match(decision.reason, reason);
 }
 
+/** What every item in reply to pull request #26 shares. */
+function inReplyTo26(workItem: WorkItem): void {
+  assert.equal(workItem.id, DELIVERY);
+  assert.deepEqual(workItem.repository, { provider: 'github', owner: 'JamieGeddes', name: 'factorial' });
+  assert.deepEqual(workItem.inReplyTo, { kind: 'pull-request', number: 26 });
+  assert.equal(workItem.context, undefined, 'the adapter no longer interprets the event');
+}
+
 describe('decidePullRequestEvent: a review requesting changes', () => {
-  it('is rework after a review, with the review body as the first point', () => {
-    const workItem = work(decidePullRequestEvent('pull_request_review', review(), options), 'rework-review');
-    assert.equal(workItem.id, DELIVERY);
-    assert.deepEqual(workItem.source, { type: 'github-pull-request', id: '26', url: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' });
-    assert.equal(workItem.title, 'Rework #26: Add a thing');
+  it('records the review, its text as the body, in reply to the pull request', () => {
+    const workItem = work(decidePullRequestEvent('pull_request_review', review(), options));
+    inReplyTo26(workItem);
+    assert.deepEqual(workItem.source, { type: 'github-pull-request-review', id: '77', url: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' });
+    assert.equal(workItem.title, 'Review of #26: Add a thing');
+    assert.equal(workItem.body, 'Please split the handler.');
     assert.equal(workItem.requestedBy, 'owner');
-    assert.deepEqual(workItem.context, {
-      kind: 'rework',
-      pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
-      branch: BRANCH,
-      baseBranch: 'main',
-      previousWorkItemId: ORIGINAL,
-      cause: 'review',
-      details: [{ author: 'owner', body: 'Please split the handler.' }],
-    });
   });
 
   it('still counts with an empty body, leaving the points to the inline comments', () => {
-    const workItem = work(decidePullRequestEvent('pull_request_review', review({ review: { ...review().review, body: null } }), options), 'rework-review');
-    assert.deepEqual(workItem.context?.details, []);
+    const workItem = work(decidePullRequestEvent('pull_request_review', review({ review: { ...review().review, body: null } }), options));
+    assert.equal(workItem.body, '');
   });
 
   it('ignores approvals, plain comments and other actions', () => {
@@ -142,10 +140,12 @@ describe('decidePullRequestEvent: a review requesting changes', () => {
 });
 
 describe('decidePullRequestEvent: an inline review comment', () => {
-  it('is rework after a review when it addresses the App first, keeping the file and line', () => {
-    const workItem = work(decidePullRequestEvent('pull_request_review_comment', reviewComment(`@${SLUG} rename this to b`), options), 'rework-review');
+  it('records the request after the mention, naming the comment so Prepare can fetch its file and line', () => {
+    const workItem = work(decidePullRequestEvent('pull_request_review_comment', reviewComment(`@${SLUG} rename this to b`), options));
+    inReplyTo26(workItem);
+    assert.deepEqual(workItem.source, { type: 'github-pull-request-review-comment', id: '5', url: 'https://github.com/JamieGeddes/factorial/pull/26#discussion_r5' });
+    assert.equal(workItem.title, 'Comment on #26: Add a thing');
     assert.equal(workItem.body, 'rename this to b');
-    assert.deepEqual(workItem.context?.details, [{ author: 'owner', path: 'src/a.ts', line: 12, body: 'rename this to b' }]);
   });
 
   it('ignores a comment that does not start with the mention, or has nothing after it', () => {
@@ -161,42 +161,38 @@ describe('decidePullRequestEvent: an inline review comment', () => {
 });
 
 describe('decidePullRequestEvent: a conversation comment', () => {
-  it("is rework on the commenter's request, with the branch from the Run details of the description", () => {
-    const workItem = work(decidePullRequestEvent('issue_comment', issueComment(`@${SLUG}: please add a test`), options), 'rework-comment');
-    assert.equal(workItem.context?.cause, 'comment');
-    assert.equal(workItem.context?.branch, BRANCH);
-    assert.equal(workItem.context?.baseBranch, 'main');
-    assert.deepEqual(workItem.context?.details, [{ author: 'owner', body: 'please add a test' }]);
-    assert.equal(workItem.source.url, 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9');
+  it('records the request without reading a branch: Intake takes it from the thread', () => {
+    const workItem = work(decidePullRequestEvent('issue_comment', issueComment(`@${SLUG}: please add a test`), options));
+    inReplyTo26(workItem);
+    assert.deepEqual(workItem.source, { type: 'github-pull-request-comment', id: '9', url: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' });
+    assert.equal(workItem.body, 'please add a test');
   });
 
-  it('ignores comments on issues, closed pull requests and pull requests without a recorded branch', () => {
+  it('ignores comments on issues and closed pull requests', () => {
     ignored('issue_comment', issueComment(`@${SLUG} go`, { pull_request: undefined }), /on an issue, not a pull request/);
     ignored('issue_comment', issueComment(`@${SLUG} go`, { state: 'closed' }), /is closed/);
-    ignored('issue_comment', issueComment(`@${SLUG} go`, { body: 'no table' }), /no Factorial work branch/);
-    ignored('issue_comment', issueComment(`@${SLUG} go`, { body: prBody.replace(BRANCH, 'factorial/not-a-uuid') }), /no Factorial work branch/);
   });
 });
 
 describe('decidePullRequestEvent: a failed workflow run', () => {
-  it('is rework after failed checks when it failed on the pull request head', () => {
-    const workItem = work(decidePullRequestEvent('workflow_run', workflowRun(), options), 'rework-checks-failed');
-    assert.equal(workItem.title, 'Fix failing checks on #26');
-    assert.equal(workItem.context?.cause, 'checks-failed');
-    assert.equal(workItem.context?.pullRequest.url, 'https://github.com/JamieGeddes/factorial/pull/26');
-    assert.match(workItem.context?.details[0]?.body ?? '', /The workflow "CI" failed: https:\/\/github\.com\/JamieGeddes\/factorial\/actions\/runs\/3/);
+  it('records the run that failed on the pull request head', () => {
+    const workItem = work(decidePullRequestEvent('workflow_run', workflowRun(), options));
+    inReplyTo26(workItem);
+    assert.deepEqual(workItem.source, { type: 'github-workflow-run', id: '3', url: 'https://github.com/JamieGeddes/factorial/actions/runs/3' });
+    assert.equal(workItem.title, 'The workflow "CI" failed on #26');
+    assert.equal(workItem.body, `The workflow "CI" failed on ${HEAD.slice(0, 12)}: https://github.com/JamieGeddes/factorial/actions/runs/3`);
     assert.equal(workItem.requestedBy, BOT.login);
   });
 
   it('needs the App or a trusted person to have caused the run, never another bot', () => {
-    assert.equal(decidePullRequestEvent('workflow_run', workflowRun({ actor: owner, triggering_actor: owner }), options).kind, 'rework-checks-failed');
+    assert.equal(decidePullRequestEvent('workflow_run', workflowRun({ actor: owner, triggering_actor: owner }), options).kind, 'emit');
     ignored('workflow_run', workflowRun({ actor: stranger }), /caused by untrusted user "stranger"/);
     ignored('workflow_run', workflowRun({ triggering_actor: stranger }), /caused by untrusted user "stranger"/);
     ignored('workflow_run', workflowRun({ actor: { id: 1, login: 'other[bot]', type: 'Bot' } }), /caused by untrusted bot/);
   });
 
   it('counts a failure on push as well as on the pull request', () => {
-    assert.equal(decidePullRequestEvent('workflow_run', workflowRun({ event: 'push' }), options).kind, 'rework-checks-failed');
+    assert.equal(decidePullRequestEvent('workflow_run', workflowRun({ event: 'push' }), options).kind, 'emit');
   });
 
   it('ignores success, other events, other branches, forks and stale heads', () => {
@@ -237,12 +233,12 @@ describe('decidePullRequestEvent: guards', () => {
   });
 
   it('uses a fresh id when the delivery id is not a UUID', () => {
-    assert.notEqual(work(decidePullRequestEvent('pull_request_review', review(), { ...options, deliveryId: 'nope' }), 'rework-review').id, 'nope');
+    assert.notEqual(work(decidePullRequestEvent('pull_request_review', review(), { ...options, deliveryId: 'nope' })).id, 'nope');
   });
 
-  it('caps a point at 8,000 characters', () => {
-    const workItem = work(decidePullRequestEvent('pull_request_review_comment', reviewComment(`@${SLUG} ${'x'.repeat(9_000)}`), options), 'rework-review');
-    assert.equal(workItem.context!.details[0]!.body.length, 8_000);
+  it('caps the body at the contract limit; Intake caps a point at 8,000 characters', () => {
+    const workItem = work(decidePullRequestEvent('pull_request_review_comment', reviewComment(`@${SLUG} ${'x'.repeat(70_000)}`), options));
+    assert.equal(workItem.body.length, 65_536);
   });
 });
 

@@ -20,6 +20,9 @@ const CAUSE_BY_SOURCE: Readonly<Record<string, WorkItemReworkCause>> = {
 /** Who a failed run's point is attributed to: no person wrote it. */
 export const CHECKS_AUTHOR = 'github-actions';
 
+/** A point's text is capped as the contract capped `context.details`. */
+export const POINT_MAX = 8_000;
+
 /** The pull request an item continues, or undefined for a new request. */
 export function continuedPullRequest(workItem: WorkItem): { number: number; url: string } | undefined {
   if (workItem.context?.kind === 'rework') return workItem.context.pullRequest;
@@ -45,7 +48,7 @@ export function reworkCause(workItem: WorkItem): WorkItemReworkCause | undefined
  */
 export function reworkDetails(workItem: WorkItem): WorkItemReviewDetail[] {
   if (workItem.context?.kind === 'rework') return workItem.context.details;
-  const body = workItem.body.trim();
+  const body = workItem.body.trim().slice(0, POINT_MAX);
   if (!body) return [];
   const author = reworkCause(workItem) === 'checks-failed' ? CHECKS_AUTHOR : workItem.requestedBy;
   return [{ author, body }];

@@ -1,31 +1,26 @@
 /**
- * Events on Factorial's own pull requests that become rework.
+ * Events on Factorial's own pull requests that become work items.
  *
- * `decidePullRequestEvent` is the one place that maps a webhook to a
- * decision: ignore, rework after a review, rework on a request made in the
- * conversation, or rework after failed checks.
- * It is deliberately rule-based. A triage agent that reads a comment to tell
- * a change request from a question or noise would replace this function and
- * nothing else.
+ * `decidePullRequestEvent` maps a webhook to a work item or to nothing. It
+ * records facts only (#163): what happened (the source type: a review, an
+ * inline comment, a conversation comment, a failed workflow run), who said
+ * what, and which pull request it continues (`inReplyTo`). What the event
+ * means, which branch it is on and which item opened the pull request are
+ * decided by Intake, from the thread and GitHub.
  *
- * The adapter holds no GitHub credentials and cannot read the ledger, so it
- * checks only what the payload shows. Prepare checks the pull request itself
- * against GitHub (open, opened by the App, head still on this branch), and
- * applies the guards that need the ledger: one item in flight per pull
- * request, and at most two automatic reworks after failed checks without a
- * human asking in between.
+ * The adapter is public-facing, holds no GitHub credentials and cannot read
+ * the ledger, so it filters only on what the payload shows: trusted people,
+ * no bots, a request addressed to the App, an open pull request the App
+ * opened from a `factorial/` branch. Intake checks the rest and applies the
+ * thread policies.
  */
 import { randomUUID } from 'node:crypto';
 
-import { TRIGGER_TYPES, validateWorkItem, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
+import { TRIGGER_TYPES, validateWorkItem, type WorkItem } from '@factorial/workitem';
 
 import { BadPayloadError } from './issue-event.ts';
 
-export type PullRequestDecision =
-  | { kind: 'ignore'; reason: string }
-  | { kind: 'rework-review'; workItem: WorkItem }
-  | { kind: 'rework-comment'; workItem: WorkItem }
-  | { kind: 'rework-checks-failed'; workItem: WorkItem };
+export type PullRequestDecision = { kind: 'ignore'; reason: string } | { kind: 'emit'; workItem: WorkItem };
 
 export interface PullRequestDecideOptions {
   /** The App's slug: its bot user is `<slug>[bot]`, and people address it as `@<slug>`. */
@@ -41,12 +36,9 @@ export interface PullRequestDecideOptions {
 export const PULL_REQUEST_EVENTS = ['pull_request_review', 'pull_request_review_comment', 'issue_comment', 'workflow_run'] as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const WORK_BRANCH = /^factorial\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
-/** The Branch row of the Run details table `pr-body.ts` writes in every Factorial pull request. */
-const BODY_BRANCH_ROW = /^\| Branch \| `(factorial\/[0-9a-f-]{36})` \|\s*$/im;
+const WORK_BRANCH = /^factorial\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TITLE_MAX = 256;
 const BODY_MAX = 65_536;
-const DETAIL_MAX = 8_000;
 
 interface User {
   id: number;
@@ -58,19 +50,16 @@ interface Repository {
   id: number;
   name: string;
   owner: string;
-  defaultBranch: string;
 }
 
 /** A pull request as the review events carry it. */
 interface PullRequest {
   number: number;
   title: string;
-  htmlUrl: string;
   state: string;
   author: User;
   headRef: string;
   headRepoId: number | undefined;
-  baseRef: string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -108,23 +97,19 @@ function repository(value: unknown): Repository {
     id: num(r.id, 'repository.id'),
     name: str(r.name, 'repository.name'),
     owner: str(rec(r.owner, 'repository.owner').login, 'repository.owner.login'),
-    defaultBranch: typeof r.default_branch === 'string' && r.default_branch ? r.default_branch : 'main',
   };
 }
 
 function pullRequest(value: unknown): PullRequest {
   const pr = rec(value, 'pull_request');
   const head = rec(pr.head, 'pull_request.head');
-  const base = rec(pr.base, 'pull_request.base');
   return {
     number: num(pr.number, 'pull_request.number'),
     title: str(pr.title, 'pull_request.title'),
-    htmlUrl: str(pr.html_url, 'pull_request.html_url'),
     state: str(pr.state, 'pull_request.state'),
     author: user(pr.user, 'pull_request.user'),
     headRef: str(head.ref, 'pull_request.head.ref'),
     headRepoId: isRecord(head.repo) && typeof head.repo.id === 'number' ? head.repo.id : undefined,
-    baseRef: str(base.ref, 'pull_request.base.ref'),
   };
 }
 
@@ -156,57 +141,44 @@ function notFactorials(pr: PullRequest, repo: Repository, appSlug: string): stri
   return undefined;
 }
 
-interface Rework {
-  cause: 'review' | 'checks-failed' | 'comment';
+/** What happened on a pull request, as the payload shows it. */
+interface PullRequestEvent {
+  type: (typeof TRIGGER_TYPES)[keyof typeof TRIGGER_TYPES];
+  /** The record's own id: the review, comment or workflow run. */
+  id: number;
+  url: string;
   repo: Repository;
   prNumber: number;
-  prUrl: string;
-  branch: string;
-  baseBranch: string;
-  sourceUrl: string;
   title: string;
+  /** What was said, or for a failed run what failed. May be empty. */
   body: string;
   requestedBy: string;
-  details: WorkItemReviewDetail[];
 }
 
-function workItemFor(rework: Rework, options: PullRequestDecideOptions): WorkItem {
+function workItemFor(event: PullRequestEvent, options: PullRequestDecideOptions): WorkItem {
   const id = options.deliveryId !== undefined && UUID.test(options.deliveryId) ? options.deliveryId.toLowerCase() : randomUUID();
-  const previous = WORK_BRANCH.exec(rework.branch)?.[1];
-  if (!previous) throw new BadPayloadError(`branch "${rework.branch}" is not a Factorial work branch`);
   const candidate = {
     schemaVersion: 1,
     id,
-    source: { type: TRIGGER_TYPES.githubPullRequest, id: String(rework.prNumber), url: rework.sourceUrl },
-    repository: { provider: 'github', owner: rework.repo.owner, name: rework.repo.name },
-    title: rework.title.slice(0, TITLE_MAX),
-    body: rework.body.slice(0, BODY_MAX),
-    requestedBy: rework.requestedBy,
+    source: { type: event.type, id: String(event.id), url: event.url },
+    repository: { provider: 'github', owner: event.repo.owner, name: event.repo.name },
+    inReplyTo: { kind: 'pull-request', number: event.prNumber },
+    title: event.title.slice(0, TITLE_MAX),
+    body: event.body.slice(0, BODY_MAX),
+    requestedBy: event.requestedBy,
     createdAt: (options.now ?? new Date()).toISOString(),
-    context: {
-      kind: 'rework',
-      pullRequest: { number: rework.prNumber, url: rework.prUrl },
-      branch: rework.branch,
-      baseBranch: rework.baseBranch,
-      // The branch is named after the work item that created it. A resumed
-      // attempt or an earlier rework may have touched the pull request
-      // since; the ledger row is the precise record (#156).
-      previousWorkItemId: previous.toLowerCase(),
-      cause: rework.cause,
-      details: rework.details.map((d) => ({ ...d, body: d.body.slice(0, DETAIL_MAX) })),
-    },
   };
   const result = validateWorkItem(candidate);
   if (!result.ok) throw new BadPayloadError(`event does not map to a valid WorkItem: ${result.errors.join('; ')}`);
   return result.value;
 }
 
-const reworkTitle = (pr: { number: number; title: string }): string => `Rework #${pr.number}: ${pr.title}`;
+const emit = (event: PullRequestEvent, options: PullRequestDecideOptions): PullRequestDecision => ({ kind: 'emit', workItem: workItemFor(event, options) });
 
 /**
- * A review submitted with "Request changes". The review's own text is the
- * first point; its inline comments are not in the webhook, so Prepare fetches
- * them, keyed by the review id in the source URL.
+ * A review submitted with "Request changes". Its text is the body, empty
+ * when the reviewer wrote none; its inline comments are not in the webhook,
+ * so Prepare fetches them, keyed by the review id in the source URL.
  */
 function fromReview(payload: Record<string, unknown>, options: PullRequestDecideOptions): PullRequestDecision {
   const action = str(payload.action, 'action');
@@ -220,24 +192,19 @@ function fromReview(payload: Record<string, unknown>, options: PullRequestDecide
   const pr = pullRequest(payload.pull_request);
   const refused = untrusted(sender, options) ?? untrusted(reviewer, options) ?? notFactorials(pr, repo, options.appSlug);
   if (refused) return { kind: 'ignore', reason: refused };
-  const text = optionalText(review.body, 'review.body').trim();
-  const workItem = workItemFor(
+  return emit(
     {
-      cause: 'review',
+      type: TRIGGER_TYPES.githubPullRequestReview,
+      id: num(review.id, 'review.id'),
+      url: str(review.html_url, 'review.html_url'),
       repo,
       prNumber: pr.number,
-      prUrl: pr.htmlUrl,
-      branch: pr.headRef,
-      baseBranch: pr.baseRef,
-      sourceUrl: str(review.html_url, 'review.html_url'),
-      title: reworkTitle(pr),
-      body: text || `@${reviewer.login} requested changes; see the review's comments.`,
+      title: `Review of #${pr.number}: ${pr.title}`,
+      body: optionalText(review.body, 'review.body').trim(),
       requestedBy: reviewer.login,
-      details: text ? [{ author: reviewer.login, body: text }] : [],
     },
     options,
   );
-  return { kind: 'rework-review', workItem };
 }
 
 /** An inline comment on the diff that addresses the App. */
@@ -254,33 +221,26 @@ function fromReviewComment(payload: Record<string, unknown>, options: PullReques
   const pr = pullRequest(payload.pull_request);
   const refused = untrusted(sender, options) ?? untrusted(author, options) ?? notFactorials(pr, repo, options.appSlug);
   if (refused) return { kind: 'ignore', reason: refused };
-  const line = typeof comment.line === 'number' ? comment.line : typeof comment.original_line === 'number' ? comment.original_line : undefined;
-  const path = typeof comment.path === 'string' && comment.path ? comment.path : undefined;
-  const workItem = workItemFor(
+  // Prepare fetches the file and line from the comment the source URL names.
+  return emit(
     {
-      cause: 'review',
+      type: TRIGGER_TYPES.githubPullRequestReviewComment,
+      id: num(comment.id, 'comment.id'),
+      url: str(comment.html_url, 'comment.html_url'),
       repo,
       prNumber: pr.number,
-      prUrl: pr.htmlUrl,
-      branch: pr.headRef,
-      baseBranch: pr.baseRef,
-      sourceUrl: str(comment.html_url, 'comment.html_url'),
-      title: reworkTitle(pr),
+      title: `Comment on #${pr.number}: ${pr.title}`,
       body: request,
       requestedBy: author.login,
-      details: [{ author: author.login, ...(path ? { path } : {}), ...(line && line > 0 ? { line } : {}), body: request }],
     },
     options,
   );
-  return { kind: 'rework-review', workItem };
 }
 
 /**
- * A comment in the pull request's conversation that addresses the App: a
- * request from the commenter, not a review point, so its cause is `comment`.
- * The payload describes the pull request as an issue, without its branches:
- * the work branch is read from the Run details of the description Factorial
- * wrote, and Prepare checks it against the pull request's real head.
+ * A comment in the pull request's conversation that addresses the App. The
+ * payload describes the pull request as an issue, without its branches;
+ * Intake finds the branch from the pull request's thread.
  */
 function fromIssueComment(payload: Record<string, unknown>, options: PullRequestDecideOptions): PullRequestDecision {
   const action = str(payload.action, 'action');
@@ -303,27 +263,19 @@ function fromIssueComment(payload: Record<string, unknown>, options: PullRequest
   if (prAuthor.login.toLowerCase() !== `${options.appSlug}[bot]`.toLowerCase()) {
     return { kind: 'ignore', reason: `pull request #${number} was not opened by Factorial` };
   }
-  const branch = BODY_BRANCH_ROW.exec(optionalText(issue.body, 'issue.body'))?.[1];
-  if (!branch || !WORK_BRANCH.test(branch)) return { kind: 'ignore', reason: `pull request #${number} has no Factorial work branch in its description` };
-  const workItem = workItemFor(
+  return emit(
     {
-      cause: 'comment',
+      type: TRIGGER_TYPES.githubPullRequestComment,
+      id: num(comment.id, 'comment.id'),
+      url: str(comment.html_url, 'comment.html_url'),
       repo,
       prNumber: number,
-      prUrl: str(rec(issue.pull_request, 'issue.pull_request').html_url, 'issue.pull_request.html_url'),
-      branch,
-      // Factorial opens every pull request against the default branch;
-      // Prepare uses the pull request's actual base.
-      baseBranch: repo.defaultBranch,
-      sourceUrl: str(comment.html_url, 'comment.html_url'),
-      title: reworkTitle({ number, title: str(issue.title, 'issue.title') }),
+      title: `Comment on #${number}: ${str(issue.title, 'issue.title')}`,
       body: request,
       requestedBy: author.login,
-      details: [{ author: author.login, body: request }],
     },
     options,
   );
-  return { kind: 'rework-comment', workItem };
 }
 
 /**
@@ -364,23 +316,19 @@ function fromWorkflowRun(payload: Record<string, unknown>, options: PullRequestD
   const name = str(run.name, 'workflow_run.name');
   const runUrl = str(run.html_url, 'workflow_run.html_url');
   const actor = isRecord(run.triggering_actor) ? run.triggering_actor : run.actor;
-  const workItem = workItemFor(
+  return emit(
     {
-      cause: 'checks-failed',
+      type: TRIGGER_TYPES.githubWorkflowRun,
+      id: num(run.id, 'workflow_run.id'),
+      url: runUrl,
       repo,
       prNumber: number,
-      prUrl: `https://github.com/${repo.owner}/${repo.name}/pull/${number}`,
-      branch: headBranch,
-      baseBranch: isRecord(pr.base) && typeof pr.base.ref === 'string' ? pr.base.ref : repo.defaultBranch,
-      sourceUrl: runUrl,
-      title: `Fix failing checks on #${number}`,
+      title: `The workflow "${name}" failed on #${number}`,
       body: `The workflow "${name}" failed on ${headSha.slice(0, 12)}: ${runUrl}`,
       requestedBy: isRecord(actor) && typeof actor.login === 'string' && actor.login ? actor.login : `${options.appSlug}[bot]`,
-      details: [{ author: 'github-actions', body: `The workflow "${name}" failed: ${runUrl}` }],
     },
     options,
   );
-  return { kind: 'rework-checks-failed', workItem };
 }
 
 /** Map a webhook on a pull request to a decision. Throws BadPayloadError for a payload that does not fit. */
