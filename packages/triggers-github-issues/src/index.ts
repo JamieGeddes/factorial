@@ -4,8 +4,9 @@
  * Receives the GitHub App's webhook deliveries on a Lambda function URL (an
  * App has one webhook URL), verifies the HMAC signature, and places at most
  * one WorkItem on the Factorial event bus: when the trigger label is added
- * to an issue, or when an event on one of Factorial's pull requests asks for
- * rework (`pull-request-event.ts`). Nothing downstream knows about GitHub.
+ * to an issue, or when a trusted person or a failed run addresses one of
+ * Factorial's pull requests (`pull-request-event.ts`, which records the event
+ * in reply to the pull request; Intake decides what it means).
  */
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';

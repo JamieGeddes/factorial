@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 
-import { CHECKS_AUTHOR, claimedBranch, continuedPullRequest, reworkCause, reworkDetails } from './turn.ts';
+import { CHECKS_AUTHOR, POINT_MAX, claimedBranch, continuedPullRequest, reworkCause, reworkDetails } from './turn.ts';
 
 const BRANCH = 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 
@@ -75,6 +75,11 @@ describe('an item in reply to a pull request', () => {
   it('carries what was said as its one point, by whoever said it', () => {
     assert.deepEqual(reworkDetails(reply('github-pull-request-comment', 'https://x', '  Rename it.  ')), [{ author: 'alice', body: 'Rename it.' }]);
     assert.deepEqual(reworkDetails(reply('github-workflow-run', 'https://x', 'The workflow "CI" failed.')), [{ author: CHECKS_AUTHOR, body: 'The workflow "CI" failed.' }]);
+  });
+
+  it('caps the point as the contract capped a detail', () => {
+    const [point] = reworkDetails(reply('github-pull-request-comment', 'https://x', 'x'.repeat(9_000)));
+    assert.equal(point?.body.length, POINT_MAX);
   });
 
   it('carries no point for a review with no text: its inline comments are fetched when seeding', () => {

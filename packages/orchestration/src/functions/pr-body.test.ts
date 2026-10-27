@@ -492,7 +492,7 @@ describe('noMentions', () => {
 });
 
 describe('runDetailsSection', () => {
-  it('records the work branch in the fixed form the trigger adapter reads back', () => {
+  it('records the work branch in the Run details', () => {
     assert.match(render(summaryMd()), new RegExp(`^\\| Branch \\| \`${ctx.branch}\` \\|$`, 'm'));
   });
 });

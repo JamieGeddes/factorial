@@ -60,7 +60,7 @@ The pull request source types, each with `source.id` the record's own id:
 | `github-pull-request-comment` | A comment in its conversation |
 | `github-workflow-run` | A workflow run that completed on its head |
 
-`github-pull-request` (with `source.id` the pull request number and a rework `context`) is what the adapter emits until it moves to these.
+The GitHub adapter emits these since #163's third step. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`.
 
 
 ## One repository per WorkItem
