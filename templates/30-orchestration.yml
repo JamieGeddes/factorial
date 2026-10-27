@@ -87,8 +87,7 @@ Resources:
   # items one trigger produced (WorkItem `group`) and the items a parent
   # emitted (`parentId`); both are sparse, holding only items with that field.
   # A table update can add or delete only one index, so each index change
-  # needs its own deploy: the source index, unread since #163, goes in the
-  # next one.
+  # needs its own deploy.
   # ---------------------------------------------------------------------------
   WorkItemsTable:
     Type: AWS::DynamoDB::Table
@@ -97,8 +96,6 @@ Resources:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
         - AttributeName: workItemId
-          AttributeType: S
-        - AttributeName: sourceKey
           AttributeType: S
         - AttributeName: createdAt
           AttributeType: S
@@ -112,18 +109,6 @@ Resources:
         - AttributeName: workItemId
           KeyType: HASH
       GlobalSecondaryIndexes:
-        - IndexName: sourceKey-createdAt-index
-          KeySchema:
-            - AttributeName: sourceKey
-              KeyType: HASH
-            - AttributeName: createdAt
-              KeyType: RANGE
-          Projection:
-            ProjectionType: INCLUDE
-            NonKeyAttributes:
-              - status
-              - branch
-              - savedWork
         - IndexName: groupId-createdAt-index
           KeySchema:
             - AttributeName: groupId
