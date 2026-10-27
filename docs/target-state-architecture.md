@@ -74,15 +74,16 @@ The vocabulary, used consistently in code, documents and prompts:
 
 ### 4.1 Adapters and the `WorkItem`
 
-- An adapter MUST hold no credential beyond what verifies the event (a webhook secret, a signing secret) and MUST NOT read the ledger or call the source's API. It checks what the payload shows (signature, allowlisted requester, addressed to the bot) and emits facts: `source.type` says what happened, `source.id` and `source.url` point at it, `body` holds what was said, `requestedBy` who said it, `inReplyTo` what it continues. It MUST NOT choose a cause, guess a previous item or read state out of rendered text.
-- Where a request has no repository of its own (a chat message, an alarm), the adapter takes it from a fixed syntax or from configuration, never from reading the request. If neither gives one, the adapter refuses in its acknowledgement.
+- An adapter MUST hold no credential beyond what verifies the event (a webhook secret, a signing secret) and a read-only credential for the service catalog, and MUST NOT read the ledger or call the source's API. It checks what the payload shows (signature, allowlisted requester, addressed to the bot) and emits facts: `source.type` says what happened, `source.id` and `source.url` point at it, `body` holds what was said, `requestedBy` who said it, `inReplyTo` what it continues. It MUST NOT choose a cause, guess a previous item or read state out of rendered text.
+- Where a request names a subject rather than a repository (a service, an alarm, a Jira component, a chat channel), the adapter resolves it live through the service catalog (section 4.14) and emits one item per repository the catalog returns, with a shared `group`. Resolution is a deterministic lookup, so it is normalisation, not interpretation: the adapter never reads the request's text to decide. The lookup runs only after the event's signature and requester are verified, and has a short timeout. If the catalog is unavailable or returns nothing, the adapter emits the item with the unresolved `subject` and Intake resolves or refuses it, so no event is lost and no copy of the catalog is kept anywhere. A fixed syntax in the request (`owner/repo`) still wins over the lookup.
+- The `WorkItem` therefore carries either `repository` or `subject`, never both; an item with a `subject` runs no stage until Intake has resolved it. This is a deliberate contract change, made once.
 - The schema is strict at the edge: an adapter rejects unknown fields. Downstream stages SHOULD tolerate unknown optional fields, so that an additive contract change needs no drain. `inReplyTo` kinds and `source.type` values are additive.
 - One `WorkItem` is one repository, one branch, one pull request. Fan-out to many repositories happens before the stages run: in the adapter when the list is configuration, in Intake when it has to be worked out.
 - `group` links the items one trigger produced; `parentId` links an item to the item that emitted it. Neither changes how an item is handled.
 
 ### 4.2 Intake, threads and routes
 
-- Intake MUST run in this order: validate and accept the item exactly once; resolve the thread; fetch the facts the webhook did not carry, with a read-only repository-scoped token that never enters a session; choose the route; apply the thread policies; record; branch. The model, when it runs at all, sits between the facts and the policies.
+- Intake MUST run in this order: validate and accept the item exactly once; resolve a `subject` the adapter could not, through the catalog, or refuse with an ask-back; resolve the thread; fetch the facts the webhook did not carry, with a read-only repository-scoped token that never enters a session; choose the route; apply the thread policies; record; branch. The model, when it runs at all, sits between the facts and the policies.
 - The facts decide the route whenever they can: a review requesting changes or a failed run is `change`; a push that leaves a pull request behind or conflicted is `integrate`; a derived item takes the route its parent chose. Only free text reaches the triager.
 - A thread is keyed by the branch. For a new request Intake creates the thread with the branch Prepare will create, so every turn that runs stages has a thread before it starts. A request that fans out has no thread of its own; its derived items do.
 - Admission is one conditional write on the thread: a turn claims `inFlight` only when it is empty or stale, and every terminal state releases it conditionally on holding it. The policies (eligibility of the pull request, one turn in flight, a cap on automatic reworks in a row, questions not counting against builds) live in one module and run after the model.
@@ -91,7 +92,7 @@ The vocabulary, used consistently in code, documents and prompts:
 
 ### 4.3 The triager
 
-- A Runtime role with no tools and one turn. Its context is bounded and assembled by Intake: the request, who asked, the thread's previous turns and their outcomes, the registry of repositories Factorial may work on, and each target's triage hints from its `.factorial/`.
+- A Runtime role with no tools and one turn. Its context is bounded and assembled by Intake: the request, who asked, the thread's previous turns and their outcomes, the registry of repositories Factorial may work on (the catalog's repositories intersected with the App's installations, with owners and service tier), and each target's triage hints from its `.factorial/`. Service tier is the natural input to priority.
 - It returns `triage.json`, validated against a schema: a verdict from the route enum, a priority from an enum with a reason, and one or more items, each a repository, a title and the request rewritten for it. Anything outside the schema is treated as an ask-back, never a build.
 - It MUST NOT decide admission, `integrate`, the fan-out cap, whether a pull request opens, or anything about deployment.
 - Several items become one derived `WorkItem` each on the bus, with `group` and `parentId`, deterministic ids so a retried Intake emits nothing twice; derived items are not triaged again. Above a cap, or when the request named no repository, the list is posted as a proposal and approval is the next turn.
@@ -166,7 +167,14 @@ The vocabulary, used consistently in code, documents and prompts:
 - A second, trivial target repository exists from day one and is what the canary runs against, so target-agnosticism is exercised on every deploy rather than asserted.
 - The toolchain in the image is a decision per target language; the first version supports one and says so.
 
-### 4.14 Conventions
+### 4.14 The service catalog
+
+- The catalog is the source of repository, service and team ownership. Factorial reads it live and keeps no copy: a stale mapping is worse than a slow one.
+- One read-only module, shared by the adapters and Intake, with a schema for what comes back, a per-invocation cache only, a short timeout and a result that is data, never an instruction. A lookup that fails or returns nothing is handed on (adapter to Intake) or refused with an ask-back (Intake); nothing guesses.
+- Three readers, with different questions: adapters resolve a subject to repositories and owners; Intake resolves what an adapter could not and gives the triager the registry, owners and tier; reporters MAY use ownership to find the team to tell (section 7).
+- The catalog never overrides a target's own `.factorial/` settings, which stay the authority for how that repository is built, checked and reviewed, and it never grants anything: what Factorial may touch is still the App's installation and IAM.
+
+### 4.15 Conventions
 
 - TypeScript for everything Factorial owns, including the agent host; CloudFormation YAML with the `.yml` extension, numbered templates, the Serverless transform with `AutoPublishAlias: live`; every Lambda dependency bundled, the AWS SDK included.
 - Every role is named `factorial-*` and carries a boundary: agent roles `factorial-agent-*` with the agent boundary, all others with the runtime boundary; AgentCore resources `factorial_*`, everything else `factorial-*`. The CloudFormation execution role is scoped to those names.
@@ -185,7 +193,8 @@ If adding something costs more than this table says, the boundary is in the wron
 | A check | One entry in the target's `verifiers.json`; a verifier kind if it is a new way of running one | The state machine (a kind is a Choice branch), the pull request step |
 | A role | A manifest, a prompt, a template block, the states that use it | The host, the invoker, Collect |
 | A route | Its states, a prompt section, a reporter case, a value in the enum | Intake's policies, the contracts |
-| A target repository | The App installation and a `.factorial/` folder on its base branch | Any code, template or secret |
+| A target repository | The App installation, its catalog entry and a `.factorial/` folder on its base branch | Any code, template or secret |
+| A kind of subject (an alarm, a component, a channel) | One catalog lookup in the adapter that receives it | Intake, the contracts |
 
 ## 6. Build order
 
@@ -215,7 +224,7 @@ From step 4 onwards, Factorial's own work items are the way most steps are built
 These are not settled by the design. Decide each once, record the decision beside this document, and do not let an implementation settle it by accident.
 
 - **Tolerant downstream validation.** Section 4.1 says SHOULD. Make it MUST, or keep drains, before the second contract change.
-- **Cross-source notification.** Whether a thread's opener (a chat thread, a ticket) is told about turns that came from GitHub, such as a review or a merge. The thread records its opening source, so the reporter can; the design does not say it should.
+- **Cross-source notification.** Whether a thread's opener (a chat thread, a ticket) and the owning team from the catalog are told about turns that came from GitHub, such as a review or a merge. The thread records its opening source and the catalog gives the team's channel, so the reporter can; the design does not say it should.
 - **Fan-out cap and confirmation.** The number of derived items above which Intake posts a proposal instead of running, and whether a human can raise it per target.
 - **Toolchains.** One image per target language, or one image with several. Needed at the first non-Node target.
 

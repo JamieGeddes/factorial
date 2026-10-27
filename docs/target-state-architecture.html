@@ -76,7 +76,7 @@ ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
 </header>
 
 <figure>
-  <div class="frame"><svg viewBox="0 0 1200 648" role="img" aria-label="One turn: a source event is normalised, Intake resolves its thread and picks a route, the route runs through the fixed graph, and the outcome is reported back to the source." xmlns="http://www.w3.org/2000/svg">
+  <div class="frame"><svg viewBox="0 0 1200 680" role="img" aria-label="One turn: a source event is normalised, Intake resolves its thread and picks a route, the route runs through the fixed graph, and the outcome is reported back to the source." xmlns="http://www.w3.org/2000/svg">
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
 <marker id="arrowS" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M10 0 L0 5 L10 10 z" fill="currentColor"/></marker>
@@ -210,16 +210,21 @@ ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
 <text class="lbl" x="96" y="528" text-anchor="start">each reporter replies where its turns came from: PR opened or updated, answer, plan, questions, refusal</text>
 <rect class="box today" x="16" y="586" width="330" height="44" rx="3"/><text x="181" y="605.5" text-anchor="middle" class="t">factorial-work-items</text><text x="181" y="618.5" text-anchor="middle">one row per turn: status, route, threadKey, usage, pointers</text>
 <rect class="box today" x="380" y="586" width="806" height="44" rx="3"/><text x="783" y="605.5" text-anchor="middle" class="t">artefact store  &lt;workItemId&gt;/&lt;attempt&gt;/</text><text x="783" y="618.5" text-anchor="middle" class="mono">intake/intake.json · plan/ · build/ · verify/&lt;name&gt;/result.json · review/ · report.json · outcome/outcome.json</text>
-<rect class="box today" x="16" y="384" width="14" height="14" rx="2"/>
-<text class="lbl" x="36" y="395" text-anchor="start">exists today</text>
-<rect class="box new" x="16" y="404" width="14" height="14" rx="2"/>
-<text class="lbl" x="36" y="415" text-anchor="start">new in this round</text>
-<rect class="box later" x="16" y="424" width="14" height="14" rx="2"/>
-<text class="lbl" x="36" y="435" text-anchor="start">later, needs only an adapter and a reporter</text>
-<rect class="box ghost" x="16" y="444" width="14" height="14" rx="2"/>
-<text class="lbl" x="36" y="455" text-anchor="start">conditional or empty</text>
-<rect class="box scen" x="16" y="464" width="14" height="14" rx="2"/>
-<text class="lbl" x="36" y="475" text-anchor="start">scenario: Slack, not yet an issue</text>
+<rect class="box scen" x="16" y="386" width="288" height="54" rx="3"/><text x="160" y="404" text-anchor="middle" class="t">Service catalog</text><text x="160" y="417" text-anchor="middle">subject → repositories · owners · tier</text><text x="160" y="430" text-anchor="middle" class="dim">read live, no copy kept</text>
+<path class="edge ret" d="M240 386 L240 354" marker-end="url(#arrow)"/>
+<text class="lbl" x="232" y="374" text-anchor="end">adapters resolve a subject, after verification</text>
+<path class="edge ret" d="M304 413 L372 413 L372 196 L380 196" marker-end="url(#arrow)"/>
+<text class="lbl" x="352" y="452" text-anchor="start">Intake resolves what an adapter could not, and seeds the triager</text>
+<rect class="box today" x="16" y="652" width="14" height="14" rx="2"/>
+<text class="lbl" x="36" y="663" text-anchor="start">exists today</text>
+<rect class="box new" x="131.2" y="652" width="14" height="14" rx="2"/>
+<text class="lbl" x="151.2" y="663" text-anchor="start">new in this round</text>
+<rect class="box scen" x="274.4" y="652" width="14" height="14" rx="2"/>
+<text class="lbl" x="294.4" y="663" text-anchor="start">decided here, not yet an issue</text>
+<rect class="box later" x="490.4" y="652" width="14" height="14" rx="2"/>
+<text class="lbl" x="510.4" y="663" text-anchor="start">later: an adapter and a reporter</text>
+<rect class="box ghost" x="717.5999999999999" y="652" width="14" height="14" rx="2"/>
+<text class="lbl" x="737.5999999999999" y="663" text-anchor="start">conditional or empty</text>
 </svg></div>
   <figcaption>One turn through the pipeline. Adapters record what happened and what it continues; Intake resolves the thread, applies the admission policies and chooses a route from a fixed enum; the route runs the stages it needs; every terminal state records an outcome and the reporter for the source delivers it. Green marks what this round adds.</figcaption>
 </figure>
@@ -249,7 +254,7 @@ ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
 <text class="dim" x="28" y="216" text-anchor="start">Only the host’s copy is fixed on the Runtime version.</text>
 <text class="dim" x="28" y="230" text-anchor="start">A new role: a manifest, a prompt, a template block.</text>
 <text class="mono" x="28" y="252" text-anchor="start">Roles: builder · reviewer · triager · responder</text>
-<rect class="box new" x="428" y="52" width="160" height="196" rx="3"/><text x="508" y="90" text-anchor="middle" class="t">Providers</text><text x="508" y="106" text-anchor="middle">request</text><text x="508" y="122" text-anchor="middle">thread turns and points</text><text x="508" y="138" text-anchor="middle">stored plan</text><text x="508" y="154" text-anchor="middle">previous round notes</text><text x="508" y="170" text-anchor="middle">diff for review</text><text x="508" y="186" text-anchor="middle">failing check logs</text><text x="508" y="202" text-anchor="middle">.factorial instructions</text><text x="508" y="218" text-anchor="middle" class="dim">knowledge graph (later)</text>
+<rect class="box new" x="428" y="52" width="160" height="196" rx="3"/><text x="508" y="86.5" text-anchor="middle" class="t">Providers</text><text x="508" y="101.5" text-anchor="middle">request</text><text x="508" y="116.5" text-anchor="middle">thread turns and points</text><text x="508" y="131.5" text-anchor="middle">stored plan</text><text x="508" y="146.5" text-anchor="middle">previous round notes</text><text x="508" y="161.5" text-anchor="middle">diff for review</text><text x="508" y="176.5" text-anchor="middle">failing check logs</text><text x="508" y="191.5" text-anchor="middle">.factorial instructions</text><text x="508" y="206.5" text-anchor="middle">catalog: owners, conventions</text><text x="508" y="221.5" text-anchor="middle" class="dim">knowledge graph (later)</text>
 <path class="edge" d="M588 150 L616 150" marker-end="url(#arrow)"/>
 <rect class="box new" x="616" y="128" width="90" height="44" rx="3"/><text x="661" y="147.5" text-anchor="middle" class="mono">assembleSeed</text><text x="661" y="160.5" text-anchor="middle">fixed order</text>
 <path class="edge" d="M706 150 L734 150" marker-end="url(#arrow)"/>
@@ -280,7 +285,7 @@ ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
 </defs>
 <rect class="box today" x="16" y="40" width="170" height="150" rx="3"/><text x="101" y="86.5" text-anchor="middle" class="t">Person, in Slack</text><text x="101" y="99.5" text-anchor="middle">@factorial in #payments:</text><text x="101" y="112.5" text-anchor="middle" class="dim">"add a retry to the</text><text x="101" y="125.5" text-anchor="middle" class="dim">webhook handler"</text><text x="101" y="138.5" text-anchor="middle"></text><text x="101" y="151.5" text-anchor="middle" class="mono">or /factorial owner/repo …</text>
 <path class="edge" d="M186 115 L206 115" marker-end="url(#arrow)"/>
-<rect class="box scen" x="206" y="40" width="196" height="150" rx="3"/><text x="304" y="80" text-anchor="middle" class="t">Slack adapter</text><text x="304" y="93" text-anchor="middle">verify signature and timestamp</text><text x="304" y="106" text-anchor="middle">team and user allowlist</text><text x="304" y="119" text-anchor="middle">repository from owner/repo</text><text x="304" y="132" text-anchor="middle">prefix or the channel map</text><text x="304" y="145" text-anchor="middle">ack within 3 s with the item id</text><text x="304" y="158" text-anchor="middle" class="dim">holds only the signing secret</text>
+<rect class="box scen" x="206" y="40" width="196" height="150" rx="3"/><text x="304" y="80" text-anchor="middle" class="t">Slack adapter</text><text x="304" y="93" text-anchor="middle">verify signature and timestamp</text><text x="304" y="106" text-anchor="middle">team and user allowlist</text><text x="304" y="119" text-anchor="middle">repository and owners from the</text><text x="304" y="132" text-anchor="middle">service catalog, live; owner/repo wins</text><text x="304" y="145" text-anchor="middle">ack within 3 s with the item id</text><text x="304" y="158" text-anchor="middle" class="dim">holds only the signing secret</text>
 <path class="edge" d="M402 115 L422 115" marker-end="url(#arrow)"/>
 <rect class="box scen" x="422" y="40" width="196" height="150" rx="3"/><text x="520" y="80" text-anchor="middle" class="t">WorkItem</text><text x="520" y="93" text-anchor="middle" class="mono">source.type: slack-mention</text><text x="520" y="106" text-anchor="middle" class="mono">source.id: channel/ts</text><text x="520" y="119" text-anchor="middle" class="mono">requestedBy: U…</text><text x="520" y="132" text-anchor="middle" class="mono">repository: owner/name</text><text x="520" y="145" text-anchor="middle" class="mono">inReplyTo: slack-thread</text><text x="520" y="158" text-anchor="middle" class="dim">the one additive contract change</text>
 <path class="edge" d="M618 115 L638 115" marker-end="url(#arrow)"/>
@@ -294,7 +299,7 @@ ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
 <text class="head" x="16" y="262" text-anchor="start">What crosses the boundary</text>
 <text class="dim" x="16" y="280" text-anchor="start">Reviews, comments and failed runs on the pull request are GitHub turns on the same thread, reported on the pull request by the GitHub reporter.</text>
 <text class="dim" x="16" y="294" text-anchor="start">The thread records the source that opened it, so the Slack reporter can also be told when the pull request opens, is reworked or merges: an open question, not in the design.</text>
-<text class="dim" x="16" y="316" text-anchor="start">Nothing in Intake or the routes is Slack-specific. The adapter, the reporter, two secrets and one inReplyTo kind are the whole cost.</text>
+<text class="dim" x="16" y="316" text-anchor="start">Nothing in Intake or the routes is Slack-specific. The adapter, the reporter, two secrets, a catalog lookup and one inReplyTo kind are the whole cost.</text>
 </svg></div>
   <figcaption>A Slack-originated turn. The adapter and the reporter are the only Slack-specific code; the thread, Intake and the routes treat it as any other turn. Slack requests are free text, so this is where the triage agent earns its place.</figcaption>
 </figure>
@@ -308,7 +313,7 @@ ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
 <text class="head" x="16" y="30" text-anchor="start">Deterministic, before any model</text>
 <rect class="box new" x="16" y="44" width="150" height="60" rx="3"/><text x="91" y="66" text-anchor="middle" class="t">Validate, accept once</text><text x="91" y="78" text-anchor="middle">allowlist already checked</text><text x="91" y="90" text-anchor="middle">at the edge</text>
 <path class="edge" d="M166 74 L190 74" marker-end="url(#arrow)"/>
-<rect class="box new" x="190" y="44" width="170" height="60" rx="3"/><text x="275" y="66" text-anchor="middle" class="t">Resolve thread, fetch facts</text><text x="275" y="78" text-anchor="middle">PR state, review comments,</text><text x="275" y="90" text-anchor="middle">run result; read token</text>
+<rect class="box new" x="190" y="44" width="170" height="60" rx="3"/><text x="275" y="66" text-anchor="middle" class="t">Resolve thread, fetch facts</text><text x="275" y="78" text-anchor="middle">PR state, reviews, run result;</text><text x="275" y="90" text-anchor="middle">catalog for an unresolved subject</text>
 <path class="edge" d="M360 74 L384 74" marker-end="url(#arrow)"/>
 <polygon class="box new" points="444,44 504,74 444,104 384,74"/>
 <text class="dim" x="444" y="71" text-anchor="middle">facts decide</text>
