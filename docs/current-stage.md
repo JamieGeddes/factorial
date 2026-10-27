@@ -49,6 +49,7 @@ Intake (`functions/intake.ts`, since #163) accepts the item exactly once (the le
 ### Test
 
 - The test workflow (`test.yml`) is dispatched on the default branch, so its definition is always the trusted one. The work commit is checked out as data in a job without credentials; a separate job reports the result through a Step Functions task token, assuming the test callback role (its ARN is the `AWS_TEST_CALLBACK_ROLE_ARN` repository secret). A failed run ends the item as `tests-failed`, reported on the issue with the branch left for inspection.
+- The callback role trusts only Factorial's own OIDC subject, so this gate works for Factorial alone (#91). #167 replaces it with a Verify stage that runs the checks the target declares in `.factorial/verifiers.json` in a session Factorial owns, on a verifier Runtime with no model or artefact access, and retires `test.yml`, the callback role and the repository secret. Until that lands, this section describes what runs.
 
 ### PrepareReview, Review and CollectReview
 

@@ -50,7 +50,7 @@ Seeding a session is spread across Prepare (`notes.md`, `rework.md`), ContinueBu
 
 ### 2.8 Verification is one hardwired dispatch
 
-Test dispatches one workflow file with one callback trust bound to Factorial's own repository (#91). The smoke test (#50, #51) would be a second hardwired state with its own result shape.
+Test dispatches one workflow file in the target repository and waits on a task-token callback. The callback trust is bound to Factorial's own repository (#91): `TestCallbackRole` trusts the OIDC subject built from Factorial's owner and repository ids, so a run anywhere else cannot report and waits out the timeout. Enrolling a target would cost a workflow in that repository, a secret and a change to the human-deployed trust policy, and would let anyone who can edit that repository's workflows report success for a failed run. The smoke test (#50, #51) would be a second hardwired state with its own result shape.
 
 ## 3. The generalisation
 
@@ -71,6 +71,7 @@ flowchart LR
     outcome["Bus: Outcome"]:::new
     reporter["Reporter per source<br/>PR, reply, answer, question"]:::new
     thread[("Ledger: thread<br/>branch, PR, head,<br/>turns, in flight")]:::new
+    catalog[("Service catalog<br/>subject → repositories,<br/>owners, tier")]:::new
 
     src --> adapter --> bus --> intake --> route
     route --> change --> outcome
@@ -79,6 +80,9 @@ flowchart LR
     outcome --> reporter --> src
     intake <--> thread
     change -.-> thread
+    catalog -- "resolve a subject,<br/>live, after verification" --> adapter
+    catalog -- "resolve what the adapter<br/>could not; registry for<br/>the triager" --> intake
+    catalog -. "owning team to tell<br/>(open question)" .-> reporter
 ```
 
 ### 3.1 Threads: the unit of continuity
@@ -108,6 +112,8 @@ This is where the triage agent belongs. Today Intake is a pure function; replaci
 ```
 
 `inReplyTo` is optional; an issue has none. The source type says what the event was (a review, a conversation comment, a failed run, an issue, a Jira transition); Intake decides what it means.
+
+**Subjects.** Some sources name a service, a component, an alarm or a channel rather than a repository. The adapter resolves that subject to repositories and owners through the service catalog (§3.8), live, after the event is verified: a deterministic lookup is normalisation, not interpretation, so it stays at the edge. If the catalog is unavailable or returns nothing, the adapter emits the item with the unresolved `subject` and Intake resolves or refuses it. The `WorkItem` therefore carries `repository` or `subject`, never both, and an item with a `subject` runs no stage until Intake has resolved it. A second additive contract change, settled with the first.
 
 Strictness at the edge stays: an adapter rejects unknown fields. Downstream stages could tolerate unknown optional fields, which would remove the drain for most additive changes while keeping the edge strict.
 
@@ -145,7 +151,23 @@ One function assembles a seed: files to place in `/workspace` and sections to ad
 
 ### 3.7 Verifiers
 
-Verify runs an ordered list of verifiers read from the target's `.factorial/`, each reporting through one callback contract (today's `lib/test-result.ts`, generalised). The dispatched test workflow is the first verifier and the sandbox smoke test the second. #91's test-gate question is then answered per verifier, not per stage.
+Verify runs an ordered list of verifiers read from the target's `.factorial/verifiers.json` on the base branch, each reporting through one result contract (`verify/<name>/result.json`: name, kind, sha, outcome, exit code, duration and a log pointer), which replaces `lib/test-result.ts`. Verification is Factorial's gate, so Factorial runs it in compute it owns, from a command the target declares, and never by dispatching the target's CI.
+
+- A `command` verifier runs at the tested commit in a fresh session on a verifier Runtime whose role can call no model and read nothing of Factorial's. The orchestrator clones with a short-lived token that never enters the session, checks the head, and hands the workspace to the unprivileged user; the invoker runs the command there through the command API and waits for it. Untrusted test code therefore holds no credentials, spends no model budget and cannot forge its result.
+- The sandbox smoke test (#51) is the second kind, run by orchestrator code against a leased account (#50), reporting through the same contract.
+- A target with no settings, or an invalid file, is not verified and gets no pull request: an untested change never becomes one.
+
+The target's own CI still runs on the pull request and remains the independent second check. #91's test-gate question is then answered once, for every target: no workflow to install, no secret and no trust policy per repository (#167).
+
+### 3.8 The service catalog
+
+The catalog is the source of repository, service and team ownership, and Factorial reads it live and keeps no copy: a stale mapping is worse than a slow one. One read-only module, shared by the adapters and Intake, with a schema for what comes back, a per-invocation cache only, a short timeout and a result that is data, never an instruction. A lookup that fails or returns nothing is handed on (adapter to Intake) or refused with an ask-back (Intake); nothing guesses.
+
+- **Adapters** resolve a subject to repositories and owners (§3.2) and emit one item per repository with a shared `group`. The adapter's only credential beyond the one that verifies the event is a read-only one for the catalog, used after verification, so a crafted event can at most cause lookups.
+- **Intake** resolves what an adapter could not, and gives the triager its registry: the catalog's repositories intersected with the App's installations, with owners and service tier. Tier is the natural input to the triager's priority.
+- **Reporters** may use ownership to find the team to tell; whether they should is an open question (§6).
+
+The catalog never overrides a target's own `.factorial/` settings, which stay the authority for how that repository is built, checked and reviewed, and it never grants anything: what Factorial may touch is still the App's installation and IAM. Adding a kind of subject (an alarm, a Jira component, a chat channel) is one lookup in the adapter that receives it; Intake and the contracts do not change.
 
 ## 4. What this does not change
 
@@ -165,9 +187,10 @@ The canary (#13) stays first. After that, each item below is done when its first
 | 2. Role manifests | The PR that adds the triager and responder | The first new roles since the reviewer |
 | 3. Outcomes and the GitHub reporter | #15 | The notifier seam is the same thing |
 | 4. Session seeds from providers | The next change to seeding | Pure refactor; do it when the code is open anyway |
-| 5. Verifiers | #50 and #51 | The smoke test is the second verifier |
+| 5. Verifiers | Before #50 and #51 | The smoke test is the second verifier and should land on this shape, not beside a dispatched workflow |
 | 6. Integrate route | #155 | Reuses the thread and Verify |
 | 7. Propose and Clarify routes | When wanted | No new infrastructure; a prompt section, a route and a reporter case each |
+| 8. Service catalog | The first source that names a subject rather than a repository (#61, #62, chat) | The `subject` contract change and the shared lookup module land with their first reader |
 
 Each step is one or more work items, and from step 2 onwards most are candidates for Factorial to build itself.
 
@@ -177,3 +200,4 @@ Each step is one or more work items, and from step 2 onwards most are candidates
 - **Where Intake fetches from GitHub.** Intake needs a read token to fetch review comments and run logs, which Prepare mints today. Moving that into Intake moves the fetch earlier but not into the adapter, so the edge stays credential-free.
 - **Outcome delivery failures.** A reporter that cannot post (GitHub down, a deleted pull request) must not fail the turn. The outcome is recorded first; delivery is retried from the event.
 - **Route enum ownership.** The route is internal, like the plan contract, but the orchestrator acts on it, so it gets a schema under `contracts/` and the same care.
+- **Telling the owning team.** The thread records the source that opened it, and the catalog gives the owning team's channel, so a reporter could tell both about turns that came from elsewhere (a review on GitHub, a merge). The design reports each turn where it came from and says nothing more; decide whether the opener and the owner are told, and about which results, before the second reporter exists.
