@@ -3,8 +3,9 @@
  * here is set on the immutable Runtime version (templates/20-agent.yml), never
  * taken from a request, so the model, limits and tools are fixed by the version.
  */
+import { ROLES, isRoleName, modelVariable, type RoleName } from '@factorial/roles';
 
-export type Role = 'builder' | 'reviewer';
+export type Role = RoleName;
 
 export interface Config {
   role: Role;
@@ -13,7 +14,7 @@ export interface Config {
   // value on the Runtime version.
   /** The role's main loop, e.g. eu.anthropic.claude-sonnet-5-5. */
   model: string;
-  /** The builder's explore subagent, e.g. eu.anthropic.claude-haiku-5-5; the reviewer has none. */
+  /** The explore subagent's, e.g. eu.anthropic.claude-haiku-5-5, for a role whose manifest names the purpose (the builder). */
   exploreModel: string | undefined;
   /** The SDK's own background calls (ANTHROPIC_DEFAULT_HAIKU_MODEL). */
   backgroundModel: string;
@@ -34,8 +35,6 @@ export interface Config {
   claudeExecutable: string;
 }
 
-const ROLES: readonly Role[] = ['builder', 'reviewer'];
-
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`${name} is not set`);
@@ -50,13 +49,13 @@ function positiveNumber(env: NodeJS.ProcessEnv, name: string): number {
 
 export function readConfig(env: NodeJS.ProcessEnv): Config {
   const role = required(env, 'FACTORIAL_ROLE');
-  if (!ROLES.includes(role as Role)) throw new Error(`FACTORIAL_ROLE must be one of ${ROLES.join(', ')}`);
+  if (!isRoleName(role)) throw new Error(`FACTORIAL_ROLE must be one of ${Object.keys(ROLES).join(', ')}`);
   const maxTurns = positiveNumber(env, 'FACTORIAL_MAX_TURNS');
   if (!Number.isInteger(maxTurns)) throw new Error('FACTORIAL_MAX_TURNS must be an integer');
   return {
-    role: role as Role,
+    role,
     model: required(env, 'FACTORIAL_MODEL'),
-    exploreModel: role === 'builder' ? required(env, 'FACTORIAL_EXPLORE_MODEL') : undefined,
+    exploreModel: ROLES[role].models.includes('explore') ? required(env, modelVariable('explore')) : undefined,
     backgroundModel: required(env, 'FACTORIAL_BACKGROUND_MODEL'),
     region: required(env, 'AWS_REGION'),
     maxTurns,

@@ -6,9 +6,9 @@
  * AgentCore Runtime (packages/agent-runtime), logs its progress as
  * structured lines (CloudWatch Logs; text and tool input capped at 4000
  * characters each), records the outcome, and exits. Step Functions resumes
- * when the task stops, however long the run took. A builder that stops
- * before it succeeds (its turn, budget or time limit) exits with
- * INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
+ * when the task stops, however long the run took. A run of a role that must
+ * finish (the builder) that stops before it succeeds (its turn, budget or
+ * time limit) exits with INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
  * pull request. Nothing inside the agent sandbox can influence this process:
  * it runs under its own task role.
  *
@@ -19,9 +19,11 @@
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
  * `<stage>/transcript.jsonl` and `<stage>/usage.json` in the artefact store
- * (`build/` for the builder, `review/` for the reviewer;
- * a build round after the first stores under `build/round-<n>/`, and the
- * ledger's `buildUsageTotal` sums the rounds).
+ * (`build/` for the builder, `review/` for the reviewer; for a role that
+ * works in rounds, a round after the first stores under
+ * `<stage>/round-<n>/`, and the ledger's `<stage>UsageTotal` sums the
+ * rounds). The stage, statuses and first message come from the role's
+ * manifest (@factorial/roles).
  */
 import { readFileSync } from 'node:fs';
 
@@ -32,9 +34,10 @@ import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-
 
 import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts';
 import { createLogger } from '@factorial/log';
+import { ROLES } from '@factorial/roles';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor, runtimeTarget, type RuntimeTarget } from './role.ts';
+import { INCOMPLETE_EXIT_CODE, incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
 import { runtimeInfoOf, usageRecord, type SdkRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
 import { SdkTally, runUsageOf, runtimeStop, subagentsOf, type HostStatus } from './sdk-messages.ts';
@@ -52,6 +55,7 @@ const tableName = requireEnv('TABLE_NAME');
 // The role and its target arrive in the task input, so one task definition serves every role.
 const target = runtimeTarget(process.env);
 const { role, qualifier } = target;
+const manifest = ROLES[role];
 const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
 const branch = requireEnv('BRANCH');
@@ -60,12 +64,14 @@ const baseCommit = requireEnv('BASE_COMMIT');
 if (!/^[0-9a-f]{40}$/.test(baseCommit)) throw new Error('BASE_COMMIT is not a commit sha');
 // The changes PrepareReview found to deployment and safety files, for the reviewer's prompt.
 const sensitivePaths = parseSensitivePaths(process.env.SENSITIVE_PATHS);
-// Which round of the build this is: 2 or more when continuing in a fresh session.
+// Which round this is, for a role that works in rounds: 2 or more when continuing in a fresh session.
 const buildRound = Number(process.env.BUILD_ROUND ?? '1');
 if (!Number.isInteger(buildRound) || buildRound < 1) throw new Error('BUILD_ROUND is not a positive integer');
-const { stage, running, done, failed } = ROLE_STAGES[role];
+const round = manifest.rounds ? buildRound : undefined;
+const { stage } = manifest;
+const { running, done, failed } = manifest.statuses;
 /** Where this run's records go: the stage, or a round folder under it after the first round. */
-const recordPath = (name: string): string => (role === 'builder' && buildRound > 1 ? `${stage}/round-${buildRound}/${name}` : `${stage}/${name}`);
+const recordPath = (name: string): string => (round !== undefined && round > 1 ? `${stage}/round-${round}/${name}` : `${stage}/${name}`);
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 // The host's own time limit ends the run; this only guards against a
@@ -170,9 +176,12 @@ function finish(succeeded: boolean): Promise<void> {
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
     log.info('agent finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.sdk?.costUsd });
-    const outcome = outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
-    // The builder's figures are this round's; the total across rounds is kept beside them.
-    const rounds = role === 'builder' ? { buildRounds: buildRound, buildUsageTotal: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage } : {};
+    const outcome = outcomeAttributes(manifest, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
+    // A role in rounds records this round's figures; the total across rounds is kept beside them.
+    const rounds =
+      round !== undefined
+        ? { [`${stage}Rounds`]: round, [`${stage}UsageTotal`]: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage }
+        : {};
     await record(succeeded ? done : failed, { ...outcome, ...rounds });
   })();
   return finished;
@@ -194,15 +203,15 @@ async function main(): Promise<number> {
   run.prefix = typeof row.Item?.artefactPrefix === 'string' ? row.Item.artefactPrefix : undefined;
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
-  if (role === 'builder' && buildRound > 1) {
-    const previous = row.Item?.buildUsageTotal ?? row.Item?.usage;
+  if (round !== undefined && round > 1) {
+    const previous = row.Item?.[`${stage}UsageTotal`] ?? row.Item?.usage;
     run.previousRoundsUsage = previous && typeof previous === 'object' ? addRunUsage(emptyRunUsage(), previous as RunUsage) : undefined;
   }
 
   const resumed = typeof row.Item?.resumedFrom === 'string';
-  const prompt = promptFor(role, workItem, branch, baseBranch, { sensitivePaths, buildRound, resumed });
+  const prompt = manifest.firstMessage(workItem, branch, baseBranch, { sensitivePaths, ...(round !== undefined ? { round } : {}), resumed });
   run.version = await runtimeInfo(target);
-  log.info('invoking agent', { role, sessionId, qualifier, ...(role === 'builder' ? { buildRound } : {}), ...run.version });
+  log.info('invoking agent', { role, sessionId, qualifier, ...(round !== undefined ? { buildRound: round } : {}), ...run.version });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();
@@ -212,7 +221,7 @@ async function main(): Promise<number> {
   // A builder that hit its turn, budget or time limit has not finished the
   // plan: fail the task so its work is saved and reported, not tested and
   // opened as a pull request.
-  const incomplete = run.error ? undefined : incompleteReason(role, run.stopReason);
+  const incomplete = run.error ? undefined : incompleteReason(manifest, run.stopReason);
   if (incomplete) run.error = incomplete;
   await finish(!run.error);
   if (incomplete) return INCOMPLETE_EXIT_CODE;

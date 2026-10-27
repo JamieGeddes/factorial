@@ -9,6 +9,7 @@
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand } from '@aws-sdk/client-bedrock-agentcore';
 
 import { redactSecrets } from '@factorial/artefacts';
+import { runtimeArnVariable, type RoleName } from '@factorial/roles';
 
 import { requireEnv } from './env.ts';
 import { shellQuote } from './shell.ts';
@@ -29,17 +30,18 @@ export interface SessionTarget {
 const client = new BedrockAgentCoreClient({});
 
 /** Each agent role is its own runtime, so the same session id names a different session per role. */
-export type SessionRole = 'builder' | 'reviewer';
+export type SessionRole = RoleName;
 
 /**
- * Every role runs on Factorial's host on its own Runtime: the builder, which
- * plans with its subagent, and its clean room on BUILDER_RUNTIME_ARN, the
- * reviewer on REVIEWER_RUNTIME_ARN. Both are addressed through the `live`
+ * Every role runs on Factorial's host on its own Runtime, its ARN in
+ * `<ROLE>_RUNTIME_ARN` from the agent stack's outputs: the builder, which
+ * plans with its subagent, and the clean room on BUILDER_RUNTIME_ARN, the
+ * reviewer on REVIEWER_RUNTIME_ARN. All are addressed through the `live`
  * qualifier.
  */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
   const qualifier = requireEnv('RUNTIME_QUALIFIER');
-  const arn = requireEnv(role === 'builder' ? 'BUILDER_RUNTIME_ARN' : 'REVIEWER_RUNTIME_ARN');
+  const arn = requireEnv(runtimeArnVariable(role));
   return { arn, qualifier, sessionId };
 }
 

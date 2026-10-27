@@ -3,48 +3,25 @@
  * the state machine passes the role and its Runtime in the container
  * overrides, and this checks they belong together before anything is invoked.
  */
-import type { WorkItem } from '@factorial/workitem';
-
-import { buildPrompt, reviewPrompt } from './prompt.ts';
+import { isRoleName, type RoleManifest, type RoleName, type SensitivePath } from '@factorial/roles';
 
 /**
- * Roles the invoker knows how to start, each `factorial_<role>` on its own
- * Runtime (the reviewer since phase 3.2 of docs/agent-sdk-plan.md). The
- * planner is the builder's plan subagent since phase 3.1.
- */
-export const ROLES = ['builder', 'reviewer'] as const;
-export type Role = (typeof ROLES)[number];
-
-/** Where a role's run is recorded: its artefact folder, log stage and ledger statuses. */
-export interface RoleStage {
-  /** The artefact folder under the attempt's prefix, and the log stage. */
-  stage: 'build' | 'review';
-  running: string;
-  done: string;
-  failed: string;
-}
-
-export const ROLE_STAGES: Record<Role, RoleStage> = {
-  builder: { stage: 'build', running: 'building', done: 'built', failed: 'build-error' },
-  reviewer: { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' },
-};
-
-/**
- * The exit code for a builder that stopped before finishing: the ECS task
- * fails, so the state machine saves the work and reports it instead of
- * testing it and opening a pull request. Report recognises the code.
+ * The exit code for a run of a role that must finish (the builder) that
+ * stopped before finishing: the ECS task fails, so the state machine saves
+ * the work and reports it instead of testing it and opening a pull request.
+ * Report recognises the code.
  */
 export const INCOMPLETE_EXIT_CODE = 3;
 
 /**
  * Why a run that ended without an error is still incomplete, or undefined
- * if it is complete. Only the builder's run is judged here: a half-finished
- * build must not become a pull request, while CollectReview already checks
- * what the reviewer left behind.
+ * if it is complete. Only a role that must finish is judged here (the
+ * manifest's `mustFinish`): a half-finished build must not become a pull
+ * request, while CollectReview already checks what the reviewer left behind.
  */
-export function incompleteReason(role: Role, stopReason: string | undefined): string | undefined {
-  if (role !== 'builder' || stopReason === 'success') return undefined;
-  return `incomplete: the builder stopped with ${stopReason ?? 'no stop reason'} before finishing`;
+export function incompleteReason(role: RoleManifest, stopReason: string | undefined): string | undefined {
+  if (!role.mustFinish || stopReason === 'success') return undefined;
+  return `incomplete: the ${role.name} stopped with ${stopReason ?? 'no stop reason'} before finishing`;
 }
 
 export interface RunOutcome {
@@ -58,23 +35,25 @@ export interface RunOutcome {
 }
 
 /**
- * The ledger attributes for a finished run. The builder's keep their
- * existing top-level names; other roles' sit under their stage, until the
- * progress record (#15) gives every stage the same shape.
+ * The ledger attributes for a finished run. A role whose manifest says
+ * `top-level` (the builder) keeps the names from before other roles; other
+ * roles' sit under their stage, until the progress record (#15) gives every
+ * stage the same shape.
  */
-export function outcomeAttributes(role: Role, outcome: RunOutcome): Record<string, unknown> {
-  if (role === 'builder') {
+export function outcomeAttributes(role: RoleManifest, outcome: RunOutcome): Record<string, unknown> {
+  const { stage } = role;
+  if (role.ledger === 'top-level') {
     return {
       stopReason: outcome.stopReason,
       toolCalls: outcome.toolCalls,
-      buildDurationSeconds: outcome.durationSeconds,
+      [`${stage}DurationSeconds`]: outcome.durationSeconds,
       usage: outcome.usage,
-      buildError: outcome.error,
-      build: outcome.record,
+      [`${stage}Error`]: outcome.error,
+      [stage]: outcome.record,
     };
   }
   return {
-    [ROLE_STAGES[role].stage]: {
+    [stage]: {
       stopReason: outcome.stopReason,
       toolCalls: outcome.toolCalls,
       durationSeconds: outcome.durationSeconds,
@@ -86,15 +65,11 @@ export function outcomeAttributes(role: Role, outcome: RunOutcome): Record<strin
 }
 
 export interface RuntimeTarget {
-  role: Role;
+  role: RoleName;
   runtimeArn: string;
   runtimeId: string;
   /** The endpoint invoked, `live` in normal running. */
   qualifier: string;
-}
-
-function isRole(value: string): value is Role {
-  return (ROLES as readonly string[]).includes(value);
 }
 
 /**
@@ -109,7 +84,7 @@ export function runtimeTarget(env: Record<string, string | undefined>): RuntimeT
     return value;
   };
   const role = required('ROLE');
-  if (!isRole(role)) throw new Error(`Unknown agent role "${role}"`);
+  if (!isRoleName(role)) throw new Error(`Unknown agent role "${role}"`);
   const runtimeArn = required('RUNTIME_ARN');
   const match = /^arn:aws[a-z-]*:bedrock-agentcore:[a-z0-9-]+:[0-9]{12}:runtime\/([A-Za-z0-9_-]+)$/.exec(runtimeArn);
   const runtimeId = match?.[1];
@@ -119,31 +94,6 @@ export function runtimeTarget(env: Record<string, string | undefined>): RuntimeT
   const qualifier = required('RUNTIME_QUALIFIER');
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(qualifier)) throw new Error(`"${qualifier}" is not an endpoint name`);
   return { role, runtimeArn, runtimeId, qualifier };
-}
-
-/** A changed file the orchestrator flagged for care, and why. */
-export interface SensitivePath {
-  path: string;
-  reason: string;
-}
-
-/** What a role's prompt needs beyond the work item: the builder's round, the reviewer's sensitive paths. */
-export interface PromptOptions {
-  sensitivePaths?: SensitivePath[];
-  /** The builder's round: 2 or more when continuing a build in a fresh session. */
-  buildRound?: number;
-  /** Whether this attempt resumes an earlier one's branch. */
-  resumed?: boolean;
-}
-
-/** The user message that starts a session for the role. */
-export function promptFor(role: Role, workItem: WorkItem, branch: string, baseBranch: string, options: PromptOptions = {}): string {
-  switch (role) {
-    case 'builder':
-      return buildPrompt(workItem, branch, baseBranch, options.buildRound ?? 1, options.resumed ?? false);
-    case 'reviewer':
-      return reviewPrompt(workItem, branch, baseBranch, options.sensitivePaths ?? []);
-  }
 }
 
 /**

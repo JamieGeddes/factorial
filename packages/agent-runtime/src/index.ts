@@ -2,16 +2,12 @@
  * Entry point: reads the Runtime version's configuration, then serves the
  * Runtime contract on port 8080 and runs one SDK query when asked.
  */
-import path from 'node:path';
-
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@factorial/log';
 
 import { readConfig } from './config.ts';
-import { preToolUseHooks, reviewerPreToolUseHooks } from './hooks.ts';
 import { queryOptions } from './options.ts';
-import { planBrief, planHooks, readAgentFile, stopHooks, type PlanGate } from './report.ts';
-import { reviewStopHooks } from './review.ts';
+import { HOST_ROLES } from './roles.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 import { signedGatewayCall, webSearchServer } from './web-search.ts';
@@ -30,41 +26,22 @@ let log = createLogger('agent-runtime');
 const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
 
-const onDenied = (toolName: string, reason: string) => log.info('tool use denied', { toolName, reason });
-
-function startBuilder(request: RunRequest): AsyncIterable<unknown> {
-  const planGate: PlanGate = { closed: false };
-  const options = queryOptions(config, {
-    hostEnv: process.env,
-    preToolUse: preToolUseHooks(config.workspace, onDenied, () => planGate.closed),
-    postToolUse: planHooks(config.workspace, planGate, (errors, closed) => log.info(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
-    stop: stopHooks(config.workspace, planGate, (reason) => log.info('report incomplete; builder sent back', { reason })),
-    webSearch: config.webSearchGatewayUrl
-      ? webSearchServer(signedGatewayCall(config.webSearchGatewayUrl, config.region))
-      : undefined,
-    abortController,
-    stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
-  });
-  const brief = planBrief(readAgentFile(path.join(config.workspace, 'plan.json')));
-  return query({ prompt: brief ? `${request.prompt}\n\n${brief}` : request.prompt, options });
-}
-
-function startReviewer(request: RunRequest): AsyncIterable<unknown> {
-  const options = queryOptions(config, {
-    hostEnv: process.env,
-    preToolUse: reviewerPreToolUseHooks(config.workspace, onDenied),
-    postToolUse: [],
-    stop: reviewStopHooks(config.workspace, (reason) => log.info('reviewer sent back', { reason })),
-    webSearch: undefined,
-    abortController,
-    stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
-  });
-  return query({ prompt: request.prompt, options });
-}
+const role = HOST_ROLES[config.role];
 
 function startQuery(request: RunRequest): AsyncIterable<unknown> {
   log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
-  return config.role === 'reviewer' ? startReviewer(request) : startBuilder(request);
+  const session = role.session(config.workspace, (message, fields) => log.info(message, fields));
+  const options = queryOptions(config, role, {
+    hostEnv: process.env,
+    preToolUse: session.preToolUse,
+    postToolUse: session.postToolUse,
+    stop: session.stop,
+    webSearch:
+      role.webSearch && config.webSearchGatewayUrl ? webSearchServer(signedGatewayCall(config.webSearchGatewayUrl, config.region)) : undefined,
+    abortController,
+    stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
+  });
+  return query({ prompt: session.prompt(request.prompt), options });
 }
 
 const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };

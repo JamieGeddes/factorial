@@ -1,6 +1,10 @@
+/**
+ * The first messages the builder and the reviewer are started with, built by
+ * the invoker. The system prompt is each Runtime version's.
+ */
 import type { WorkItem } from '@factorial/workitem';
 
-import type { SensitivePath } from './role.ts';
+import type { SensitivePath } from './manifest.ts';
 
 /**
  * Whether the item is a turn on a pull request (`inReplyTo`, #163). The
