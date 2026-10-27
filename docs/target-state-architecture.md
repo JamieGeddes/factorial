@@ -2,6 +2,8 @@
 
 **Purpose.** This is the brief for re-implementing Factorial to its target state. It is written for the coding agent that will do that work and assumes no knowledge of the existing code. It states the shape to build, the rules that keep that shape, and the order to build it in. Decisions the target supersedes are left out on purpose.
 
+**What is kept.** The agentic core is proven and is ported with minimal change: the Claude Agent SDK on AgentCore Runtime, the host process, the image, the builder and reviewer definitions, the invoker, the clean-room push and the artefact and GitHub App modules. The rework is in the ecosystem around it: the state machine, what goes in and comes out of it, and how a turn re-enters the system when rework is needed or a person asks a question. Section 6 says which is which.
+
 `docs/architecture-principles.md` (the nine principles) and `docs/security.md` §1 and §2 (the threat model and its design rules) remain binding and are not repeated here. Where `docs/security.md` §3.5 or §6 describe verification as a dispatched workflow with a callback, this document is current. `docs/target-state-architecture.html` is the picture of the same design; open it in a browser.
 
 The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119.
@@ -21,6 +23,7 @@ These hold from the first commit and are enforced by infrastructure, never by pr
 3. **Humans approve every pull request against Factorial's own code.** There is no privileged path for the system's changes to itself.
 4. **Agents never deploy or promote Factorial.** Only the GitHub Actions deploy role may deploy a stack or move a `live` alias, enforced by two permissions boundaries that every role Factorial creates carries.
 5. **Verification is Factorial's gate.** It runs in compute Factorial owns, from checks the target declares on its trusted branch, and nothing the agent can reach can forge its result. No untested or unfinished change becomes a pull request.
+6. **Factorial is a GitHub App.** Every GitHub action is taken as the App, with installation tokens minted by orchestrator code, scoped to one repository and one step's permissions, and never by a person's token. That removes any dependency on an individual's identity and gives Factorial a place in the pull request review process: it is requested as a reviewer, re-requests review, replies and reacts as itself, and commits land under its bot user.
 
 ## 3. The shape
 
@@ -104,6 +107,7 @@ The vocabulary, used consistently in code, documents and prompts:
 
 ### 4.5 Roles
 
+- Agent hosting is decided: each role is an AgentCore Runtime whose container runs Factorial's host process around the Claude Agent SDK, invoked through a Fargate task that runs to completion and observed by infrastructure. The model is Claude on Bedrock through the EU inference profiles, reached with the role's execution role and no key. Models are named by purpose per role and chosen from Opus, Sonnet and Haiku as the current implementation does: Sonnet for the main loops, Haiku for the read-only explore subagent and the SDK's background calls, Opus where a step is shown to need it. Changing a role's model is a change to its version, never to a request.
 - One manifest per role in one shared package: prompt, tools, subagents, hooks, limits, models by purpose, stage name and ledger statuses, the files the role is seeded with, and the files it may produce with a cap and a validator each. The host builds its options from it; the invoker takes stage and statuses from it; one generic Collect reads the declared outputs. No `role === '…'` conditional exists outside that package.
 - The manifest is bundled into the host image, the invoker and the orchestrator, and only the host's copy is fixed on the Runtime version. The host alone uses prompt, tools, hooks, limits and models; everything else uses only stage, statuses, inputs and outputs. Nothing overrides a role at invoke time; the request carries only the prompt.
 - One image for every role. One Runtime block per role in the template, with its own execution role and `live` endpoint, because IAM must stay explicit. Each role's execution role names exactly the inference profiles it may call, and the verifier's names none.
@@ -140,7 +144,7 @@ The vocabulary, used consistently in code, documents and prompts:
 - Every terminal state builds, validates, records and emits exactly one `Outcome` through one module: result, pointers (artefact prefix, pull request, branch, tested sha, saved work), the thread key, the route, the priority, and the `source` and `inReplyTo` of the turn. Pointers only, never content. It is recorded on the ledger and as `outcome/outcome.json` before it is put on the bus.
 - A reporter per source type, selected by a rule on `source.type`, delivers it where the turn came from: opens or replies on the pull request thread, posts in the chat thread, updates the ticket. The state machine knows nothing about comments.
 - Delivery never fails the turn. The outcome is recorded first; delivery is retried from the event, with a dead-letter queue and an alarm, and is idempotent per outcome. Only reporters mint delivery tokens; agent text they post is capped, redacted and cannot mention anyone.
-- Opening the pull request itself is a repository operation behind the one GitHub module, not a reporter's job. Where a request came from and where the code lives are different dimensions.
+- Opening the pull request itself is a repository operation behind the GitHub App module, not a reporter's job. Where a request came from and where the code lives are different dimensions.
 
 ### 4.11 The record
 
@@ -185,15 +189,19 @@ If adding something costs more than this table says, the boundary is in the wron
 
 ## 6. Build order
 
-Each step is the smallest version that closes its loop, is deployed through the pipeline, and leaves the documentation describing what exists. Nothing is built ahead of the step that needs it, except what section 2 fixes from day one.
+**Ported with minimal change**, because it is proven and the design does not touch it: the agent host (`packages/agent-runtime`: the SDK options, hooks, prompts, the unprivileged run, the transcript and result handling), the agent image and its tools, the builder and reviewer definitions and their plan and review contracts, the Fargate invoker and its stream handling, the clean-room push and the bundle hand-over, the session command helpers, the artefact module and the GitHub App module. Porting means moving the code and wrapping it in the manifest and seed shapes, not rewriting it.
+
+**Rebuilt**, because the design changes it: the state machine and its states, the `WorkItem` as emitted by adapters, Intake and the thread record, the route Choice, verification, the `Outcome` and the reporters, the seeding of sessions, and every path by which a turn re-enters the system (rework after a review or failed checks, a question, an approval, an integration).
+
+Each step below is the smallest version that closes its loop, is deployed through the pipeline, and leaves the documentation describing what exists. Nothing is built ahead of the step that needs it, except what section 2 fixes from day one.
 
 1. **Foundation**: boundaries, the name-scoped CloudFormation role, OIDC deploy role, buckets, registry, the GitHub App and the rulesets. Human-deployed once.
 2. **Contracts**: `WorkItem`, `Outcome`, `intake`, `plan`, `review`, `verifiers`, `triage`, `questions`, each with a validator and examples. The shapes are cheap to write first and expensive to retrofit.
 3. **Bus, issue adapter, ledger with threads, artefact store, Intake** with the `change` route only and fact-based routing. The first turn ends at `intake.json`.
-4. **The Change route with the builder**: Prepare, Build, Collect and the clean-room push; role manifests and seed providers from the start, since the first role written is the one that gets copied.
+4. **The Change route with the builder**: Prepare, Build, Collect and the clean-room push, with the host, the builder definition and the invoker ported; role manifests and seed providers wrap them from the start, since the first role placed is the one that gets copied.
 5. **Verify** with the `command` kind and the verifier Runtime; `.factorial/verifiers.json` for Factorial and for the trivial second target; the pull request step with the head check. The loop now closes: an issue becomes a verified pull request.
 6. **Outcomes and the GitHub reporter**, so the state machine stops knowing about comments before a second source arrives.
-7. **Review**, advisory, with the sensitive-path rules.
+7. **Review**, advisory, with the reviewer ported and the sensitive-path rules.
 8. **The canary** against the second target, promotion as the last deploy step.
 9. **Pull request events as turns**: review, inline comment, conversation comment, failed run, with threads carrying the admission policies.
 10. **The sandbox verifier** and the account pool.
@@ -206,7 +214,6 @@ From step 4 onwards, Factorial's own work items are the way most steps are built
 
 These are not settled by the design. Decide each once, record the decision beside this document, and do not let an implementation settle it by accident.
 
-- **Session compute.** The design assumes an AgentCore Runtime per role with a session command API, invoked through a Fargate task that runs to completion. The alternative is the Agent SDK directly in a Fargate task with the seed and collect phases as root-run scripts around an unprivileged model phase. The Runtime buys managed isolation and versioned endpoints at the cost of the extra invoker layer. Decide on evidence from the first builder, with isolation and the alias principle as the criteria.
 - **Tolerant downstream validation.** Section 4.1 says SHOULD. Make it MUST, or keep drains, before the second contract change.
 - **Cross-source notification.** Whether a thread's opener (a chat thread, a ticket) is told about turns that came from GitHub, such as a review or a merge. The thread records its opening source, so the reporter can; the design does not say it should.
 - **Fan-out cap and confirmation.** The number of derived items above which Intake posts a proposal instead of running, and whether a human can raise it per target.
