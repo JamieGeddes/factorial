@@ -7,8 +7,7 @@ import type { WorkItem } from '@factorial/workitem';
 
 import { requireEnv } from './env.ts';
 import { lineageAttributes } from './lineage.ts';
-import { sourceKey, type Attempt } from './resume.ts';
-import type { EarlierItem } from './thread-policy.ts';
+import { sourceKey } from './resume.ts';
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -52,82 +51,7 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
   return now;
 }
 
-/** Earlier attempts at the same source as this WorkItem, newest first. */
-export async function attemptsAtSource(workItem: WorkItem): Promise<Attempt[]> {
-  const result = await documents.send(
-    new QueryCommand({
-      TableName: requireEnv('TABLE_NAME'),
-      IndexName: 'sourceKey-createdAt-index',
-      KeyConditionExpression: 'sourceKey = :key',
-      ExpressionAttributeValues: { ':key': sourceKey(workItem) },
-      ScanIndexForward: false,
-      Limit: 10,
-    }),
-  );
-  return (result.Items ?? []) as Attempt[];
-}
-
-/** More items than any pull request should ever gather; past it, admission refuses rather than judge on part of the record. */
-export const MAX_ITEMS_AT_SOURCE = 1_000;
-
-export class TooManyItemsError extends Error {
-  constructor(key: string) {
-    super(`more than ${MAX_ITEMS_AT_SOURCE} items at ${key}`);
-    this.name = 'TooManyItems';
-  }
-}
-
-/**
- * The `sourceKey` every rework item for a pull request carried before threads
- * (#163), when the adapter named the pull request itself as the source.
- */
-export function legacyPullRequestSourceKey(repo: { owner: string; name: string }, number: number): string {
-  return `github-pull-request#${repo.owner}/${repo.name}#${number}`;
-}
-
-/**
- * Every item recorded under a source key, newest first: for a pull request's
- * legacy key, every rework item for that pull request. All pages are read,
- * so refused items cannot push an earlier attempt out of view.
- */
-export async function itemsAtSourceKey(key: string): Promise<EarlierItem[]> {
-  const items: EarlierItem[] = [];
-  let start: Record<string, unknown> | undefined;
-  do {
-    const page = await documents.send(
-      new QueryCommand({
-        TableName: requireEnv('TABLE_NAME'),
-        IndexName: 'sourceKey-createdAt-index',
-        KeyConditionExpression: 'sourceKey = :key',
-        ExpressionAttributeValues: { ':key': key },
-        ProjectionExpression: 'workItemId, #status',
-        ExpressionAttributeNames: { '#status': 'status' },
-        ScanIndexForward: false,
-        ...(start ? { ExclusiveStartKey: start } : {}),
-      }),
-    );
-    items.push(...((page.Items ?? []) as EarlierItem[]));
-    if (items.length > MAX_ITEMS_AT_SOURCE) throw new TooManyItemsError(key);
-    start = page.LastEvaluatedKey;
-  } while (start);
-  return items;
-}
-
-/** The rework cause recorded in an item's WorkItem, if it has one. Not in the source index, so read from the row. */
-export async function reworkCauseOf(workItemId: string): Promise<string | undefined> {
-  const result = await documents.send(
-    new GetCommand({
-      TableName: requireEnv('TABLE_NAME'),
-      Key: { workItemId },
-      ProjectionExpression: '#w.#c.#k',
-      ExpressionAttributeNames: { '#w': 'workItem', '#c': 'context', '#k': 'cause' },
-    }),
-  );
-  const cause = (result.Item as { workItem?: { context?: { cause?: unknown } } } | undefined)?.workItem?.context?.cause;
-  return typeof cause === 'string' ? cause : undefined;
-}
-
-/** The ledger's key for a pull request, `<owner>/<name>#<number>` in lower case: GitHub names ignore case. */
+/** The key for a pull request on its thread, `<owner>/<name>#<number>` in lower case: GitHub names ignore case. */
 export function pullRequestKey(repo: { owner: string; name: string }, number: number): string {
   return `${repo.owner}/${repo.name}#${number}`.toLowerCase();
 }
@@ -146,40 +70,40 @@ export async function statusOf(workItemId: string): Promise<string | undefined> 
   return typeof status === 'string' ? status : undefined;
 }
 
-/** The source key recorded on an item's row, if it has one. */
-export async function sourceKeyOf(workItemId: string): Promise<string | undefined> {
-  const result = await documents.send(
-    new GetCommand({ TableName: requireEnv('TABLE_NAME'), Key: { workItemId }, ProjectionExpression: 'sourceKey' }),
-  );
-  const key = (result.Item as { sourceKey?: unknown } | undefined)?.sourceKey;
-  return typeof key === 'string' ? key : undefined;
-}
-
-/** The item that opened a pull request, and its branch, if Factorial opened it: the ledger's record before threads (#163). */
-export async function openerOf(repo: { owner: string; name: string }, number: number): Promise<{ workItemId: string; branch?: string } | undefined> {
-  const result = await documents.send(
-    new QueryCommand({
-      TableName: requireEnv('TABLE_NAME'),
-      IndexName: 'pullRequestKey-index',
-      KeyConditionExpression: 'pullRequestKey = :key',
-      ExpressionAttributeValues: { ':key': pullRequestKey(repo, number) },
-      Limit: 1,
-    }),
-  );
-  return result.Items?.[0] as { workItemId: string; branch?: string } | undefined;
-}
-
-/** The attempt number and artefact prefix on a ledger row, if the row exists. */
-export async function attemptRecord(workItemId: string): Promise<{ attempt?: number; artefactPrefix?: string } | undefined> {
+/** The attempt number, artefact prefix and whether work was saved, on a ledger row, if the row exists. */
+export async function attemptRecord(workItemId: string): Promise<{ attempt?: number; artefactPrefix?: string; savedWork?: boolean } | undefined> {
   const result = await documents.send(
     new GetCommand({
       TableName: requireEnv('TABLE_NAME'),
       Key: { workItemId },
-      ProjectionExpression: '#attempt, #prefix',
+      ProjectionExpression: '#attempt, #prefix, savedWork',
       ExpressionAttributeNames: { '#attempt': 'attempt', '#prefix': 'artefactPrefix' },
     }),
   );
-  return result.Item as { attempt?: number; artefactPrefix?: string } | undefined;
+  return result.Item as { attempt?: number; artefactPrefix?: string; savedWork?: boolean } | undefined;
+}
+
+/** One turn on a thread, as the thread index projects it. */
+export interface Turn {
+  workItemId: string;
+  status?: string;
+  sourceKey?: string;
+  createdAt?: string;
+}
+
+/** A thread's turns, newest first: the most any thread should gather is far below one page. */
+export async function turnsOf(threadKey: string): Promise<Turn[]> {
+  const result = await documents.send(
+    new QueryCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      IndexName: 'threadKey-createdAt-index',
+      KeyConditionExpression: 'threadKey = :key',
+      ExpressionAttributeValues: { ':key': threadKey },
+      ScanIndexForward: false,
+      Limit: 100,
+    }),
+  );
+  return (result.Items ?? []) as Turn[];
 }
 
 /** Merge progress into the row. Keys are attribute names; values replace. */

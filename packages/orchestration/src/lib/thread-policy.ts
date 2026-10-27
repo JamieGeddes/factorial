@@ -32,9 +32,6 @@ export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   'covered-by-review',
 ]);
 
-/** Statuses of items that were refused, which neither held the thread nor count as an attempt. */
-export const REFUSED_STATUSES: ReadonlySet<string> = new Set(['not-eligible', 'busy', 'rework-limit', 'covered-by-review']);
-
 /**
  * A turn still not finished after this long is taken to have died without
  * reporting, so it no longer holds its thread. Longer than the most a build
@@ -133,29 +130,4 @@ export function admitTurn(turn: TurnRequest, thread: ThreadState, holderStatus: 
       limitAnnounced: checks ? thread.limitAnnounced === true : false,
     },
   };
-}
-
-/** An earlier item for the same pull request, newest first, as the ledger recorded it before threads existed. */
-export interface EarlierItem {
-  workItemId: string;
-  status?: string;
-  /** The rework cause from the item's WorkItem. */
-  cause?: string;
-}
-
-/**
- * The thread state a pull request's history implies, for a thread created for
- * a pull request opened before threads existed: the automatic reworks in a
- * row since a person last asked, refused items skipped, and whether the
- * newest item announced the limit. Nothing is in flight, since the change
- * that adds threads deploys only once no execution is running.
- */
-export function stateFromHistory(items: readonly EarlierItem[]): Required<Pick<ThreadState, 'automaticReworks' | 'limitAnnounced'>> {
-  let automaticReworks = 0;
-  for (const item of items) {
-    if (REFUSED_STATUSES.has(item.status ?? '')) continue;
-    if (item.cause !== 'checks-failed') break;
-    automaticReworks += 1;
-  }
-  return { automaticReworks, limitAnnounced: items[0]?.status === 'rework-limit' };
 }

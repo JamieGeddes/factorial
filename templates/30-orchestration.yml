@@ -81,13 +81,14 @@ Globals:
 Resources:
   # ---------------------------------------------------------------------------
   # Ledger: one row per WorkItem. Also the idempotency guard against duplicate
-  # deliveries, since EventBridge cannot name executions. The source index
-  # finds earlier attempts at the same issue, so Prepare can resume one that
-  # failed after saving its work. The group and parent indexes list the items
-  # one trigger produced (WorkItem `group`) and the items a parent emitted
-  # (`parentId`); both are sparse, holding only items with that field. A table
-  # update can add only one index, so each new index needs its own deploy.
-  # The thread index lists the turns in one thread (#163).
+  # deliveries, since EventBridge cannot name executions. The thread index
+  # lists the turns in one thread (#163); Intake reads it to resume an attempt
+  # that failed after saving its work. The group and parent indexes list the
+  # items one trigger produced (WorkItem `group`) and the items a parent
+  # emitted (`parentId`); both are sparse, holding only items with that field.
+  # A table update can add or delete only one index, so each index change
+  # needs its own deploy: the source index, unread since #163, goes in the
+  # next one.
   # ---------------------------------------------------------------------------
   WorkItemsTable:
     Type: AWS::DynamoDB::Table
@@ -104,8 +105,6 @@ Resources:
         - AttributeName: groupId
           AttributeType: S
         - AttributeName: parentId
-          AttributeType: S
-        - AttributeName: pullRequestKey
           AttributeType: S
         - AttributeName: threadKey
           AttributeType: S
@@ -150,18 +149,6 @@ Resources:
               - status
               - groupId
               - groupIndex
-        # The item that opened a pull request (`<owner>/<name>#<number>`,
-        # lower case), written by OpenPullRequest. Before threads (#163) this
-        # was how rework found its pull request; Intake now reads it only to
-        # create the thread of a pull request opened before threads existed.
-        - IndexName: pullRequestKey-index
-          KeySchema:
-            - AttributeName: pullRequestKey
-              KeyType: HASH
-          Projection:
-            ProjectionType: INCLUDE
-            NonKeyAttributes:
-              - branch
         - IndexName: threadKey-createdAt-index
           KeySchema:
             - AttributeName: threadKey
@@ -654,14 +641,11 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-            # Resume finds earlier attempts at a source; a pull request opened
-            # before threads is found through the item that opened it.
-            - Sid: LedgerIndexes
+            # Resume reads the turns on the newest thread a source opened.
+            - Sid: LedgerThreadIndex
               Effect: Allow
               Action: dynamodb:Query
-              Resource:
-                - !Sub ${WorkItemsTable.Arn}/index/sourceKey-createdAt-index
-                - !Sub ${WorkItemsTable.Arn}/index/pullRequestKey-index
+              Resource: !Sub ${WorkItemsTable.Arn}/index/threadKey-createdAt-index
             - Sid: Threads
               Effect: Allow
               Action:
@@ -669,10 +653,12 @@ Resources:
                 - dynamodb:PutItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt ThreadsTable.Arn
-            - Sid: ThreadIndex
+            - Sid: ThreadIndexes
               Effect: Allow
               Action: dynamodb:Query
-              Resource: !Sub ${ThreadsTable.Arn}/index/pullRequestKey-index
+              Resource:
+                - !Sub ${ThreadsTable.Arn}/index/pullRequestKey-index
+                - !Sub ${ThreadsTable.Arn}/index/sourceKey-createdAt-index
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
 

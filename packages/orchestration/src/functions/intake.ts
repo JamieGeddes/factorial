@@ -6,9 +6,9 @@
  *
  * - A new request opens a thread for a new branch. A request whose earlier
  *   attempt stopped with its work saved resumes that attempt's thread.
- * - A turn on a pull request finds the thread of the pull request. A pull
- *   request opened before threads existed has its thread created from the
- *   ledger's record of it.
+ * - A turn on a pull request finds the thread of the pull request.
+ * - An item in the superseded rework `context` shape is refused: nothing
+ *   emits it since #163, and nothing downstream reads it.
  * - The thread policies (`lib/thread-policy.ts`) admit or refuse the turn,
  *   and an admission claims the thread with one conditional write.
  *
@@ -28,30 +28,20 @@ import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { nextAttempt, resumableAttempt, sourceKey, type Attempt } from '../lib/resume.ts';
 import { commentToAcknowledge, inlineCommentIdFromUrl } from '../lib/rework-points.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
+import { admitTurn, pullRequestMismatch, type Admission } from '../lib/thread-policy.ts';
 import {
-  REFUSED_STATUSES,
-  admitTurn,
-  pullRequestMismatch,
-  stateFromHistory,
-  type Admission,
-  type EarlierItem,
-} from '../lib/thread-policy.ts';
-import { ThreadChangedError, announceLimit, getThread, openThread, threadForPullRequest, threadKeyFor, writeThreadState, type Thread } from '../lib/thread.ts';
-import {
-  TooManyItemsError,
-  acceptWorkItem,
-  attemptRecord,
-  attemptsAtSource,
-  itemsAtSourceKey,
-  legacyPullRequestSourceKey,
-  openerOf,
-  pullRequestKey,
-  recordProgress,
-  reworkCauseOf,
-  sourceKeyOf,
-  statusOf,
-} from '../lib/table.ts';
-import { claimedBranch, continuedPullRequest, reworkCause } from '../lib/turn.ts';
+  ThreadChangedError,
+  announceLimit,
+  getThread,
+  newestThreadForSource,
+  openThread,
+  threadForPullRequest,
+  threadKeyFor,
+  writeThreadState,
+  type Thread,
+} from '../lib/thread.ts';
+import { acceptWorkItem, attemptRecord, pullRequestKey, recordProgress, statusOf, turnsOf } from '../lib/table.ts';
+import { continuedPullRequest, reworkCause } from '../lib/turn.ts';
 
 interface IntakeInput {
   workItem: unknown;
@@ -121,20 +111,38 @@ async function claimThread(workItemId: string, cause: WorkItemReworkCause | unde
 
 /**
  * The earlier attempt to resume, if any, and only while its branch still
- * exists. Any failure to tell (a lookup error, a deleted branch) starts the
- * item afresh. Read before the item is accepted, so its row is written with
- * its attempt number.
+ * exists: a turn by the same source on the newest thread the source opened.
+ * Any failure to tell (a lookup error, a deleted branch) starts the item
+ * afresh. Read before the item is accepted, so its row is written with its
+ * attempt number.
  */
 async function resumable(repo: Repo, workItem: WorkItem, log: Logger): Promise<Attempt | undefined> {
   try {
-    const attempt = resumableAttempt(await attemptsAtSource(workItem), workItem.id);
-    if (!attempt?.branch) return undefined;
-    const branch = assertGitBranch(attempt.branch, 'resume branch');
+    const source = sourceKey(workItem);
+    const thread = await newestThreadForSource(source);
+    if (!thread) return undefined;
+    const branch = assertGitBranch(thread.branch, 'resume branch');
     if (!branch.startsWith('factorial/')) return undefined;
+    // Only the source's own attempts count: a turn on the thread's pull
+    // request is not an attempt at the request.
+    const turns = (await turnsOf(thread.threadKey)).filter((turn) => turn.sourceKey === source);
+    const attempts: Attempt[] = await Promise.all(
+      turns.map(async (turn) => {
+        const record = await attemptRecord(turn.workItemId);
+        return {
+          workItemId: turn.workItemId,
+          branch,
+          ...(turn.status === undefined ? {} : { status: turn.status }),
+          ...(record?.savedWork === undefined ? {} : { savedWork: record.savedWork }),
+          ...(record?.attempt === undefined ? {} : { attempt: record.attempt }),
+        };
+      }),
+    );
+    const attempt = resumableAttempt(attempts, workItem.id);
+    if (!attempt) return undefined;
     const client = await repositoryClient(repo, { contents: 'read' });
     await client.getBranchSha(repo, branch);
-    const record = await attemptRecord(attempt.workItemId);
-    return { ...attempt, branch, ...(record?.attempt === undefined ? {} : { attempt: record.attempt }) };
+    return attempt;
   } catch (error) {
     log.info('not resuming', { error });
     return undefined;
@@ -145,14 +153,13 @@ async function resumable(repo: Repo, workItem: WorkItem, log: Logger): Promise<A
 async function requestTurn(repo: Repo, workItem: WorkItem, resumedFrom: Attempt | undefined): Promise<Decision> {
   const branch = resumedFrom?.branch ?? branchFor(workItem);
   const turn = resumedFrom ? 'resume' : 'new';
+  // A resumed attempt's thread exists; this returns it as it is.
   const thread = await openThread({
     threadKey: threadKeyFor(repo, branch),
     owner: repo.owner,
     name: repo.name,
     branch,
-    // A resumed branch from before threads gets its thread now; the attempt
-    // it resumes is the earliest turn known.
-    openedBy: resumedFrom?.workItemId ?? workItem.id,
+    openedBy: workItem.id,
     sourceKey: sourceKey(workItem),
   });
   const admission = await claimThread(workItem.id, undefined, thread);
@@ -164,37 +171,6 @@ async function requestTurn(repo: Repo, workItem: WorkItem, resumedFrom: Attempt 
     thread,
     ...(resumedFrom ? { resumedFrom } : {}),
   };
-}
-
-/**
- * The thread of a pull request opened before threads existed, created from
- * the ledger: the item that opened it, its branch, and the history of rework
- * items recorded under the pull request's legacy source key, from which the
- * count of automatic reworks is carried over.
- */
-async function threadFromLedger(repo: Repo, number: number): Promise<Thread | undefined> {
-  const opener = await openerOf(repo, number);
-  if (!opener?.branch) return undefined;
-  const branch = assertGitBranch(opener.branch, 'pull request branch');
-  const history: EarlierItem[] = await itemsAtSourceKey(legacyPullRequestSourceKey(repo, number));
-  for (const item of history) {
-    if (REFUSED_STATUSES.has(item.status ?? '')) continue;
-    const cause = await reworkCauseOf(item.workItemId);
-    if (cause !== undefined) item.cause = cause;
-    if (cause !== 'checks-failed') break;
-  }
-  return openThread({
-    threadKey: threadKeyFor(repo, branch),
-    owner: repo.owner,
-    name: repo.name,
-    branch,
-    openedBy: opener.workItemId,
-    sourceKey: (await sourceKeyOf(opener.workItemId)) ?? '',
-    pullRequestKey: pullRequestKey(repo, number),
-    prNumber: number,
-    prOpenedBy: opener.workItemId,
-    ...stateFromHistory(history),
-  });
 }
 
 /**
@@ -215,18 +191,8 @@ async function pullRequestTurn(repo: Repo, workItem: WorkItem, pr: { number: num
   });
   if (cause === undefined) return refuse('not-eligible', `Factorial does not know what a ${workItem.source.type} on a pull request asks for`);
 
-  let thread: Thread | undefined;
-  try {
-    thread = (await threadForPullRequest(pullRequestKey(repo, pr.number))) ?? (await threadFromLedger(repo, pr.number));
-  } catch (error) {
-    if (error instanceof TooManyItemsError) return refuse('busy', error.message);
-    throw error;
-  }
+  const thread = await threadForPullRequest(pullRequestKey(repo, pr.number));
   if (!thread?.prOpenedBy) return refuse('not-eligible', `Factorial has no record of opening pull request #${pr.number}`);
-  const claimed = claimedBranch(workItem);
-  if (claimed !== undefined && claimed !== thread.branch) {
-    return refuse('not-eligible', `the item that opened pull request #${pr.number} worked on ${thread.branch}, not ${claimed}`, { thread });
-  }
 
   const client = await repositoryClient(repo, { pull_requests: 'read' });
   const state = await client.getPullRequest(repo, pr.number);
@@ -318,7 +284,8 @@ export const handler = logged('intake', intakeKey, async (input, stageLog): Prom
 
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const pr = continuedPullRequest(workItem);
-  const resumedFrom = pr ? undefined : await resumable(repo, workItem, stageLog);
+  const superseded = workItem.context !== undefined;
+  const resumedFrom = pr || superseded ? undefined : await resumable(repo, workItem, stageLog);
   const attempt = nextAttempt(resumedFrom);
   const log = stageLog.with({ attempt });
   const prefix = artefactPrefix(workItem.id, attempt);
@@ -326,7 +293,11 @@ export const handler = logged('intake', intakeKey, async (input, stageLog): Prom
   await acceptWorkItem(workItem, input.factorialVersion, attempt);
   await putJsonArtefact(prefix, 'workitem.json', workItem);
 
-  const decision = pr ? await pullRequestTurn(repo, workItem, pr) : await requestTurn(repo, workItem, resumedFrom);
+  const decision: Decision = superseded
+    ? { route: 'refuse', turn: 'rework', status: 'not-eligible', reason: 'the rework context is superseded by inReplyTo (#163); the item names no pull request Intake reads' }
+    : pr
+      ? await pullRequestTurn(repo, workItem, pr)
+      : await requestTurn(repo, workItem, resumedFrom);
   const threadKey = decision.thread?.threadKey;
 
   if (decision.route === 'refuse') {

@@ -317,11 +317,9 @@ describe('detailsFor', () => {
     assert.deepEqual(seen, [5]);
   });
 
-  it('fetches nothing for a conversation comment or an item that carries its details', async () => {
+  it('fetches nothing for a conversation comment', async () => {
     const client = { getReviewComment: async () => assert.fail('fetched') };
     const comment = { ...base, source: { type: 'github-pull-request-comment', id: '9', url: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' } };
     assert.deepEqual(await detailsFor(client, repo, comment), [{ author: 'alice', body: 'Rename this.' }]);
-    const { inReplyTo: _, ...legacy } = base;
-    assert.deepEqual(await detailsFor(client, repo, { ...legacy, context: rework }), rework.details);
   });
 });

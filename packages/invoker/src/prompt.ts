@@ -3,12 +3,11 @@ import type { WorkItem } from '@factorial/workitem';
 import type { SensitivePath } from './role.ts';
 
 /**
- * Whether the item is a turn on a pull request, in either shape: the
- * superseded rework `context`, or `inReplyTo` (#163). The orchestrator
- * seeds such a session with /workspace/rework.md.
+ * Whether the item is a turn on a pull request (`inReplyTo`, #163). The
+ * orchestrator seeds such a session with /workspace/rework.md.
  */
 export function continuesPullRequest(workItem: WorkItem): boolean {
-  return workItem.context?.kind === 'rework' || workItem.inReplyTo?.kind === 'pull-request';
+  return workItem.inReplyTo?.kind === 'pull-request';
 }
 
 /** The rework instructions added to the prompt when the item carries rework context. */

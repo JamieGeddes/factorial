@@ -42,7 +42,7 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 
 New kinds add a new `kind` const without changing anything else in the contract. `body` on the `WorkItem` itself stays the human-readable instruction, so a consumer that ignores `context` still gets something sensible.
 
-`context` is superseded by `inReplyTo` (#163): the adapter's cause, branch and previous item are interpretation, which moves into the pipeline. Adapters stop setting it once Intake reads `inReplyTo`; removing it is a breaking change, decided separately.
+`context` is superseded by `inReplyTo` (#163): the adapter's cause, branch and previous item were interpretation, which moved into the pipeline. No adapter sets it, and Intake refuses an item that carries it. Removing it from the schema is a breaking change, decided separately.
 
 ## Continuity
 

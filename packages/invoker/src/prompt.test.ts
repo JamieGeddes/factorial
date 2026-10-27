@@ -58,33 +58,26 @@ const reworkWorkItem = {
   id: '9c8b7a6d-5e4f-4a3b-2c1d-0e9f8a7b6c5d',
   title: 'Rework PR #26',
   body: 'Address the review.',
-  context: {
-    kind: 'rework' as const,
-    pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
-    branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-    baseBranch: 'main',
-    previousWorkItemId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-    cause: 'review' as const,
-    details: [{ author: 'JamieGeddes', body: 'Add a test.' }],
-  },
+  source: { type: 'github-pull-request-review', id: '77', url: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' },
+  inReplyTo: { kind: 'pull-request' as const, number: 26 },
 };
+const REWORK_BRANCH = 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 
 describe('buildPrompt for rework', () => {
   it('tells the agent to read rework.md, build on the branch and report per point', () => {
-    const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
+    const prompt = buildPrompt(reworkWorkItem, REWORK_BRANCH, 'main');
     assert.match(prompt, /Read \/workspace\/rework\.md/);
     assert.match(prompt, /building on the existing work on the branch rather than starting over/);
     assert.match(prompt, /how each of the points in \/workspace\/rework\.md was handled/);
   });
 
   it('tells the agent to re-read rework.md once older messages are condensed', () => {
-    const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
+    const prompt = buildPrompt(reworkWorkItem, REWORK_BRANCH, 'main');
     assert.match(prompt, /re-read it and \/workspace\/rework\.md rather than relying on memory/);
   });
 
   it('does not quote review comments in the prompt itself; they live in rework.md', () => {
-    const prompt = buildPrompt(reworkWorkItem, reworkWorkItem.context.branch, 'main');
-    assert.doesNotMatch(prompt, /Add a test\./);
+    const prompt = buildPrompt(reworkWorkItem, REWORK_BRANCH, 'main');
     assert.doesNotMatch(prompt, /@JamieGeddes/);
   });
 });

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 
-import { CHECKS_AUTHOR, POINT_MAX, claimedBranch, continuedPullRequest, reworkCause, reworkDetails } from './turn.ts';
+import { CHECKS_AUTHOR, POINT_MAX, continuedPullRequest, reworkCause, reworkDetails } from './turn.ts';
 
 const BRANCH = 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 
@@ -40,16 +40,13 @@ describe('a new request', () => {
   it('continues nothing and carries no rework facts', () => {
     assert.equal(continuedPullRequest(issue), undefined);
     assert.equal(reworkCause(issue), undefined);
-    assert.equal(claimedBranch(issue), undefined);
   });
 });
 
 describe('the superseded rework context', () => {
-  it('gives its own pull request, cause, details and branch', () => {
-    assert.deepEqual(continuedPullRequest(legacy), context.pullRequest);
-    assert.equal(reworkCause(legacy), 'checks-failed');
-    assert.deepEqual(reworkDetails(legacy), context.details);
-    assert.equal(claimedBranch(legacy), BRANCH);
+  it('is not read: Intake refuses such an item', () => {
+    assert.equal(continuedPullRequest(legacy), undefined);
+    assert.equal(reworkCause(legacy), undefined);
   });
 });
 
@@ -84,9 +81,5 @@ describe('an item in reply to a pull request', () => {
 
   it('carries no point for a review with no text: its inline comments are fetched when seeding', () => {
     assert.deepEqual(reworkDetails(reply('github-pull-request-review', 'https://x', ' ')), []);
-  });
-
-  it('names no branch: the thread does', () => {
-    assert.equal(claimedBranch(reply('github-pull-request-comment', 'https://x')), undefined);
   });
 });
