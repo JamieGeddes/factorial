@@ -1,0 +1,392 @@
+<title>Factorial Target Pipeline</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one column of figures, each in its own horizontal-scroll frame, with short notes between. */
+:root {
+  --bg: #f6f7f6;
+  --fg: #1c231f;
+  --panel: #ffffff;
+  --panel-2: #eef1ee;
+  --line: #5f6a63;
+  --muted: #6d776f;
+  --accent: #2c7a4a;
+  --accent-bg: #e3f0e7;
+  --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131815; --fg: #e4eae5; --panel: #1b211d; --panel-2: #232b26; --line: #9aa69e; --muted: #96a199;
+    --accent: #6fc48d; --accent-bg: #1e3326; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #131815; --fg: #e4eae5; --panel: #1b211d; --panel-2: #232b26; --line: #9aa69e; --muted: #96a199;
+  --accent: #6fc48d; --accent-bg: #1e3326; color-scheme: dark;
+}
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--sans); font-size: 15px; line-height: 1.5;
+  padding-block: 28px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 1200px; margin: 0 auto; display: grid; gap: 28px; }
+h1 { font-size: 26px; font-weight: 600; margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 17px; font-weight: 600; margin: 0 0 8px; }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); max-width: 72ch; }
+figure { margin: 0; display: grid; gap: 10px; }
+.frame { overflow-x: auto; background: var(--panel-2); border-radius: 6px; padding: 12px; }
+.frame svg { display: block; min-width: 900px; width: 100%; height: auto; color: var(--fg); font-family: var(--sans); font-size: 11.5px; }
+figcaption { color: var(--muted); font-size: 14px; max-width: 80ch; }
+svg .box { fill: var(--panel); stroke: var(--line); stroke-width: 1; }
+svg .box.new { fill: var(--accent-bg); stroke: var(--accent); stroke-width: 1.3; }
+svg .box.later { fill: var(--panel); stroke: var(--line); stroke-dasharray: 4 3; }
+svg .box.scen { fill: var(--accent-bg); stroke: var(--accent); stroke-dasharray: 5 3; stroke-width: 1.3; }
+svg .box.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 2 3; }
+svg .panel { fill: var(--panel); stroke: var(--line); stroke-opacity: 0.4; }
+svg .bus { fill: var(--line); }
+svg .bus.new { fill: var(--accent); }
+svg .bust { fill: var(--bg); font-size: 11px; font-weight: 500; }
+svg text { fill: currentColor; }
+svg .t { font-weight: 600; font-size: 12px; }
+svg .mono { font-family: var(--mono); font-size: 10.5px; }
+svg .dim { fill: var(--muted); font-size: 10.5px; }
+svg .lbl { font-size: 10.5px; fill: var(--muted); }
+svg .tag { font-family: var(--mono); font-size: 10px; fill: var(--accent); }
+svg .head { font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+svg .route { font-family: var(--mono); font-size: 12px; font-weight: 500; }
+svg .edge { fill: none; stroke: currentColor; stroke-width: 1.2; }
+svg .edge.thin { stroke-opacity: 0.55; stroke-width: 1; }
+svg .edge.dash { stroke-dasharray: 4 3; stroke: var(--accent); }
+svg .edge.ret { stroke: var(--accent); stroke-width: 1.2; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--panel-2); }
+th { font-weight: 600; font-size: 13px; color: var(--muted); letter-spacing: 0.02em; text-transform: uppercase; }
+td code, p code, li code { font-family: var(--mono); font-size: 0.92em; }
+.tbl { overflow-x: auto; }
+ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 80ch; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+<main>
+<header>
+  <h1>Factorial after the extension-points round</h1>
+  <p class="lede">The pipeline as it stands once #163 to #169 are done, with #161 and #155 reshaped onto them and #15's notifier folded into the reporter, plus one scenario the design has to carry: a request from Slack. The stage graph, the clean-room push, the agent boundaries and the <code>live</code> aliases do not move. A proposal, not a commitment: nothing here is agreed until it is in <code>CLAUDE.md</code>.</p>
+</header>
+
+<figure>
+  <div class="frame"><svg viewBox="0 0 1200 648" role="img" aria-label="One turn: a source event is normalised, Intake resolves its thread and picks a route, the route runs through the fixed graph, and the outcome is reported back to the source." xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="arrowS" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M10 0 L0 5 L10 10 z" fill="currentColor"/></marker>
+</defs>
+<rect class="box today" x="16" y="56" width="128" height="38" rx="3"/><text x="80" y="72.5" text-anchor="middle">GitHub issue</text><text x="80" y="85.5" text-anchor="middle">label added</text>
+<rect class="box today" x="176" y="56" width="128" height="38" rx="3"/><text x="240" y="79" text-anchor="middle">Issue adapter</text>
+<path class="edge" d="M144 75 L176 75" marker-end="url(#arrow)"/>
+<path class="edge" d="M304 75 L330 75" marker-end="url(#arrow)"/>
+<rect class="box today" x="16" y="108" width="128" height="38" rx="3"/><text x="80" y="124.5" text-anchor="middle">Pull request</text><text x="80" y="137.5" text-anchor="middle">review · comment · run</text>
+<rect class="box new" x="176" y="108" width="128" height="38" rx="3"/><text x="240" y="124.5" text-anchor="middle">PR adapter</text><text x="240" y="137.5" text-anchor="middle">facts only</text>
+<path class="edge" d="M144 127 L176 127" marker-end="url(#arrow)"/>
+<path class="edge" d="M304 127 L330 127" marker-end="url(#arrow)"/>
+<text class="tag" x="300" y="105" text-anchor="end">#163</text>
+<rect class="box today" x="16" y="160" width="128" height="38" rx="3"/><text x="80" y="176.5" text-anchor="middle">Push to a base</text><text x="80" y="189.5" text-anchor="middle">branch</text>
+<rect class="box new" x="176" y="160" width="128" height="38" rx="3"/><text x="240" y="176.5" text-anchor="middle">Push adapter</text><text x="240" y="189.5" text-anchor="middle">one item per push</text>
+<path class="edge" d="M144 179 L176 179" marker-end="url(#arrow)"/>
+<path class="edge" d="M304 179 L330 179" marker-end="url(#arrow)"/>
+<text class="tag" x="300" y="157" text-anchor="end">#168</text>
+<rect class="box scen" x="16" y="212" width="128" height="38" rx="3"/><text x="80" y="228.5" text-anchor="middle">Slack message</text><text x="80" y="241.5" text-anchor="middle">@factorial or /factorial</text>
+<rect class="box scen" x="176" y="212" width="128" height="38" rx="3"/><text x="240" y="228.5" text-anchor="middle">Slack adapter</text><text x="240" y="241.5" text-anchor="middle">verify · allowlist · ack</text>
+<path class="edge" d="M144 231 L176 231" marker-end="url(#arrow)"/>
+<path class="edge" d="M304 231 L330 231" marker-end="url(#arrow)"/>
+<text class="tag" x="300" y="209" text-anchor="end">scenario</text>
+<rect class="box later" x="16" y="264" width="128" height="38" rx="3"/><text x="80" y="287" text-anchor="middle">Jira transition</text>
+<rect class="box later" x="176" y="264" width="128" height="38" rx="3"/><text x="240" y="287" text-anchor="middle">Jira adapter</text>
+<path class="edge" d="M144 283 L176 283" marker-end="url(#arrow)"/>
+<path class="edge" d="M304 283 L330 283" marker-end="url(#arrow)"/>
+<text class="tag" x="300" y="261" text-anchor="end">#61</text>
+<rect class="box later" x="16" y="316" width="128" height="38" rx="3"/><text x="80" y="339" text-anchor="middle">Alert</text>
+<rect class="box later" x="176" y="316" width="128" height="38" rx="3"/><text x="240" y="339" text-anchor="middle">Alert adapter</text>
+<path class="edge" d="M144 335 L176 335" marker-end="url(#arrow)"/>
+<path class="edge" d="M304 335 L330 335" marker-end="url(#arrow)"/>
+<text class="tag" x="300" y="313" text-anchor="end">#62</text>
+<text class="head" x="16" y="40" text-anchor="start">Source event</text>
+<text class="head" x="176" y="40" text-anchor="start">Adapter: normalise only</text>
+<rect class="bus" x="330" y="44" width="18" height="320" rx="2"/>
+<text class="bust" transform="translate(342 204) rotate(-90)" text-anchor="middle">factorial-work bus · WorkItem</text>
+<path class="edge" d="M348 130 L380 130" marker-end="url(#arrow)"/><text class="lbl" x="364" y="122" text-anchor="middle">one turn</text>
+<rect class="box new" x="380" y="56" width="180" height="148" rx="3"/><text x="470" y="89" text-anchor="middle" class="t">Intake</text><text x="470" y="104" text-anchor="middle">accept exactly once</text><text x="470" y="119" text-anchor="middle">resolve the thread</text><text x="470" y="134" text-anchor="middle">fetch facts with a token</text><text x="470" y="149" text-anchor="middle">admission policies</text><text x="470" y="164" text-anchor="middle" class="mono">decideRoute(facts, thread)</text><text x="470" y="179" text-anchor="middle" class="dim">triager replaces it later</text>
+<text class="tag" x="560" y="50" text-anchor="end">#163 · #161</text>
+<path class="edge dash" d="M470 56 L470 30 L339 30 L339 44" marker-end="url(#arrow)"/><text class="lbl" x="600" y="26" text-anchor="start">push: one derived item per open thread (#168)</text>
+<rect class="box new" x="380" y="236" width="180" height="64" rx="3"/><text x="470" y="259" text-anchor="middle" class="t">factorial-threads</text><text x="470" y="272" text-anchor="middle">one row per branch: PR, base,</text><text x="470" y="285" text-anchor="middle">tested head, in flight, rework count</text>
+<path class="edge" d="M470 204 L470 236" marker-end="url(#arrow)" marker-start="url(#arrowS)"/>
+<text class="lbl" x="478" y="224" text-anchor="start">claim and release</text>
+<path class="edge" d="M560 130 L570 130" marker-end="url(#arrow)"/>
+<polygon class="box new" points="610,100 650,130 610,160 570,130"/>
+<text class="mono" x="610" y="134" text-anchor="middle">route</text>
+<text class="dim" x="610" y="176" text-anchor="middle">Choice over a</text>
+<text class="dim" x="610" y="189" text-anchor="middle">validated enum</text>
+<text class="route" x="680" y="51" text-anchor="start">change</text>
+<text class="tag" x="732.4" y="51" text-anchor="start">today · #155</text>
+<rect class="box today" x="680" y="56" width="60" height="36" rx="3"/><text x="710" y="78" text-anchor="middle">Prepare</text>
+<path class="edge" d="M740 74 L746 74" marker-end="url(#arrow)"/>
+<rect class="box today" x="746" y="56" width="60" height="36" rx="3"/><text x="776" y="78" text-anchor="middle">Build</text>
+<path class="edge" d="M806 74 L812 74" marker-end="url(#arrow)"/>
+<rect class="box today" x="812" y="56" width="60" height="36" rx="3"/><text x="842" y="78" text-anchor="middle">Collect</text>
+<path class="edge" d="M872 74 L878 74" marker-end="url(#arrow)"/>
+<rect class="box new" x="878" y="56" width="78" height="36" rx="3"/><text x="917" y="72" text-anchor="middle">Merge</text><text x="917" y="84" text-anchor="middle" class="dim">if base moved</text>
+<path class="edge" d="M956 74 L962 74" marker-end="url(#arrow)"/>
+<rect class="box new" x="962" y="56" width="60" height="36" rx="3"/><text x="992" y="78" text-anchor="middle">Verify</text>
+<path class="edge" d="M1022 74 L1028 74" marker-end="url(#arrow)"/>
+<rect class="box today" x="1028" y="56" width="60" height="36" rx="3"/><text x="1058" y="78" text-anchor="middle">Review</text>
+<path class="edge" d="M1088 74 L1094 74" marker-end="url(#arrow)"/>
+<rect class="box today" x="1094" y="56" width="78" height="36" rx="3"/><text x="1133" y="72" text-anchor="middle">Deliver</text><text x="1133" y="84" text-anchor="middle" class="dim">open / update PR</text>
+<path class="edge thin" d="M1172 74 L1184 74" marker-end="url(#arrow)"/>
+<path class="edge thin" d="M650 130 L664 130 L664 74 L680 74" marker-end="url(#arrow)"/>
+<text class="route" x="680" y="121" text-anchor="start">integrate</text>
+<text class="tag" x="754.6" y="121" text-anchor="start">#168</text>
+<rect class="box today" x="680" y="126" width="60" height="36" rx="3"/><text x="710" y="148" text-anchor="middle">Prepare</text>
+<path class="edge" d="M740 144 L746 144" marker-end="url(#arrow)"/>
+<rect class="box new" x="746" y="126" width="60" height="36" rx="3"/><text x="776" y="148" text-anchor="middle">Merge</text>
+<path class="edge" d="M806 144 L812 144" marker-end="url(#arrow)"/>
+<rect class="box ghost" x="812" y="126" width="78" height="36" rx="3"/><text x="851" y="142" text-anchor="middle">Build</text><text x="851" y="154" text-anchor="middle" class="dim">only on conflict</text>
+<path class="edge" d="M890 144 L896 144" marker-end="url(#arrow)"/>
+<rect class="box new" x="896" y="126" width="60" height="36" rx="3"/><text x="926" y="148" text-anchor="middle">Verify</text>
+<path class="edge" d="M956 144 L962 144" marker-end="url(#arrow)"/>
+<rect class="box today" x="962" y="126" width="78" height="36" rx="3"/><text x="1001" y="142" text-anchor="middle">Deliver</text><text x="1001" y="154" text-anchor="middle" class="dim">update PR</text>
+<path class="edge thin" d="M1040 144 L1184 144" marker-end="url(#arrow)"/>
+<path class="edge thin" d="M650 130 L664 130 L664 144 L680 144" marker-end="url(#arrow)"/>
+<text class="route" x="680" y="191" text-anchor="start">answer</text>
+<text class="tag" x="732.4" y="191" text-anchor="start">#161</text>
+<rect class="box today" x="680" y="196" width="60" height="36" rx="3"/><text x="710" y="218" text-anchor="middle">Prepare</text>
+<path class="edge" d="M740 214 L746 214" marker-end="url(#arrow)"/>
+<rect class="box new" x="746" y="196" width="78" height="36" rx="3"/><text x="785" y="212" text-anchor="middle">Respond</text><text x="785" y="224" text-anchor="middle" class="dim">responder role</text>
+<path class="edge" d="M824 214 L830 214" marker-end="url(#arrow)"/>
+<rect class="box new" x="830" y="196" width="78" height="36" rx="3"/><text x="869" y="212" text-anchor="middle">Deliver</text><text x="869" y="224" text-anchor="middle" class="dim">answer</text>
+<path class="edge thin" d="M908 214 L1184 214" marker-end="url(#arrow)"/>
+<path class="edge thin" d="M650 130 L664 130 L664 214 L680 214" marker-end="url(#arrow)"/>
+<text class="route" x="680" y="261" text-anchor="start">propose</text>
+<text class="tag" x="739.8" y="261" text-anchor="start">#169</text>
+<rect class="box today" x="680" y="266" width="60" height="36" rx="3"/><text x="710" y="288" text-anchor="middle">Prepare</text>
+<path class="edge" d="M740 284 L746 284" marker-end="url(#arrow)"/>
+<rect class="box new" x="746" y="266" width="78" height="36" rx="3"/><text x="785" y="282" text-anchor="middle">Build</text><text x="785" y="294" text-anchor="middle" class="dim">plan only</text>
+<path class="edge" d="M824 284 L830 284" marker-end="url(#arrow)"/>
+<rect class="box today" x="830" y="266" width="78" height="36" rx="3"/><text x="869" y="282" text-anchor="middle">Collect</text><text x="869" y="294" text-anchor="middle" class="dim">validate plan</text>
+<path class="edge" d="M908 284 L914 284" marker-end="url(#arrow)"/>
+<rect class="box new" x="914" y="266" width="78" height="36" rx="3"/><text x="953" y="282" text-anchor="middle">Deliver</text><text x="953" y="294" text-anchor="middle" class="dim">plan</text>
+<path class="edge thin" d="M992 284 L1184 284" marker-end="url(#arrow)"/>
+<path class="edge thin" d="M650 130 L664 130 L664 284 L680 284" marker-end="url(#arrow)"/>
+<text class="route" x="680" y="331" text-anchor="start">refused</text>
+<text class="tag" x="739.8" y="331" text-anchor="start">policy, no stages</text>
+<rect class="box ghost" x="680" y="336" width="78" height="36" rx="3"/><text x="719" y="352" text-anchor="middle">no stages</text><text x="719" y="364" text-anchor="middle" class="dim">busy · limit · ineligible</text>
+<path class="edge thin" d="M758 354 L1184 354" marker-end="url(#arrow)"/>
+<path class="edge thin" d="M650 130 L664 130 L664 354 L680 354" marker-end="url(#arrow)"/>
+<rect class="box new" x="880" y="336" width="296" height="36" rx="3"/><text x="1028" y="352" text-anchor="middle">Clarify ends any route: questions.json → work saved,</text><text x="1028" y="364" text-anchor="middle" class="dim">no PR, outcome questions; the reply is the next turn (#169)</text>
+<path class="edge" d="M1184 74 L1184 420" marker-end="url(#arrow)"/>
+<text class="dim" x="1178" y="402" text-anchor="end">every terminal state</text>
+<text class="dim" x="1178" y="414" text-anchor="end">records, then emits</text>
+<rect class="bus new" x="380" y="426" width="804" height="18" rx="2"/>
+<text class="bust" x="783" y="439" text-anchor="middle">factorial-work bus · Outcome: result + pointers, never content (#165)</text>
+<path class="edge" d="M785 444 L785 476" marker-end="url(#arrow)"/>
+<rect class="box new" x="700" y="476" width="170" height="40" rx="3"/><text x="785" y="493.5" text-anchor="middle">GitHub reporter</text><text x="785" y="506.5" text-anchor="middle">comments · replies · re-requests</text>
+<text class="tag" x="870" y="472" text-anchor="end">#165 · #15</text>
+<path class="edge ret" d="M785 516 L785 534"/>
+<path class="edge" d="M937 444 L937 476" marker-end="url(#arrow)"/>
+<rect class="box scen" x="882" y="476" width="110" height="40" rx="3"/><text x="937" y="493.5" text-anchor="middle">Slack reporter</text><text x="937" y="506.5" text-anchor="middle">posts in the thread</text>
+<text class="tag" x="992" y="472" text-anchor="end">scenario</text>
+<path class="edge ret" d="M937 516 L937 534"/>
+<path class="edge" d="M1046 444 L1046 476" marker-end="url(#arrow)"/>
+<rect class="box later" x="1004" y="476" width="84" height="40" rx="3"/><text x="1046" y="500" text-anchor="middle">Jira reporter</text>
+<text class="tag" x="1088" y="472" text-anchor="end">#61</text>
+<path class="edge" d="M1142 444 L1142 476" marker-end="url(#arrow)"/>
+<rect class="box later" x="1100" y="476" width="84" height="40" rx="3"/><text x="1142" y="500" text-anchor="middle">Alert reporter</text>
+<text class="tag" x="1184" y="472" text-anchor="end">#62</text>
+<text class="lbl" x="690" y="464" text-anchor="end">rule on source.type</text>
+<text class="dim" x="700" y="556" text-anchor="start">reads one named key, report.json; delivery retried from the event, never fails the turn</text>
+<path class="edge ret" d="M937 534 L8 534 L8 60"/>
+<path class="edge ret" d="M8 75 L16 75" marker-end="url(#arrow)"/>
+<path class="edge ret" d="M8 127 L16 127" marker-end="url(#arrow)"/>
+<path class="edge ret" d="M8 231 L16 231" marker-end="url(#arrow)"/>
+<text class="lbl" x="96" y="528" text-anchor="start">each reporter replies where its turns came from: PR opened or updated, answer, plan, questions, refusal</text>
+<rect class="box today" x="16" y="586" width="330" height="44" rx="3"/><text x="181" y="605.5" text-anchor="middle" class="t">factorial-work-items</text><text x="181" y="618.5" text-anchor="middle">one row per turn: status, route, threadKey, usage, pointers</text>
+<rect class="box today" x="380" y="586" width="806" height="44" rx="3"/><text x="783" y="605.5" text-anchor="middle" class="t">artefact store  &lt;workItemId&gt;/&lt;attempt&gt;/</text><text x="783" y="618.5" text-anchor="middle" class="mono">intake/intake.json · plan/ · build/ · verify/&lt;name&gt;/result.json · review/ · report.json · outcome/outcome.json</text>
+<rect class="box today" x="16" y="384" width="14" height="14" rx="2"/>
+<text class="lbl" x="36" y="395" text-anchor="start">exists today</text>
+<rect class="box new" x="16" y="404" width="14" height="14" rx="2"/>
+<text class="lbl" x="36" y="415" text-anchor="start">new in this round</text>
+<rect class="box later" x="16" y="424" width="14" height="14" rx="2"/>
+<text class="lbl" x="36" y="435" text-anchor="start">later, needs only an adapter and a reporter</text>
+<rect class="box ghost" x="16" y="444" width="14" height="14" rx="2"/>
+<text class="lbl" x="36" y="455" text-anchor="start">conditional or empty</text>
+<rect class="box scen" x="16" y="464" width="14" height="14" rx="2"/>
+<text class="lbl" x="36" y="475" text-anchor="start">scenario: Slack, not yet an issue</text>
+</svg></div>
+  <figcaption>One turn through the pipeline. Adapters record what happened and what it continues; Intake resolves the thread, applies the admission policies and chooses a route from a fixed enum; the route runs the stages it needs; every terminal state records an outcome and the reporter for the source delivers it. Green marks what this round adds.</figcaption>
+</figure>
+
+<figure>
+  <div class="frame"><svg viewBox="0 0 1200 284" role="img" aria-label="The three seams a stage is built from: a role manifest shared by host, invoker and Collect; a seed assembled from providers; and an ordered verifier list from the target’s settings." xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="arrowS" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M10 0 L0 5 L10 10 z" fill="currentColor"/></marker>
+</defs>
+<rect class="panel" x="16" y="16" width="368" height="256" rx="4"/>
+<text class="head" x="28" y="36" text-anchor="start">Role manifest</text>
+<text class="tag" x="372" y="36" text-anchor="end">#164</text>
+<rect class="panel" x="416" y="16" width="368" height="256" rx="4"/>
+<text class="head" x="428" y="36" text-anchor="start">Session seed</text>
+<text class="tag" x="772" y="36" text-anchor="end">#166</text>
+<rect class="panel" x="816" y="16" width="368" height="256" rx="4"/>
+<text class="head" x="828" y="36" text-anchor="start">Verifiers</text>
+<text class="tag" x="1172" y="36" text-anchor="end">#167 · #50 · #51</text>
+<rect class="box new" x="96" y="52" width="208" height="44" rx="3"/><text x="200" y="71.5" text-anchor="middle" class="t">@factorial/roles</text><text x="200" y="84.5" text-anchor="middle">one module per role</text>
+<path class="edge" d="M200 96 L82 136" marker-end="url(#arrow)"/>
+<rect class="box new" x="28" y="136" width="108" height="54" rx="3"/><text x="82" y="155" text-anchor="middle">Host (Runtime)</text><text x="82" y="167" text-anchor="middle" class="dim">prompt · tools · hooks</text><text x="82" y="179" text-anchor="middle" class="dim">limits · models</text>
+<path class="edge" d="M200 96 L200 136" marker-end="url(#arrow)"/>
+<rect class="box new" x="146" y="136" width="108" height="54" rx="3"/><text x="200" y="155" text-anchor="middle">Invoker</text><text x="200" y="167" text-anchor="middle" class="dim">stage · statuses</text><text x="200" y="179" text-anchor="middle" class="dim">first-message sections</text>
+<path class="edge" d="M200 96 L318 136" marker-end="url(#arrow)"/>
+<rect class="box new" x="264" y="136" width="108" height="54" rx="3"/><text x="318" y="155" text-anchor="middle">Collect, generic</text><text x="318" y="167" text-anchor="middle" class="dim">declared outputs</text><text x="318" y="179" text-anchor="middle" class="dim">cap · validator</text>
+<text class="dim" x="28" y="216" text-anchor="start">Only the host’s copy is fixed on the Runtime version.</text>
+<text class="dim" x="28" y="230" text-anchor="start">A new role: a manifest, a prompt, a template block.</text>
+<text class="mono" x="28" y="252" text-anchor="start">Roles: builder · reviewer · triager · responder</text>
+<rect class="box new" x="428" y="52" width="160" height="196" rx="3"/><text x="508" y="90" text-anchor="middle" class="t">Providers</text><text x="508" y="106" text-anchor="middle">request</text><text x="508" y="122" text-anchor="middle">thread turns and points</text><text x="508" y="138" text-anchor="middle">stored plan</text><text x="508" y="154" text-anchor="middle">previous round notes</text><text x="508" y="170" text-anchor="middle">diff for review</text><text x="508" y="186" text-anchor="middle">failing check logs</text><text x="508" y="202" text-anchor="middle">.factorial instructions</text><text x="508" y="218" text-anchor="middle" class="dim">knowledge graph (later)</text>
+<path class="edge" d="M588 150 L616 150" marker-end="url(#arrow)"/>
+<rect class="box new" x="616" y="128" width="90" height="44" rx="3"/><text x="661" y="147.5" text-anchor="middle" class="mono">assembleSeed</text><text x="661" y="160.5" text-anchor="middle">fixed order</text>
+<path class="edge" d="M706 150 L734 150" marker-end="url(#arrow)"/>
+<rect class="box today" x="734" y="110" width="42" height="84" rx="3"/><text x="755" y="130" text-anchor="middle" class="mono">/work</text><text x="755" y="143" text-anchor="middle" class="mono">space</text><text x="755" y="156" text-anchor="middle">files</text><text x="755" y="169" text-anchor="middle">+ first</text><text x="755" y="182" text-anchor="middle">message</text>
+<text class="dim" x="616" y="196" text-anchor="start">capped, redacted;</text>
+<text class="dim" x="616" y="209" text-anchor="start">token never enters</text>
+<text class="dim" x="616" y="222" text-anchor="start">Prepare, ContinueBuild</text>
+<text class="dim" x="616" y="235" text-anchor="start">and PrepareReview call it</text>
+<rect class="box new" x="828" y="52" width="344" height="40" rx="3"/><text x="1000" y="69.5" text-anchor="middle" class="mono">.factorial/verifiers.json</text><text x="1000" y="82.5" text-anchor="middle">read from the base branch, never the branch under test</text>
+<path class="edge" d="M1000 92 L1000 118" marker-end="url(#arrow)"/>
+<rect class="box new" x="828" y="118" width="120" height="44" rx="3"/><text x="888" y="137.5" text-anchor="middle" class="t">Verify</text><text x="888" y="150.5" text-anchor="middle">in order, stop on fail</text>
+<path class="edge" d="M948 140 L976 140" marker-end="url(#arrow)"/>
+<rect class="box new" x="976" y="118" width="92" height="44" rx="3"/><text x="1022" y="137.5" text-anchor="middle">1 command</text><text x="1022" y="150.5" text-anchor="middle" class="mono">npm test, own session</text>
+<path class="edge" d="M1068 140 L1096 140" marker-end="url(#arrow)"/>
+<rect class="box later" x="1096" y="118" width="76" height="44" rx="3"/><text x="1134" y="137.5" text-anchor="middle">2 smoke</text><text x="1134" y="150.5" text-anchor="middle" class="mono">sandbox</text>
+<text class="dim" x="828" y="182" text-anchor="start">One result contract per verifier:</text>
+<text class="mono" x="828" y="195" text-anchor="start">verify/&lt;name&gt;/result.json: sha · outcome · exit code · duration · log</text>
+<rect class="box new" x="828" y="206" width="344" height="54" rx="3"/><text x="1000" y="225" text-anchor="middle" class="t">Runs in a session Factorial owns, never the target’s CI</text><text x="1000" y="237" text-anchor="middle">factorial_verifier Runtime: no model, no bucket, no token; the orchestrator</text><text x="1000" y="249" text-anchor="middle">clones at the tested sha and hands over; the command runs as agent</text>
+</svg></div>
+  <figcaption>Inside a stage. A new role is a manifest, a prompt and a template block; a new kind of context is one provider; a new check is one verifier entry run in a session Factorial owns, so a target needs no workflow, secret or trust-policy change. None of them touches the state machine.</figcaption>
+</figure>
+
+<figure>
+  <div class="frame"><svg viewBox="0 0 1200 330" role="img" aria-label="A Slack-originated turn: the adapter verifies and normalises, Intake creates the thread and triages the free text, the route runs as for any turn, and the Slack reporter posts the outcome in the thread; a reply in the thread is the next turn." xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="arrowS" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M10 0 L0 5 L10 10 z" fill="currentColor"/></marker>
+</defs>
+<rect class="box today" x="16" y="40" width="170" height="150" rx="3"/><text x="101" y="86.5" text-anchor="middle" class="t">Person, in Slack</text><text x="101" y="99.5" text-anchor="middle">@factorial in #payments:</text><text x="101" y="112.5" text-anchor="middle" class="dim">"add a retry to the</text><text x="101" y="125.5" text-anchor="middle" class="dim">webhook handler"</text><text x="101" y="138.5" text-anchor="middle"></text><text x="101" y="151.5" text-anchor="middle" class="mono">or /factorial owner/repo …</text>
+<path class="edge" d="M186 115 L206 115" marker-end="url(#arrow)"/>
+<rect class="box scen" x="206" y="40" width="196" height="150" rx="3"/><text x="304" y="80" text-anchor="middle" class="t">Slack adapter</text><text x="304" y="93" text-anchor="middle">verify signature and timestamp</text><text x="304" y="106" text-anchor="middle">team and user allowlist</text><text x="304" y="119" text-anchor="middle">repository from owner/repo</text><text x="304" y="132" text-anchor="middle">prefix or the channel map</text><text x="304" y="145" text-anchor="middle">ack within 3 s with the item id</text><text x="304" y="158" text-anchor="middle" class="dim">holds only the signing secret</text>
+<path class="edge" d="M402 115 L422 115" marker-end="url(#arrow)"/>
+<rect class="box scen" x="422" y="40" width="196" height="150" rx="3"/><text x="520" y="80" text-anchor="middle" class="t">WorkItem</text><text x="520" y="93" text-anchor="middle" class="mono">source.type: slack-mention</text><text x="520" y="106" text-anchor="middle" class="mono">source.id: channel/ts</text><text x="520" y="119" text-anchor="middle" class="mono">requestedBy: U…</text><text x="520" y="132" text-anchor="middle" class="mono">repository: owner/name</text><text x="520" y="145" text-anchor="middle" class="mono">inReplyTo: slack-thread</text><text x="520" y="158" text-anchor="middle" class="dim">the one additive contract change</text>
+<path class="edge" d="M618 115 L638 115" marker-end="url(#arrow)"/>
+<rect class="box new" x="638" y="40" width="196" height="150" rx="3"/><text x="736" y="80" text-anchor="middle" class="t">Intake</text><text x="736" y="93" text-anchor="middle">creates the thread for a new</text><text x="736" y="106" text-anchor="middle">branch; sourceKey = the Slack thread</text><text x="736" y="119" text-anchor="middle">triager reads the free text:</text><text x="736" y="132" text-anchor="middle" class="mono">change · answer · propose</text><text x="736" y="145" text-anchor="middle" class="dim">many repositories: one item</text><text x="736" y="158" text-anchor="middle" class="dim">per repository, grouped (later)</text>
+<path class="edge" d="M834 115 L854 115" marker-end="url(#arrow)"/>
+<rect class="box today" x="854" y="40" width="130" height="150" rx="3"/><text x="919" y="86.5" text-anchor="middle" class="t">Route runs</text><text x="919" y="99.5" text-anchor="middle">as any turn;</text><text x="919" y="112.5" text-anchor="middle">the pull request</text><text x="919" y="125.5" text-anchor="middle">opens on GitHub</text><text x="919" y="138.5" text-anchor="middle"></text><text x="919" y="151.5" text-anchor="middle" class="dim">Outcome emitted</text>
+<path class="edge" d="M984 115 L1004 115" marker-end="url(#arrow)"/>
+<rect class="box scen" x="1004" y="40" width="180" height="150" rx="3"/><text x="1094" y="80" text-anchor="middle" class="t">Slack reporter</text><text x="1094" y="93" text-anchor="middle">bot token from Secrets</text><text x="1094" y="106" text-anchor="middle">Manager, read by this</text><text x="1094" y="119" text-anchor="middle">Lambda only</text><text x="1094" y="132" text-anchor="middle">posts in the thread:</text><text x="1094" y="145" text-anchor="middle" class="mono">started · PR link · plan ·</text><text x="1094" y="158" text-anchor="middle" class="mono">questions · refusal</text>
+<path class="edge ret" d="M1094 190 L1094 232 L101 232 L101 190" marker-end="url(#arrow)"/>
+<text class="lbl" x="600" y="226" text-anchor="middle">a reply in the Slack thread is the next turn: answers to questions, "approve", a revised request</text>
+<text class="head" x="16" y="262" text-anchor="start">What crosses the boundary</text>
+<text class="dim" x="16" y="280" text-anchor="start">Reviews, comments and failed runs on the pull request are GitHub turns on the same thread, reported on the pull request by the GitHub reporter.</text>
+<text class="dim" x="16" y="294" text-anchor="start">The thread records the source that opened it, so the Slack reporter can also be told when the pull request opens, is reworked or merges: an open question, not in the design.</text>
+<text class="dim" x="16" y="316" text-anchor="start">Nothing in Intake or the routes is Slack-specific. The adapter, the reporter, two secrets and one inReplyTo kind are the whole cost.</text>
+</svg></div>
+  <figcaption>A Slack-originated turn. The adapter and the reporter are the only Slack-specific code; the thread, Intake and the routes treat it as any other turn. Slack requests are free text, so this is where the triage agent earns its place.</figcaption>
+</figure>
+
+<figure>
+  <div class="frame"><svg viewBox="0 0 1200 400" role="img" aria-label="Inside Intake: deterministic checks and fact-based routing first; only free-text requests reach the triager, whose validated verdict can fan out into several work items; admission policies and the record come after the model; priority is a recorded decision with a concurrency gate as its first consumer." xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker>
+<marker id="arrowS" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M10 0 L0 5 L10 10 z" fill="currentColor"/></marker>
+</defs>
+<text class="head" x="16" y="30" text-anchor="start">Deterministic, before any model</text>
+<rect class="box new" x="16" y="44" width="150" height="60" rx="3"/><text x="91" y="66" text-anchor="middle" class="t">Validate, accept once</text><text x="91" y="78" text-anchor="middle">allowlist already checked</text><text x="91" y="90" text-anchor="middle">at the edge</text>
+<path class="edge" d="M166 74 L190 74" marker-end="url(#arrow)"/>
+<rect class="box new" x="190" y="44" width="170" height="60" rx="3"/><text x="275" y="66" text-anchor="middle" class="t">Resolve thread, fetch facts</text><text x="275" y="78" text-anchor="middle">PR state, review comments,</text><text x="275" y="90" text-anchor="middle">run result; read token</text>
+<path class="edge" d="M360 74 L384 74" marker-end="url(#arrow)"/>
+<polygon class="box new" points="444,44 504,74 444,104 384,74"/>
+<text class="dim" x="444" y="71" text-anchor="middle">facts decide</text>
+<text class="dim" x="444" y="83" text-anchor="middle">the route?</text>
+<path class="edge" d="M504 74 L540 74" marker-end="url(#arrow)"/><text class="lbl" x="522" y="68" text-anchor="middle">yes</text>
+<rect class="box new" x="540" y="44" width="290" height="60" rx="3"/><text x="685" y="66" text-anchor="middle" class="t">Route from facts, no model</text><text x="685" y="78" text-anchor="middle">review or failed run → change · push → integrate</text><text x="685" y="90" text-anchor="middle">derived item → the route its parent chose</text>
+<path class="edge" d="M830 74 L860 74" marker-end="url(#arrow)"/>
+<path class="edge" d="M444 104 L444 140" marker-end="url(#arrow)"/><text class="lbl" x="454" y="128" text-anchor="start">no: free text (issue, comment, Slack, Jira, alert)</text>
+<rect class="box scen" x="300" y="140" width="288" height="118" rx="3"/><text x="444" y="164" text-anchor="middle" class="t">Triager: a Runtime role</text><text x="444" y="177" text-anchor="middle">no tools, one turn, bounded context:</text><text x="444" y="190" text-anchor="middle">the request, who asked, the thread’s turns and</text><text x="444" y="203" text-anchor="middle">outcomes, the target registry, each target’s triage hints</text><text x="444" y="216" text-anchor="middle" class="mono">returns triage.json: verdict · priority · items[] · reason</text><text x="444" y="229" text-anchor="middle">validated against contracts/triage/v1/;</text><text x="444" y="242" text-anchor="middle" class="dim">anything else is treated as "ask back"</text>
+<text class="tag" x="588" y="136" text-anchor="end">#161, widened</text>
+<path class="edge" d="M588 199 L620 199" marker-end="url(#arrow)"/>
+<rect class="box scen" x="620" y="160" width="210" height="78" rx="3"/><text x="725" y="185" text-anchor="middle" class="t">Cap and confirm</text><text x="725" y="197" text-anchor="middle">more than N items, or a repository</text><text x="725" y="209" text-anchor="middle">the request did not name → propose:</text><text x="725" y="221" text-anchor="middle">the list is posted, approve is the next turn</text>
+<path class="edge" d="M830 199 L860 199" marker-end="url(#arrow)"/>
+<path class="edge" d="M725 160 L725 104" marker-end="url(#arrow)"/>
+<rect class="box new" x="860" y="44" width="170" height="60" rx="3"/><text x="945" y="66" text-anchor="middle" class="t">Admission policies</text><text x="945" y="78" text-anchor="middle">eligibility · one in flight ·</text><text x="945" y="90" text-anchor="middle">rework limit · per item</text>
+<path class="edge" d="M1030 74 L1054 74" marker-end="url(#arrow)"/>
+<rect class="box new" x="1054" y="44" width="130" height="60" rx="3"/><text x="1119" y="66" text-anchor="middle" class="t">Record</text><text x="1119" y="78" text-anchor="middle">intake.json, ledger:</text><text x="1119" y="90" text-anchor="middle">route · priority · reason</text>
+<rect class="box scen" x="860" y="160" width="324" height="78" rx="3"/><text x="1022" y="185" text-anchor="middle" class="t">One item: Choice on the route. Several: fan-out</text><text x="1022" y="197" text-anchor="middle">one derived WorkItem per item on the bus, with group and parentId;</text><text x="1022" y="209" text-anchor="middle">derived items skip the triager and take the parent’s route;</text><text x="1022" y="221" text-anchor="middle">the request itself ends fanned-out, with no thread of its own</text>
+<path class="edge" d="M1119 104 L1119 160" marker-end="url(#arrow)"/>
+<path class="edge thin" d="M860 199 L845 199 L845 120 L945 120 L945 104" marker-end="url(#arrow)"/>
+<text class="head" x="16" y="290" text-anchor="start">Priority</text>
+<rect class="box scen" x="16" y="300" width="372" height="84" rx="3"/><text x="202" y="320" text-anchor="middle" class="t">A decision on the turn, not a field on the WorkItem</text><text x="202" y="333" text-anchor="middle">the triager sets it from the request and the source (an alert, a Jira</text><text x="202" y="346" text-anchor="middle">priority, a person’s wording), as an enum with a reason; the requester’s</text><text x="202" y="359" text-anchor="middle">own claim is untrusted text. Recorded on the ledger, in intake.json</text><text x="202" y="372" text-anchor="middle">and on the Outcome, so reporters and the dashboard show it.</text>
+<path class="edge" d="M388 342 L416 342" marker-end="url(#arrow)"/>
+<rect class="box later" x="416" y="300" width="372" height="84" rx="3"/><text x="602" y="320" text-anchor="middle" class="t">First real consumer: a concurrency gate</text><text x="602" y="333" text-anchor="middle">today every item starts at once. When builds in flight reach the</text><text x="602" y="346" text-anchor="middle">account cap, Intake records the turn as queued and a dispatcher</text><text x="602" y="359" text-anchor="middle">releases queued turns by priority, then age. A later issue; nothing</text><text x="602" y="372" text-anchor="middle">in the graph changes except a Wait before Prepare.</text>
+<path class="edge" d="M788 342 L816 342" marker-end="url(#arrow)"/>
+<rect class="box today" x="816" y="300" width="368" height="84" rx="3"/><text x="1000" y="320" text-anchor="middle" class="t">What priority never does</text><text x="1000" y="333" text-anchor="middle">pre-empt a running build, skip admission or the rework limit,</text><text x="1000" y="346" text-anchor="middle">bypass Verify or human approval of the pull request, or let</text><text x="1000" y="359" text-anchor="middle">one source starve another: the gate is fair across sources</text><text x="1000" y="372" text-anchor="middle">within a priority.</text>
+</svg></div>
+  <figcaption>Inside Intake. The triager is the one model in the state, and it sits between the facts and the policies: it only runs when the facts cannot choose the route, it returns a validated verdict, and everything that enforces a rule runs after it in code.</figcaption>
+</figure>
+
+<section>
+  <h2>Where the triager sits, and what it is allowed to decide</h2>
+  <div class="tbl"><table>
+    <tr><th>Question</th><th>Answer</th><th>Why</th></tr>
+    <tr><td>Where</td><td>Inside Intake, the first state of the execution, replacing <code>decideRoute</code> for free-text requests. Not in the adapter and not a separate service in front of the bus.</td><td>The adapter is public-facing, credential-free and must answer in seconds. Intake already has the ledger row, the thread, a read token and the record, so a triaged request is correlated like any turn.</td></tr>
+    <tr><td>What it reads</td><td>The request, who asked, the thread’s previous turns and their outcomes, the target registry (which repositories Factorial may work on, from configuration), and each target’s triage hints from its <code>.factorial/</code>. Intake fetches all of it; the triager has no tools.</td><td>A classifier with no tools can be tested on a fixed set of requests and cannot be steered by the text into reading anything else.</td></tr>
+    <tr><td>What it returns</td><td><code>triage.json</code> under <code>contracts/triage/v1/</code>: a verdict from the route enum (change, answer, propose, ignore), a priority from an enum with a reason, and one or more items, each a repository, a title and the request rewritten for that repository.</td><td>The orchestrator validates it and acts on nothing outside the schema; an invalid verdict becomes an ask-back, not a build.</td></tr>
+    <tr><td>What it cannot decide</td><td>Integrate (a fact about the pull request), admission (eligibility, one in flight, the rework limit), the cap on fan-out, whether a pull request opens, and anything about deployment.</td><td>Policies run after the model in deterministic code, so a crafted request can at worst pick the wrong route or priority for its own turn.</td></tr>
+    <tr><td>One or more items</td><td>One item: the turn continues on its route. Several: Intake puts one derived <code>WorkItem</code> per item on the bus with <code>group</code> and <code>parentId</code>, each with its own execution, ledger row and thread; derived items take the parent’s route and are not triaged again. Above a cap, or when the request named no repository, the list is posted as a proposal and approval is the next turn.</td><td>This is the fan-out the contract README reserves for Intake, and the proposal reuses #169 rather than adding a human wait inside an execution.</td></tr>
+    <tr><td>Priority</td><td>Recorded, not acted on, until a concurrency gate exists: ledger, <code>intake.json</code> and the <code>Outcome</code> carry it, so reporters and the dashboard show it. The gate releases queued turns by priority then age under an account-wide cap.</td><td>The contract README leaves priority out of the <code>WorkItem</code> on purpose: it is a decision, and today nothing schedules.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>What a Slack trigger needs</h2>
+  <div class="tbl"><table>
+    <tr><th>Part</th><th>What it is</th><th>Fits the design?</th></tr>
+    <tr><td>Adapter</td><td><code>factorial-triggers-slack</code>: a function URL, Slack's signing secret for the signature and timestamp check, <code>AllowedSlackUserIds</code> and the team id, a channel-to-repository map in SSM. Emits one <code>WorkItem</code> and acknowledges within Slack's 3 s. A request that names no repository and comes from an unmapped channel is refused in the ack.</td><td>Yes. Normalise only: the repository comes from a fixed syntax or configuration, never from reading the request.</td></tr>
+    <tr><td>Contract</td><td>Source types <code>slack-mention</code> and <code>slack-command</code> need nothing: the schema accepts any kebab-case type. Continuing a Slack thread needs <code>inReplyTo.kind: slack-thread</code> with channel and ts, one additive change through the contract process.</td><td>Yes. The same shape #169 adds for issue conversations.</td></tr>
+    <tr><td>Thread</td><td>Intake creates the thread as for an issue; its <code>sourceKey</code> is the Slack thread, so a reply resolves to the same branch, and admission, the rework limit and in-flight claims apply unchanged.</td><td>Yes, no change.</td></tr>
+    <tr><td>Intake</td><td>A free-text request is the first input the pure <code>decideRoute</code> cannot classify, so the triager replaces it here: change, answer or propose. A question with no branch yet is answered at the base branch.</td><td>Yes. This is the replacement <code>CLAUDE.md</code> already promises.</td></tr>
+    <tr><td>Reporter</td><td><code>factorial-report-slack</code>, selected by a rule on <code>source.type</code> prefix <code>slack-</code>. Holds the bot token (Secrets Manager, this Lambda only), posts in the originating thread, idempotent per outcome, retried from the event.</td><td>Yes. Same shape as the GitHub reporter.</td></tr>
+    <tr><td>Open</td><td>Whether a thread's opener (the Slack thread) is told about turns that came from GitHub (a review, a merge), and how a Slack request that spans repositories fans out at Intake. Neither is settled by the design.</td><td>Two decisions to add to <code>docs/design-extension-points.md</code> §6.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>What each issue adds, and what it retires</h2>
+  <div class="tbl"><table>
+    <tr><th>Issue</th><th>Adds</th><th>Retires</th></tr>
+    <tr><td>#163</td><td><code>factorial-threads</code>, the Intake state and Lambda, <code>contracts/intake/v1/</code>, <code>inReplyTo</code> on the <code>WorkItem</code></td><td>The adapter's cause, branch regex and guessed previous id; <code>context</code>; the two indexes on <code>factorial-work-items</code>; admission in Prepare</td></tr>
+    <tr><td>#164</td><td><code>@factorial/roles</code>, one generic Collect</td><td>Role conditionals in the host, the invoker and three collectors</td></tr>
+    <tr><td>#165</td><td><code>contracts/outcome/v1/</code>, <code>outcome/outcome.json</code>, one reporter per source type</td><td>GitHub comment calls in the terminal states; #15's separate notifier</td></tr>
+    <tr><td>#166</td><td><code>assembleSeed</code> and providers</td><td>Seeding code spread over Prepare, ContinueBuild, PrepareReview and the invoker</td></tr>
+    <tr><td>#167</td><td>Verify, <code>.factorial/verifiers.json</code>, a verifier Runtime with no model access, one result contract</td><td>The dispatched <code>test.yml</code>, the callback role and secret; a separate Smoke state</td></tr>
+    <tr><td>#168</td><td>Push adapter, fan-out at Intake, the Integrate route, Merge before Verify</td><td>#155's <code>merge-conflict</code> cause and its token-holding adapter</td></tr>
+    <tr><td>#169</td><td>Propose route, Clarify ending, <code>questions.json</code>, <code>inReplyTo.kind: issue</code> and issue comments</td><td>Nothing</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>What stays fixed</h2>
+  <ul>
+    <li>One bus, one <code>WorkItem</code> in, one <code>Outcome</code> out. Adding a source is an adapter and a reporter.</li>
+    <li>A deterministic graph with agents inside states. Routes are a Choice over an enum the orchestrator validated; no agent picks the next stage.</li>
+    <li>Credentials stay in orchestrator Lambdas; sessions are hostile once a model has run; commits leave as a bundle and are pushed from a clean room; agents never deploy or promote Factorial. Verification is Factorial's gate and runs in its own sessions; the target's CI on the pull request is the independent second check.</li>
+    <li>Every turn writes under <code>&lt;workItemId&gt;/&lt;attempt&gt;/</code>; the ledger holds pointers, never content; the work item id correlates everything, and the thread key joins the turns on one branch.</li>
+    <li>Roles are immutable Runtime versions behind <code>live</code> endpoints; the manifest's copy in the host is the one that counts.</li>
+  </ul>
+</section>
+</main>
