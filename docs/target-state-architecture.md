@@ -41,6 +41,7 @@ flowchart LR
     outcome["Bus: Outcome"]
     reporter["Reporter per source type"]
     thread[("Ledger: threads, turns,<br/>artefact store")]
+    catalog[("Service catalog<br/>subject → repositories,<br/>owners, tier")]
 
     src --> adapter --> bus --> intake --> route
     route --> change --> outcome
@@ -49,6 +50,9 @@ flowchart LR
     route --> propose --> outcome
     outcome --> reporter --> src
     intake <--> thread
+    catalog -- "resolve a subject, live,<br/>after verification" --> adapter
+    catalog -- "resolve what the adapter<br/>could not; registry, owners,<br/>tier for the triager" --> intake
+    catalog -. "owning team to tell<br/>(open decision)" .-> reporter
 ```
 
 The vocabulary, used consistently in code, documents and prompts:
