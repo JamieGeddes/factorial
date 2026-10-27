@@ -75,7 +75,7 @@ export const handler = logged('prepare-review', (input: PrepareReviewInput) => r
     branch: ctx.branch,
     at: headSha,
     existing: true,
-    ...(ctx.previousWorkItemId ? { previousWorkItemId: ctx.previousWorkItemId } : {}),
+    ...(ctx.rework ? { rework: ctx.rework } : {}),
   });
   const seeded = await mustRun(
     sessionTarget(ctx.sessionId, 'reviewer'),

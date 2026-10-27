@@ -149,6 +149,12 @@ export class GitHubClient {
     return review.state;
   }
 
+  /** An inline comment's file and line: the line in the current diff, or where it was made when that line is gone. */
+  async getReviewComment(repo: Repo, commentId: number): Promise<{ path: string; line: number | undefined }> {
+    const comment = await this.#request<{ path: string; line: number | null; original_line: number | null }>('GET', `/repos/${repo.owner}/${repo.name}/pulls/comments/${commentId}`);
+    return { path: comment.path, line: comment.line ?? comment.original_line ?? undefined };
+  }
+
   /** React to a comment in a pull request's conversation (`conversation`) or inline on its diff (`inline`). */
   async addReaction(repo: Repo, comment: { kind: 'conversation' | 'inline'; id: number }, content: '+1' | 'eyes' | 'rocket'): Promise<void> {
     const kind = comment.kind === 'conversation' ? 'issues' : 'pulls';

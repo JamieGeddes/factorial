@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 import { type CheckJob, GitHubClient } from '@factorial/github-app';
 
-import { buildReworkFile, cloneScript, initialNotes, logSection } from './prepare.ts';
+import { buildReworkFile, cloneScript, detailsFor, initialNotes, logSection } from './prepare.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
@@ -204,10 +204,9 @@ describe('buildReworkFile', () => {
   }
 
   it('lists every review detail with its author, file and line, redacted', async () => {
-    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, {
-      ...rework,
-      details: [{ author: 'u', path: 'src/a.ts', line: 3, body: 'Fix this.\nSecret: ghs_abcdefghijklmnopqrstuvwx' }],
-    });
+    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework, [
+      { author: 'u', path: 'src/a.ts', line: 3, body: 'Fix this.\nSecret: ghs_abcdefghijklmnopqrstuvwx' },
+    ]);
     assert.match(file, /# Rework of pull request #26/);
     assert.match(file, /Previous work item: 7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c/);
     assert.match(file, /Cause: review comments/);
@@ -218,7 +217,7 @@ describe('buildReworkFile', () => {
   });
 
   it('numbers the points in order, so the builder can answer each by number', async () => {
-    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework);
+    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework, rework.details);
     assert.match(file, /### Point 1: @JamieGeddes \(packages\/invoker\/src\/prompt\.ts:12\)\n\nPlease name/);
     assert.match(file, /### Point 2: @other-user\n\nOverall looks good\./);
   });
@@ -238,27 +237,27 @@ describe('buildReworkFile', () => {
         );
       }) as typeof fetch,
     });
-    const { text, points } = await buildReworkFile(client, repo, HEAD_SHA, rework, { sourceUrl: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' });
+    const { text, points } = await buildReworkFile(client, repo, HEAD_SHA, rework, rework.details, { sourceUrl: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' });
     assert.deepEqual(seen, ['https://api.github.com/repos/JamieGeddes/factorial/pulls/26/reviews/77/comments?per_page=100']);
     assert.equal(points.length, 3);
     assert.match(text, /### Point 3: @JamieGeddes \(src\/b\.ts:4\)\n\nInline one\./);
     assert.doesNotMatch(text, /Bot noise/);
   });
 
-  it("names the ledger's opener as the previous work item when Prepare found it", async () => {
-    const { text } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, rework, { previousWorkItemId: '11111111-2222-4333-8444-555555555555' });
+  it("names the thread's opener as the previous work item", async () => {
+    const { text } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, previousWorkItemId: '11111111-2222-4333-8444-555555555555' }, rework.details);
     assert.match(text, /Previous work item: 11111111-2222-4333-8444-555555555555/);
   });
 
   it('describes a conversation request as such', async () => {
-    const { text } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'comment' });
+    const { text } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'comment' }, rework.details);
     assert.match(text, /Cause: a request made in the pull request's conversation/);
   });
 
   it('fetches no review comments when the source is a comment rather than a review', async () => {
     let called = false;
     const client = new GitHubClient({ token: 'ghs_x', fetchImpl: (async () => { called = true; return new Response('[]', { status: 200 }); }) as typeof fetch });
-    const { points } = await buildReworkFile(client, repo, HEAD_SHA, rework, { sourceUrl: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' });
+    const { points } = await buildReworkFile(client, repo, HEAD_SHA, rework, rework.details, { sourceUrl: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' });
     assert.equal(called, false);
     assert.equal(points.length, 2);
   });
@@ -272,7 +271,7 @@ describe('buildReworkFile', () => {
         return new Response('{}', { status: 200 });
       }) as typeof fetch,
     });
-    await buildReworkFile(client, repo, HEAD_SHA, rework);
+    await buildReworkFile(client, repo, HEAD_SHA, rework, rework.details);
     assert.equal(called, false);
   });
 
@@ -280,11 +279,7 @@ describe('buildReworkFile', () => {
     const failing: CheckJob = { id: 4242, name: 'npm test', htmlUrl: 'https://github.com/JamieGeddes/factorial/job/4242', conclusion: 'failure' };
     const passing: CheckJob = { id: 4243, name: 'lint', htmlUrl: 'u', conclusion: 'success' };
     const logs = new Map([[4242, `old\n${Array.from({ length: 300 }, (_, i) => `l${i}`).join('\n')}\ntoken ghs_abcdefghijklmnopqrstuvwx`]]);
-    const { text: file } = await buildReworkFile(clientWith([failing, passing], logs), repo, HEAD_SHA, {
-      ...rework,
-      cause: 'checks-failed',
-      details: [],
-    });
+    const { text: file } = await buildReworkFile(clientWith([failing, passing], logs), repo, HEAD_SHA, { ...rework, cause: 'checks-failed' }, []);
     assert.match(file, /Cause: failed checks/);
     assert.match(file, /## Failing checks/);
     assert.match(file, /### Failing job: npm test/);
@@ -296,25 +291,37 @@ describe('buildReworkFile', () => {
   });
 
   it('says so when no job is failing on the branch head any more', async () => {
-    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'checks-failed', details: [] });
+    const { text: file } = await buildReworkFile(clientWith([], new Map()), repo, HEAD_SHA, { ...rework, cause: 'checks-failed' }, []);
     assert.match(file, /no longer reported as failing/);
   });
 });
 
-describe('rework handling does not change new items', () => {
-  it('a WorkItem without context still names a fresh factorial/<id> branch', async () => {
-    const { workBranchFor } = await import('../lib/context.ts');
-    const workItem: WorkItem = {
-      schemaVersion: 1,
-      id: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-      source: { type: 'github-issue', id: '7', url: 'https://github.com/JamieGeddes/factorial/issues/7' },
-      repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
-      title: 'T',
-      body: '',
-      requestedBy: 'JamieGeddes',
-      createdAt: '2026-10-17T09:00:00Z',
-    };
-    assert.equal(workBranchFor(workItem), 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c');
-    assert.equal(workBranchFor({ ...workItem, context: rework }), rework.branch);
+describe('detailsFor', () => {
+  const repo = { owner: 'JamieGeddes', name: 'factorial' };
+  const base: WorkItem = {
+    schemaVersion: 1,
+    id: '3e9b1f4a-2c6d-4e8f-9a0b-1c2d3e4f5a6b',
+    source: { type: 'github-pull-request-review-comment', id: '5', url: 'https://github.com/JamieGeddes/factorial/pull/26#discussion_r5' },
+    repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
+    inReplyTo: { kind: 'pull-request', number: 26 },
+    title: 'Comment on #26',
+    body: 'Rename this.',
+    requestedBy: 'alice',
+    createdAt: '2026-10-27T09:00:00Z',
+  };
+
+  it("adds an inline comment's file and line, which the item does not carry", async () => {
+    const seen: number[] = [];
+    const client = { getReviewComment: async (_repo: unknown, id: number) => (seen.push(id), { path: 'src/a.ts', line: 3 }) };
+    assert.deepEqual(await detailsFor(client, repo, base), [{ author: 'alice', path: 'src/a.ts', line: 3, body: 'Rename this.' }]);
+    assert.deepEqual(seen, [5]);
+  });
+
+  it('fetches nothing for a conversation comment or an item that carries its details', async () => {
+    const client = { getReviewComment: async () => assert.fail('fetched') };
+    const comment = { ...base, source: { type: 'github-pull-request-comment', id: '9', url: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' } };
+    assert.deepEqual(await detailsFor(client, repo, comment), [{ author: 'alice', body: 'Rename this.' }]);
+    const { inReplyTo: _, ...legacy } = base;
+    assert.deepEqual(await detailsFor(client, repo, { ...legacy, context: rework }), rework.details);
   });
 });

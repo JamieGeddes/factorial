@@ -8,7 +8,7 @@ import type { WorkItem } from '@factorial/workitem';
 import { requireEnv } from './env.ts';
 import { lineageAttributes } from './lineage.ts';
 import { sourceKey, type Attempt } from './resume.ts';
-import type { EarlierItem } from './rework-admission.ts';
+import type { EarlierItem } from './thread-policy.ts';
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), {
   marshallOptions: { removeUndefinedValues: true },
@@ -78,13 +78,19 @@ export class TooManyItemsError extends Error {
 }
 
 /**
- * Every item at the same source, newest first, with when each was accepted:
- * for a pull request source, every rework item for that pull request. All
- * pages are read, so refused items cannot push a running item or an earlier
- * attempt out of view.
+ * The `sourceKey` every rework item for a pull request carried before threads
+ * (#163), when the adapter named the pull request itself as the source.
  */
-export async function itemsAtSource(workItem: WorkItem): Promise<EarlierItem[]> {
-  const key = sourceKey(workItem);
+export function legacyPullRequestSourceKey(repo: { owner: string; name: string }, number: number): string {
+  return `github-pull-request#${repo.owner}/${repo.name}#${number}`;
+}
+
+/**
+ * Every item recorded under a source key, newest first: for a pull request's
+ * legacy key, every rework item for that pull request. All pages are read,
+ * so refused items cannot push an earlier attempt out of view.
+ */
+export async function itemsAtSourceKey(key: string): Promise<EarlierItem[]> {
   const items: EarlierItem[] = [];
   let start: Record<string, unknown> | undefined;
   do {
@@ -94,7 +100,7 @@ export async function itemsAtSource(workItem: WorkItem): Promise<EarlierItem[]> 
         IndexName: 'sourceKey-createdAt-index',
         KeyConditionExpression: 'sourceKey = :key',
         ExpressionAttributeValues: { ':key': key },
-        ProjectionExpression: 'workItemId, #status, createdAt',
+        ProjectionExpression: 'workItemId, #status',
         ExpressionAttributeNames: { '#status': 'status' },
         ScanIndexForward: false,
         ...(start ? { ExclusiveStartKey: start } : {}),
@@ -126,7 +132,30 @@ export function pullRequestKey(repo: { owner: string; name: string }, number: nu
   return `${repo.owner}/${repo.name}#${number}`.toLowerCase();
 }
 
-/** The item that opened a pull request, and its branch, if Factorial opened it. */
+/** The ledger status of an item, if it has a row. */
+export async function statusOf(workItemId: string): Promise<string | undefined> {
+  const result = await documents.send(
+    new GetCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      Key: { workItemId },
+      ProjectionExpression: '#status',
+      ExpressionAttributeNames: { '#status': 'status' },
+    }),
+  );
+  const status = (result.Item as { status?: unknown } | undefined)?.status;
+  return typeof status === 'string' ? status : undefined;
+}
+
+/** The source key recorded on an item's row, if it has one. */
+export async function sourceKeyOf(workItemId: string): Promise<string | undefined> {
+  const result = await documents.send(
+    new GetCommand({ TableName: requireEnv('TABLE_NAME'), Key: { workItemId }, ProjectionExpression: 'sourceKey' }),
+  );
+  const key = (result.Item as { sourceKey?: unknown } | undefined)?.sourceKey;
+  return typeof key === 'string' ? key : undefined;
+}
+
+/** The item that opened a pull request, and its branch, if Factorial opened it: the ledger's record before threads (#163). */
 export async function openerOf(repo: { owner: string; name: string }, number: number): Promise<{ workItemId: string; branch?: string } | undefined> {
   const result = await documents.send(
     new QueryCommand({

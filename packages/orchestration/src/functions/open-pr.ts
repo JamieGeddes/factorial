@@ -11,17 +11,16 @@
 import { getTextArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import type { GitHubClient, Repo } from '@factorial/github-app';
 import { parsePlanJson, type Plan } from '@factorial/plan';
-import type { ReworkContext } from '@factorial/workitem';
-
-import { issueNumber, reworkContext, type WorkContext } from '../lib/context.ts';
+import { issueNumber, type ReworkTurn, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
 import { assertCommitSha } from '../lib/shell.ts';
-import type { ReworkPoint } from '../lib/rework-admission.ts';
+import type { ReworkPoint } from '../lib/rework-points.ts';
 import { pullRequestKey, recordProgress } from '../lib/table.ts';
+import { recordThreadPullRequest } from '../lib/thread.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
 import { pullRequestBody, reworkComment, safeLogin, type ReviewOutcome, type TestResult } from './pr-body.ts';
@@ -69,7 +68,7 @@ async function storedPlan(ctx: WorkContext, log: Logger): Promise<Plan | undefin
  * people who raised its points, never a bot (GitHub refuses those, and
  * Factorial's own comments never count).
  */
-export function reviewersToRequest(rework: ReworkContext, points: readonly ReworkPoint[] = rework.details): string[] {
+export function reviewersToRequest(rework: Pick<ReworkTurn, 'cause'>, points: readonly ReworkPoint[] = []): string[] {
   if (rework.cause !== 'review') return [];
   const logins = points.map((d) => safeLogin(d.author)).filter((l): l is string => l !== undefined && !l.endsWith('[bot]'));
   return [...new Set(logins)];
@@ -78,7 +77,7 @@ export function reviewersToRequest(rework: ReworkContext, points: readonly Rewor
 /** Reply on the rework's pull request and ask its reviewers to look again. The reply must land; the re-request may fail. */
 async function replyToRework(
   input: OpenPrInput,
-  rework: ReworkContext,
+  rework: ReworkTurn,
   client: GitHubClient,
   repo: Repo,
   headSha: string,
@@ -128,8 +127,7 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
     throw new UntestedHeadError(`branch ${ctx.branch} now points at ${remoteHead}, not the tested ${headSha}`);
   }
 
-  const rework = reworkContext(ctx.workItem);
-  if (rework) return replyToRework(input, rework, client, repo, headSha, log);
+  if (ctx.rework) return replyToRework(input, ctx.rework, client, repo, headSha, log);
 
   const fullPlan = await storedPlan(ctx, log);
   const pr = await client.createPullRequest(repo, {
@@ -156,7 +154,15 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
     testRunUrl: input.test.runUrl,
   });
   // The pull request is open, so a failure to record it must not turn the run
-  // into a reported failure.
+  // into a reported failure. The thread is how a later turn on the pull
+  // request finds its branch and opener; without it, Intake finds them
+  // through the ledger's pullRequestKey, as for pull requests opened before
+  // threads.
+  try {
+    await recordThreadPullRequest(ctx.threadKey, { pullRequestKey: pullRequestKey(repo, pr.number), number: pr.number, openedBy: ctx.workItem.id });
+  } catch (error) {
+    log.error('pull request not recorded on its thread', { error, threadKey: ctx.threadKey });
+  }
   try {
     await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.htmlUrl, headSha });
     await putJsonArtefact(ctx.artefactPrefix, 'report.json', { outcome: 'pr-opened', reason: `Pull request #${pr.number} opened for review.` });

@@ -18,6 +18,7 @@ const ctx: WorkContext = {
     requestedBy: 'JamieGeddes',
     createdAt: '2026-10-17T09:00:00Z',
   },
+  threadKey: 'jamiegeddes/factorial#factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   sessionId: '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
   baseBranch: 'main',
@@ -185,12 +186,25 @@ describe('a rework item', () => {
         details: [],
       },
     },
+    rework: {
+      pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
+      cause: 'review',
+      previousWorkItemId: '1f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
+      baseBranch: 'main',
+    },
   };
 
   it('is reported on its pull request; anything else on its issue', () => {
     assert.equal(commentTarget(reworkCtx.workItem), 26);
     assert.equal(commentTarget(ctx.workItem), 7);
     assert.equal(commentTarget({ ...ctx.workItem, source: { type: 'jira', id: 'X-1', url: 'https://x' } }), undefined);
+  });
+
+  it('is reported on the pull request it replies to, before Prepare has run', () => {
+    const reply = { ...ctx.workItem, source: { type: 'github-pull-request-comment', id: '9', url: 'https://github.com/JamieGeddes/factorial/pull/87#issuecomment-9' }, inReplyTo: { kind: 'pull-request' as const, number: 87 } };
+    assert.equal(commentTarget(reply), 87);
+    assert.match(reportMessage({ status: 'failed', workItem: reply, error: { Error: 'X' } }), /could not complete this work item/);
+    assert.match(reportMessage({ status: 'no-changes', workItem: reply }), /the pull request was not updated/);
   });
 
   it('says the pull request was not updated, never that none was opened', () => {

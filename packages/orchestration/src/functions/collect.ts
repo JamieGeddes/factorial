@@ -18,7 +18,7 @@
  */
 import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 
-import { type WorkContext, reworkContext } from '../lib/context.ts';
+import type { WorkContext } from '../lib/context.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
@@ -247,7 +247,7 @@ export function roundStartFor(ctx: WorkContext, start: RoundStart | null | undef
   if (start) return { ...start, commit: assertCommitSha(start.commit, 'round start commit') };
   return {
     commit: ctx.baseCommit,
-    existing: reworkContext(ctx.workItem) !== undefined || ctx.resumedFrom !== undefined,
+    existing: ctx.rework !== undefined || ctx.resumedFrom !== undefined,
     pushed: false,
   };
 }

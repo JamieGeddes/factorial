@@ -1,13 +1,12 @@
 /**
- * Prepare: accept the WorkItem exactly once, then set up the builder's session
- * deterministically: clone the repository, put the session on the work branch
- * (a fresh branch off the default head, or the existing rework branch), and
- * leave the WorkItem on disk for the agent to read, with the request copied to
- * the top of /workspace/notes.md so it stays in view. When an earlier attempt
- * at the same source failed but saved its work, the session resumes on that
- * attempt's branch instead of starting afresh. For rework items, the
- * review details — including the failing checks' logs, fetched here with a
- * short-lived read-only token and redacted — are left at /workspace/rework.md.
+ * Prepare: set up the builder's session deterministically for an item Intake
+ * admitted: clone the repository, put the session on the thread's branch (a
+ * fresh branch off the default head, or the existing branch of a resumed
+ * attempt or a pull request), and leave the WorkItem on disk for the agent to
+ * read, with the request copied to the top of /workspace/notes.md so it stays
+ * in view. For a turn on a pull request, the points to address, including
+ * the failing checks' logs, fetched here with a short-lived read-only token
+ * and redacted, are left at /workspace/rework.md.
  * No model is involved. The builder plans in this session with its plan
  * subagent, so no plan is written here; a later round (ContinueBuild) and the
  * reviewer's session are set up the same way, by `seedSession`.
@@ -16,15 +15,15 @@
  * The read-only token is sent as an HTTP header for the clone only and is not
  * written anywhere in the session.
  */
-import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
-import type { CheckJob, GitHubClient, PullRequestState, Repo } from '@factorial/github-app';
-import { assertWorkItem, type ReworkContext, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
+import { putJsonArtefact, redactSecrets } from '@factorial/artefacts';
+import type { CheckJob, GitHubClient, Repo } from '@factorial/github-app';
+import { TRIGGER_TYPES, assertWorkItem, type WorkItem, type WorkItemReviewDetail, type WorkItemReworkCause } from '@factorial/workitem';
 
-import { reworkContext, workBranchFor, type WorkContext } from '../lib/context.ts';
-import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
-import { nextAttempt, resumableAttempt, type Attempt } from '../lib/resume.ts';
-import { botLogin, repositoryClient, repositoryToken } from '../lib/github.ts';
-import { REFUSED_STATUSES, acceptedBefore, admitRework, commentToAcknowledge, inlineCommentIdFromUrl, pointOrigins, pullRequestMismatch, reviewIdFromUrl, reworkPoints, type EarlierItem } from '../lib/rework-admission.ts';
+import type { ReworkTurn, WorkContext } from '../lib/context.ts';
+import { logged, unvalidatedId, type RunKey } from '../lib/log.ts';
+import type { Attempt } from '../lib/resume.ts';
+import { repositoryClient, repositoryToken } from '../lib/github.ts';
+import { inlineCommentIdFromUrl, pointOrigins, reviewIdFromUrl, reworkPoints } from '../lib/rework-points.ts';
 import { handOverWorkspace, mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
@@ -35,11 +34,16 @@ import {
   gitAuthHeader,
   shellQuote,
 } from '../lib/shell.ts';
-import { TooManyItemsError, acceptWorkItem, attemptRecord, attemptsAtSource, itemsAtSource, openerOf, recordProgress, reworkCauseOf } from '../lib/table.ts';
+import { recordProgress } from '../lib/table.ts';
+import { reworkDetails } from '../lib/turn.ts';
+
+import type { IntakeResult } from './intake.ts';
 
 interface PrepareInput {
   workItem: unknown;
   factorialVersion: string;
+  /** Intake's result; the state machine reaches Prepare only for the change route. */
+  intake: IntakeResult;
 }
 
 export function cloneScript(params: {
@@ -146,7 +150,7 @@ export function logSection(job: CheckJob, log: string, tailLines = 200): string 
   ].join('\n');
 }
 
-const REWORK_CAUSES: Record<ReworkContext['cause'], string> = {
+const REWORK_CAUSES: Record<WorkItemReworkCause, string> = {
   review: 'review comments',
   'checks-failed': 'failed checks',
   comment: "a request made in the pull request's conversation",
@@ -166,15 +170,16 @@ export async function buildReworkFile(
   client: GitHubClient,
   repo: { owner: string; name: string },
   headSha: string,
-  rework: ReworkContext,
-  options: { sourceUrl?: string; previousWorkItemId?: string } = {},
+  rework: Pick<ReworkTurn, 'pullRequest' | 'cause' | 'previousWorkItemId'>,
+  details: readonly WorkItemReviewDetail[],
+  options: { sourceUrl?: string } = {},
 ): Promise<{ text: string; points: WorkItemReviewDetail[] }> {
   const reviewId = rework.cause === 'review' ? reviewIdFromUrl(options.sourceUrl ?? '') : undefined;
-  const points = reworkPoints(rework.details, reviewId === undefined ? [] : await client.listReviewComments(repo, rework.pullRequest.number, reviewId));
+  const points = reworkPoints(details, reviewId === undefined ? [] : await client.listReviewComments(repo, rework.pullRequest.number, reviewId));
   const lines: string[] = [
     `# Rework of pull request #${rework.pullRequest.number}`,
     '',
-    `Previous work item: ${options.previousWorkItemId ?? rework.previousWorkItemId}`,
+    `Previous work item: ${rework.previousWorkItemId}`,
     `Pull request: ${rework.pullRequest.url}`,
     `Cause: ${REWORK_CAUSES[rework.cause]}`,
     '',
@@ -212,24 +217,16 @@ function detailSection(detail: WorkItemReviewDetail, n: number): string[] {
 }
 
 /**
- * The earlier attempt to resume, if any, and only while its branch still
- * exists. Any failure to tell (a lookup error, a deleted branch) starts the
- * item afresh, as before.
+ * The points an item carries, with an inline comment's file and line, which
+ * an item that names only the comment does not hold (#163): fetched here.
  */
-async function resumable(repo: { owner: string; name: string }, workItem: WorkItem, log: Logger): Promise<Attempt | undefined> {
-  try {
-    const attempt = resumableAttempt(await attemptsAtSource(workItem), workItem.id);
-    if (!attempt?.branch) return undefined;
-    const branch = assertGitBranch(attempt.branch, 'resume branch');
-    if (!branch.startsWith('factorial/')) return undefined;
-    const client = await repositoryClient(repo, { contents: 'read' });
-    await client.getBranchSha(repo, branch);
-    const record = await attemptRecord(attempt.workItemId);
-    return { ...attempt, branch, ...(record?.attempt === undefined ? {} : { attempt: record.attempt }) };
-  } catch (error) {
-    log.info('not resuming', { error });
-    return undefined;
-  }
+export async function detailsFor(client: Pick<GitHubClient, 'getReviewComment'>, repo: Repo, workItem: WorkItem): Promise<WorkItemReviewDetail[]> {
+  const details = reworkDetails(workItem);
+  if (workItem.inReplyTo === undefined || workItem.source.type !== TRIGGER_TYPES.githubPullRequestReviewComment) return details;
+  const id = inlineCommentIdFromUrl(workItem.source.url);
+  if (id === undefined) return details;
+  const comment = await client.getReviewComment(repo, id);
+  return details.map((d) => ({ ...d, path: comment.path, ...(comment.line && comment.line > 0 ? { line: comment.line } : {}) }));
 }
 
 /**
@@ -248,14 +245,11 @@ export async function seedSession(params: {
   existing?: boolean;
   /** The session to seed; the work item id unless the build is in a later round. */
   sessionId?: string;
-  /** For rework, the pull request's actual base, which Prepare read from GitHub. */
-  baseBranch?: string;
-  /** For rework, the item that opened the pull request, from the ledger. */
-  previousWorkItemId?: string;
+  /** For a turn on a pull request, as Intake established it. */
+  rework?: ReworkTurn;
 }): Promise<{ baseCommit: string; baseBranch: string; reworkPoints?: WorkItemReviewDetail[] }> {
-  const { workItem, branch, resumedFrom } = params;
+  const { workItem, branch, resumedFrom, rework } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const rework = reworkContext(workItem);
   const token = await repositoryToken(repo, { contents: 'read' });
   const target = sessionTarget(params.sessionId ?? workItem.id, params.role);
   const result = await mustRun(
@@ -274,14 +268,11 @@ export async function seedSession(params: {
   );
   const stdoutLines = result.stdout.trim().split('\n');
   const baseCommit = assertCommitSha(stdoutLines[stdoutLines.length - 2] ?? '', 'branch head');
-  const baseBranch = rework ? params.baseBranch ?? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
+  const baseBranch = rework ? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
 
   if (rework) {
     const client = await repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' });
-    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework, {
-      sourceUrl: workItem.source.url,
-      ...(params.previousWorkItemId ? { previousWorkItemId: params.previousWorkItemId } : {}),
-    });
+    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework, await detailsFor(client, repo, workItem), { sourceUrl: workItem.source.url });
     const encoded = Buffer.from(reworkFile.text, 'utf8').toString('base64');
     await mustRun(
       target,
@@ -293,126 +284,24 @@ export async function seedSession(params: {
   return { baseCommit, baseBranch };
 }
 
-export class ReworkNotAdmittedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ReworkNotAdmitted';
-  }
-}
-
-/**
- * Check that a rework item may run (`lib/rework-admission.ts`). A refusal is
- * recorded on the ledger and in `report.json`, answered on the pull request
- * when a person asked, and ends the execution through ReworkNotAdmitted.
- * Returns the pull request as GitHub reports it, and the item that opened
- * it: the ledger's record, which the branch name only approximates.
- */
-async function admitReworkItem(
-  workItem: WorkItem,
-  rework: ReworkContext,
-  createdAt: string,
-  prefix: string,
-  log: Logger,
-): Promise<{ pr: PullRequestState; openedBy: string }> {
-  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const refuse = async (status: string, reason: string, reply?: string): Promise<never> => {
-    if (reply) {
-      try {
-        const client = await repositoryClient(repo, { issues: 'write', pull_requests: 'write' });
-        await client.commentOnIssue(repo, rework.pullRequest.number, reply);
-      } catch (error) {
-        log.error('refusal not posted on the pull request', { error });
-      }
-    }
-    await recordProgress(workItem.id, status, { refusedReason: reason, reworkOf: { previousWorkItemId: rework.previousWorkItemId, prNumber: rework.pullRequest.number } });
-    await putJsonArtefact(prefix, 'report.json', { outcome: status, reason });
-    log.info('rework not admitted', { status, reason, replied: reply !== undefined });
-    throw new ReworkNotAdmittedError(reason);
-  };
-
-  const client = await repositoryClient(repo, { pull_requests: 'read' });
-  const pr = await client.getPullRequest(repo, rework.pullRequest.number);
-  const mismatch = pullRequestMismatch(pr, rework, await botLogin());
-  if (mismatch) return refuse('not-eligible', mismatch);
-  const opener = await openerOf(repo, pr.number);
-  if (!opener) return refuse('not-eligible', `Factorial has no record of opening pull request #${pr.number}`);
-  if (opener.branch !== rework.branch) return refuse('not-eligible', `the item that opened pull request #${pr.number} worked on ${opener.branch ?? 'no branch'}, not ${rework.branch}`);
-
-  // An inline comment addressed to Factorial inside a review that requests
-  // changes also arrives as that review, whose item takes all its comments.
-  // Whichever item came first, only the review's may run.
-  const commentId = inlineCommentIdFromUrl(workItem.source.url);
-  if (commentId !== undefined && (await client.reviewStateOfComment(repo, pr.number, commentId)) === 'CHANGES_REQUESTED') {
-    return refuse('covered-by-review', 'the comment belongs to a review requesting changes, which is reworked as a whole');
-  }
-
-  let earlier: EarlierItem[];
-  try {
-    earlier = await itemsAtSource(workItem);
-  } catch (error) {
-    if (error instanceof TooManyItemsError) return refuse('busy', error.message);
-    throw error;
-  }
-  if (rework.cause === 'checks-failed') {
-    // Only the causes the limit walks: newest first, up to the first item
-    // a person asked for, refused items read too so they can be skipped.
-    const current = { workItemId: workItem.id, createdAt };
-    for (const item of earlier) {
-      if (item.workItemId === workItem.id || !acceptedBefore(item, current)) continue;
-      const cause = await reworkCauseOf(item.workItemId);
-      if (cause !== undefined) item.cause = cause;
-      if (cause !== 'checks-failed' && !REFUSED_STATUSES.has(item.status ?? '')) break;
-    }
-  }
-  const admission = admitRework({ workItemId: workItem.id, createdAt, cause: rework.cause }, earlier, new Date());
-  if (!admission.ok) return refuse(admission.status, admission.reason, admission.reply);
-  await acknowledge(repo, workItem, log);
-  return { pr, openedBy: opener.workItemId };
-}
-
-/**
- * React to the comment that asked for the work (eyes), so the person sees
- * at once that it was taken; the reply comes when the rework finishes. A
- * review has no reaction API, and a failed run no comment. Never fatal.
- */
-async function acknowledge(repo: Repo, workItem: WorkItem, log: Logger): Promise<void> {
-  const target = commentToAcknowledge(workItem.source.url);
-  if (!target) return;
-  try {
-    const client = await repositoryClient(repo, { issues: 'write', pull_requests: 'write' });
-    await client.addReaction(repo, target, 'eyes');
-  } catch (error) {
-    log.error('comment not acknowledged', { error });
-  }
-}
-
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
 export const handler = logged('prepare', prepareKey, async (input, stageLog): Promise<WorkContext> => {
   assertWorkItem(input.workItem);
   const workItem = input.workItem;
   assertUuid(workItem.id, 'WorkItem id');
-
-  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const rework = reworkContext(workItem);
-  // Looked up before accepting, so the row is written with its attempt
-  // number. The lookup only reads, so a duplicate delivery changes nothing.
-  const resumedFrom = rework ? undefined : await resumable(repo, workItem, stageLog);
-  const attempt = nextAttempt(resumedFrom);
+  const { intake } = input;
+  if (intake.route !== 'change') throw new Error(`Prepare reached for route ${intake.route}`);
+  const { attempt, artefactPrefix: prefix, resumedFrom, rework } = intake;
   const log = stageLog.with({ attempt });
-  const prefix = artefactPrefix(workItem.id, attempt);
 
-  const createdAt = await acceptWorkItem(workItem, input.factorialVersion, attempt);
-  await putJsonArtefact(prefix, 'workitem.json', workItem);
-  const admitted = rework ? await admitReworkItem(workItem, rework, createdAt, prefix, log) : undefined;
-
-  const branch = resumedFrom?.branch ?? workBranchFor(workItem);
+  const branch = assertGitBranch(intake.branch, 'work branch');
   const { baseCommit, baseBranch, reworkPoints: points } = await seedSession({
     role: 'builder',
     workItem,
     branch,
     ...(resumedFrom ? { resumedFrom } : {}),
-    ...(admitted ? { baseBranch: admitted.pr.baseRef, previousWorkItemId: admitted.openedBy } : {}),
+    ...(rework ? { rework } : {}),
   });
   await handOverWorkspace(sessionTarget(workItem.id, 'builder'));
 
@@ -427,13 +316,14 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     branch,
     baseBranch,
     sessionId: workItem.id,
-    ...(rework ? { reworkOf: { previousWorkItemId: admitted?.openedBy ?? rework.previousWorkItemId, prNumber: rework.pullRequest.number } } : {}),
+    ...(rework ? { reworkOf: { previousWorkItemId: rework.previousWorkItemId, prNumber: rework.pullRequest.number } } : {}),
     ...(resumedFrom ? { resumedFrom: resumedFrom.workItemId } : {}),
   });
-  log.info('session prepared', { branch, baseBranch, rework: rework !== undefined, resumedFrom: resumedFrom?.workItemId });
+  log.info('session prepared', { branch, baseBranch, threadKey: intake.threadKey, rework: rework !== undefined, resumedFrom: resumedFrom?.workItemId });
 
   return {
     workItem,
+    threadKey: intake.threadKey,
     sessionId: workItem.id,
     branch,
     baseBranch,
@@ -443,6 +333,6 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
     artefactPrefix: prefix,
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(points ? { reworkPoints: pointOrigins(points) } : {}),
-    ...(admitted ? { previousWorkItemId: admitted.openedBy } : {}),
+    ...(rework ? { rework } : {}),
   };
 });

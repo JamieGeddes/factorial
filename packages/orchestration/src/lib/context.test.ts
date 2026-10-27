@@ -1,21 +1,11 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import type { ReworkContext, WorkItem } from '@factorial/workitem';
+import type { WorkItem } from '@factorial/workitem';
 
-import { branchFor, issueNumber, reworkContext, workBranchFor } from './context.ts';
+import { branchFor, issueNumber } from './context.ts';
 
-const rework = (branch: string): ReworkContext => ({
-  kind: 'rework',
-  pullRequest: { number: 5, url: 'https://github.com/JamieGeddes/factorial/pull/5' },
-  branch,
-  baseBranch: 'main',
-  previousWorkItemId: 'prev',
-  cause: 'review',
-  details: [],
-});
-
-function item(overrides: { id?: string; sourceType?: string; sourceId?: string; context?: ReworkContext } = {}): WorkItem {
+function item(overrides: { id?: string; sourceType?: string; sourceId?: string } = {}): WorkItem {
   return {
     id: overrides.id ?? 'abc-123',
     source: {
@@ -24,38 +14,12 @@ function item(overrides: { id?: string; sourceType?: string; sourceId?: string; 
       url: 'https://github.com/JamieGeddes/factorial/issues/22',
     },
     repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
-    ...(overrides.context ? { context: overrides.context } : {}),
   } as WorkItem;
 }
 
 describe('branchFor', () => {
   it('returns factorial/<id>', () => {
     assert.equal(branchFor(item({ id: 'abc-123' })), 'factorial/abc-123');
-  });
-});
-
-describe('workBranchFor', () => {
-  it('uses the fresh branch for a new item', () => {
-    assert.equal(workBranchFor(item()), 'factorial/abc-123');
-  });
-
-  it('uses the previous branch for rework', () => {
-    assert.equal(workBranchFor(item({ context: rework('factorial/prev') })), 'factorial/prev');
-  });
-
-  it('throws for a rework branch that is not a safe git branch', () => {
-    assert.throws(() => workBranchFor(item({ context: rework('factorial/../evil') })));
-  });
-});
-
-describe('reworkContext', () => {
-  it('returns the context for rework', () => {
-    const context = rework('factorial/prev');
-    assert.equal(reworkContext(item({ context })), context);
-  });
-
-  it('returns undefined otherwise', () => {
-    assert.equal(reworkContext(item()), undefined);
   });
 });
 
