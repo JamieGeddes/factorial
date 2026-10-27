@@ -14,12 +14,11 @@ import {
   type WorkItem,
 } from './index.ts';
 
-const examplesDir = fileURLToPath(
-  new URL('../../../contracts/workitem/v1/examples/', import.meta.url),
-);
+const examplesDir = (version: 'v1' | 'v2'): string =>
+  fileURLToPath(new URL(`../../../contracts/workitem/${version}/examples/`, import.meta.url));
 
-async function loadExample(name: string): Promise<unknown> {
-  const text = await readFile(path.join(examplesDir, name), 'utf8');
+async function loadExample(name: string, version: 'v1' | 'v2' = 'v2'): Promise<unknown> {
+  const text = await readFile(path.join(examplesDir(version), name), 'utf8');
   return JSON.parse(text) as unknown;
 }
 
@@ -28,12 +27,14 @@ function clone<T>(value: T): T {
 }
 
 describe('WorkItem schema', () => {
-  it('accepts every example in the contract directory', async () => {
-    const files = (await readdir(examplesDir)).filter((f) => f.endsWith('.json'));
-    assert.ok(files.length > 0, 'expected at least one example');
-    for (const file of files) {
-      const result = validateWorkItem(await loadExample(file));
-      assert.ok(result.ok, `${file}: ${result.ok ? '' : result.errors.join('; ')}`);
+  it('accepts every example in the contract directories, v1 and v2', async () => {
+    for (const version of ['v1', 'v2'] as const) {
+      const files = (await readdir(examplesDir(version))).filter((f) => f.endsWith('.json'));
+      assert.ok(files.length > 0, `expected at least one ${version} example`);
+      for (const file of files) {
+        const result = validateWorkItem(await loadExample(file, version));
+        assert.ok(result.ok, `${version}/${file}: ${result.ok ? '' : result.errors.join('; ')}`);
+      }
     }
   });
 
@@ -69,10 +70,28 @@ describe('WorkItem schema', () => {
     assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/source')));
   });
 
-  it('rejects a schemaVersion other than 1', async () => {
+  it('rejects a schemaVersion other than 1 or 2', async () => {
+    for (const version of [0, 3, '2']) {
+      const item = clone(await loadExample('github-issue.json')) as Record<string, unknown>;
+      item.schemaVersion = version;
+      const result = validateWorkItem(item);
+      assert.equal(result.ok, false, String(version));
+      assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/schemaVersion')));
+    }
+  });
+
+  it('reads a v1 item against the v1 schema', async () => {
+    const item = parseWorkItem(await loadExample('github-issue.json', 'v1'));
+    assert.equal(item.schemaVersion, 1);
+  });
+
+  it('rejects context on a v2 item', async () => {
+    const rework = (await loadExample('github-pr-rework.json', 'v1')) as { context: unknown };
     const item = clone(await loadExample('github-issue.json')) as Record<string, unknown>;
-    item.schemaVersion = 2;
-    assert.equal(validateWorkItem(item).ok, false);
+    item.context = rework.context;
+    const result = validateWorkItem(item);
+    assert.equal(result.ok, false);
+    assert.ok(result.ok === false && result.errors.includes('(root) has unexpected property "context"'));
   });
 
   it('rejects a malformed id, url and timestamp', async () => {
@@ -126,9 +145,9 @@ describe('WorkItem schema', () => {
   });
 });
 
-describe('WorkItem rework context', () => {
+describe('WorkItem rework context (v1 only)', () => {
   it('accepts a valid rework item', async () => {
-    const item = parseWorkItem(await loadExample('github-pr-rework.json'));
+    const item = parseWorkItem(await loadExample('github-pr-rework.json', 'v1'));
     assert.equal(item.context?.kind, 'rework');
     assert.equal(item.context?.pullRequest.number, 7);
     assert.equal(item.context?.cause, 'review');
@@ -136,7 +155,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects an unknown context kind', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: Record<string, unknown>;
     };
     item.context.kind = 'escalation';
@@ -147,14 +166,14 @@ describe('WorkItem rework context', () => {
 
   it('accepts each cause, including a request made in a comment', async () => {
     for (const cause of ['review', 'checks-failed', 'comment']) {
-      const item = clone(await loadExample('github-pr-rework.json')) as { context: Record<string, unknown> };
+      const item = clone(await loadExample('github-pr-rework.json', 'v1')) as { context: Record<string, unknown> };
       item.context.cause = cause;
       assert.equal(validateWorkItem(item).ok, true, cause);
     }
   });
 
   it('rejects an unknown cause', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: Record<string, unknown>;
     };
     item.context.cause = 'whim';
@@ -162,7 +181,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects a branch that is not a Factorial branch', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: Record<string, unknown>;
     };
     item.context.branch = 'feature/rework';
@@ -172,7 +191,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects a malformed previousWorkItemId', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: Record<string, unknown>;
     };
     item.context.previousWorkItemId = 'not-a-uuid';
@@ -180,7 +199,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects unknown properties inside context and its nested objects', async () => {
-    const base = await loadExample('github-pr-rework.json');
+    const base = await loadExample('github-pr-rework.json', 'v1');
 
     const extraTop = clone(base) as { context: Record<string, unknown> };
     extraTop.context.priority = 'high';
@@ -194,7 +213,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects a detail body longer than 8,000 characters', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: { details: Array<{ body: string }> };
     };
     item.context.details[0]!.body = 'x'.repeat(8001);
@@ -202,7 +221,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects more than 50 details', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: { details: Array<{ author: string; body: string }> };
     };
     item.context.details = Array.from({ length: 51 }, (_, i) => ({
@@ -213,7 +232,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('rejects a detail missing author or body', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as {
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as {
       context: { details: Array<Record<string, unknown>> };
     };
     delete item.context.details[0]!.author;
@@ -221,7 +240,7 @@ describe('WorkItem rework context', () => {
   });
 
   it('still accepts the issue example without a context field', async () => {
-    const item = parseWorkItem(await loadExample('github-issue.json'));
+    const item = parseWorkItem(await loadExample('github-issue.json', 'v1'));
     assert.equal(item.context, undefined);
   });
 });
@@ -268,7 +287,7 @@ describe('WorkItem inReplyTo', () => {
   });
 
   it('rejects an item that carries both inReplyTo and context', async () => {
-    const item = clone(await loadExample('github-pr-rework.json')) as Record<string, unknown>;
+    const item = clone(await loadExample('github-pr-rework.json', 'v1')) as Record<string, unknown>;
     item.inReplyTo = { kind: 'pull-request', number: 7 };
     const result = validateWorkItem(item);
     assert.equal(result.ok, false);

@@ -2,7 +2,7 @@
 
 `WorkItem` is Factorial's API. Every trigger adapter converts its input into exactly one `WorkItem` and places it on the Factorial event bus. Everything downstream (Step Functions, the agent, the PR stage) consumes only this shape and knows nothing about where the work came from.
 
-The canonical definition is the JSON Schema in `v1/workitem.schema.json`. The TypeScript package `@factorial/workitem` validates against that file; it does not define the contract.
+The canonical definition is the JSON Schema in `v2/workitem.schema.json`. The TypeScript package `@factorial/workitem` validates against that file; it does not define the contract. It still reads `v1` items, against `v1/workitem.schema.json`, until those emitted before the adapters moved to `v2` have drained (see the change log).
 
 ## Event envelope
 
@@ -20,7 +20,7 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 
 | Field | Purpose |
 |---|---|
-| `schemaVersion` | Contract version. Always `1` for this schema. |
+| `schemaVersion` | Contract version. Always `2` for this schema. |
 | `id` | UUID assigned by the adapter. Used as the Step Functions execution name and for tracing. |
 | `source.type` | Trigger type, kebab-case, e.g. `github-issue`. New triggers add a value; nothing else changes. |
 | `source.id` | Identifier of the record within the source system: an issue number, or the id of a review, comment or workflow run. |
@@ -32,24 +32,12 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 | `group` | Optional. The set of items one trigger produced: `id` (UUID, shared by the set), `size` (at least 1) and `index` (1 to `size`). `size` lets a consumer tell when the set is complete. The validator also checks `index` ≤ `size`, which JSON Schema cannot express. |
 | `parentId` | Optional. The `id` of the `WorkItem` whose Plan stage emitted this one. |
 | `inReplyTo` | Optional. What the item continues, e.g. the pull request a review or comment was made on. Absent for a new request. See Continuity. |
-| `context` | Optional structured context about the work. Optional and additive, so existing items are unaffected. A consumer that ignores it still has `body`. Superseded by `inReplyTo`. |
-
-### `context`
-
-`context` is a discriminated union on `kind`. Only one kind exists today:
-
-- **`rework`** — the item reworks a previous `WorkItem`'s pull request. It carries the pull request (number and URL), the Factorial working branch (`factorial/…`), the base branch, the previous `WorkItem`'s `id`, the `cause` (`review`, `checks-failed`, or `comment` for a request made in the pull request's conversation) and up to 50 `details` (review comments), each with an author, an optional `path` and `line`, and a `body` of at most 8,000 characters.
-
-New kinds add a new `kind` const without changing anything else in the contract. `body` on the `WorkItem` itself stays the human-readable instruction, so a consumer that ignores `context` still gets something sensible.
-
-`context` is superseded by `inReplyTo` (#163): the adapter's cause, branch and previous item were interpretation, which moved into the pipeline. No adapter sets it, and Intake refuses an item that carries it. Removing it from the schema is a breaking change, decided separately.
 
 ## Continuity
 
 `inReplyTo` says what an item continues, and nothing more. An adapter records the facts of the event: `source.type` says what happened (a review, an inline comment, a conversation comment, a failed workflow run), `source.id` and `source.url` point at it, `body` holds what was said and `requestedBy` who said it. The pipeline's Intake step resolves the thread from `inReplyTo`, fetches what the event did not carry and decides what the item means, so a new kind of turn needs no contract change.
 
 - **`kind: "pull-request"`** with the pull request's `number` in `repository`. The only kind today; new kinds add a `kind` const.
-- An item carries `inReplyTo` or `context`, never both: they are two ways to say the same thing.
 
 The pull request source types, each with `source.id` the record's own id:
 
@@ -60,7 +48,7 @@ The pull request source types, each with `source.id` the record's own id:
 | `github-pull-request-comment` | A comment in its conversation |
 | `github-workflow-run` | A workflow run that completed on its head |
 
-The GitHub adapter emits these since #163's third step. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`.
+The GitHub adapter emits these since #163's third step. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`, which `v2` removed.
 
 
 ## One repository per WorkItem
@@ -79,7 +67,7 @@ The items from one trigger are linked by `group`, so results can be reported bac
 
 - **`group`**: the items one trigger produced, for example one per repository. Siblings share `group.id`; `size` and `index` say how many there are and which this is.
 - **`parentId`**: the item whose Plan stage split its work into this one.
-- **Rework** is a different relationship (same branch, same pull request): a turn in a thread, which `inReplyTo` names (see Continuity). `context.previousWorkItemId` is the superseded form.
+- **Rework** is a different relationship (same branch, same pull request): a turn in a thread, which `inReplyTo` names (see Continuity).
 
 The ledger copies these onto the item's row as `groupId`, `groupSize`, `groupIndex` and `parentId`, so a group's or a parent's items can be listed.
 
@@ -102,6 +90,8 @@ Changing this schema is a deliberate, human-approved decision, never a side effe
 4. Update the examples and the tests in `packages/workitem` in the same PR.
 
 ## Change log
+
+- **2026-10: v2, removed `context`.** Breaking, so a new version: `v2/` beside `v1/`, `schemaVersion` 2. `inReplyTo` replaced `context` in #163: nothing has set it since the adapter moved to facts, and Intake refuses an item that carries it. `v2` is otherwise `v1` unchanged. Shipped in three steps so nothing is rejected in flight: the validator reads both versions; then the adapters emit `v2`; once the `v1` items have drained, the validator stops reading `v1`, Intake drops its refusal of `context` and `v1/` stays as the record. `v1` items with `context` remain readable, and refused, until the last step.
 
 - **2026-10: added the optional `inReplyTo` field and the pull request source types.** Additive: existing items validate unchanged, and an item may not carry both `inReplyTo` and `context`. The first step of #163 (`docs/design-extension-points.md` §3.2): adapters record what happened and what it continues, and the pipeline decides what it means, so new kinds of turn (#161's questions, #155's merge conflicts) stop being contract changes. Nothing emits `inReplyTo` until Intake reads it; the adapter moves after that, in a later PR. Needs a drain before promotion, as every change to the strict schema does.
 

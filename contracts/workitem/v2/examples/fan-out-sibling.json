@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 2,
+  "id": "3a9e2c4b-8d1f-4e6a-b5c7-0f1e2d3c4b5a",
+  "source": {
+    "type": "jira-ticket",
+    "id": "PLAT-412",
+    "url": "https://example.atlassian.net/browse/PLAT-412"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "example-org",
+    "name": "orders-service"
+  },
+  "title": "Upgrade Lambda runtimes to Node.js 22",
+  "body": "Move every Lambda function in this repository from nodejs18.x to nodejs22.x and fix anything the upgrade breaks.",
+  "requestedBy": "platform-team",
+  "createdAt": "2026-10-19T09:00:00Z",
+  "group": {
+    "id": "b2c4d6e8-1a3c-4e5f-8a7b-9c0d1e2f3a4b",
+    "size": 3,
+    "index": 2
+  }
+}
