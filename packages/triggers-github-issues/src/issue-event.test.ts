@@ -37,7 +37,7 @@ describe('decideIssueEvent', () => {
 
     assert.equal(validateWorkItem(decision.workItem).ok, true);
     assert.deepEqual(decision.workItem, {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: deliveryId.toLowerCase(),
       source: {
         type: 'github-issue',

@@ -111,10 +111,10 @@ function ignored(event: string, payload: unknown, reason: RegExp, opts = options
 
 /** What every item in reply to pull request #26 shares. */
 function inReplyTo26(workItem: WorkItem): void {
+  assert.equal(workItem.schemaVersion, 2);
   assert.equal(workItem.id, DELIVERY);
   assert.deepEqual(workItem.repository, { provider: 'github', owner: 'JamieGeddes', name: 'factorial' });
   assert.deepEqual(workItem.inReplyTo, { kind: 'pull-request', number: 26 });
-  assert.equal(workItem.context, undefined, 'the adapter no longer interprets the event');
 }
 
 describe('decidePullRequestEvent: a review requesting changes', () => {

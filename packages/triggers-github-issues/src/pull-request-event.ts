@@ -16,7 +16,7 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import { TRIGGER_TYPES, validateWorkItem, type WorkItem } from '@factorial/workitem';
+import { TRIGGER_TYPES, WORKITEM_SCHEMA_VERSION, validateWorkItem, type WorkItem } from '@factorial/workitem';
 
 import { BadPayloadError } from './issue-event.ts';
 
@@ -158,7 +158,7 @@ interface PullRequestEvent {
 function workItemFor(event: PullRequestEvent, options: PullRequestDecideOptions): WorkItem {
   const id = options.deliveryId !== undefined && UUID.test(options.deliveryId) ? options.deliveryId.toLowerCase() : randomUUID();
   const candidate = {
-    schemaVersion: 1,
+    schemaVersion: WORKITEM_SCHEMA_VERSION,
     id,
     source: { type: event.type, id: String(event.id), url: event.url },
     repository: { provider: 'github', owner: event.repo.owner, name: event.repo.name },

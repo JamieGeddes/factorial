@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { TRIGGER_TYPES, validateWorkItem, type WorkItem } from '@factorial/workitem';
+import { TRIGGER_TYPES, WORKITEM_SCHEMA_VERSION, validateWorkItem, type WorkItem } from '@factorial/workitem';
 
 /** The subset of GitHub's `issues` webhook payload the adapter relies on. */
 export interface IssuesWebhookPayload {
@@ -130,7 +130,7 @@ export function decideIssueEvent(payload: unknown, options: DecideOptions): Issu
       : randomUUID();
 
   const candidate = {
-    schemaVersion: 1,
+    schemaVersion: WORKITEM_SCHEMA_VERSION,
     id,
     source: {
       type: TRIGGER_TYPES.githubIssue,
