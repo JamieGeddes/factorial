@@ -176,15 +176,8 @@ describe('a rework item', () => {
     ...ctx,
     workItem: {
       ...ctx.workItem,
-      context: {
-        kind: 'rework',
-        pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },
-        branch: ctx.branch,
-        baseBranch: 'main',
-        previousWorkItemId: '1f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-        cause: 'review',
-        details: [],
-      },
+      source: { type: 'github-pull-request-review', id: '77', url: 'https://github.com/JamieGeddes/factorial/pull/26#pullrequestreview-77' },
+      inReplyTo: { kind: 'pull-request', number: 26 },
     },
     rework: {
       pullRequest: { number: 26, url: 'https://github.com/JamieGeddes/factorial/pull/26' },

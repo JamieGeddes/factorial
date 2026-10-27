@@ -150,14 +150,12 @@ export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ct
   await recordProgress(ctx.workItem.id, 'pr-opened', {
     prUrl: pr.htmlUrl,
     prNumber: pr.number,
-    pullRequestKey: pullRequestKey(repo, pr.number),
     testRunUrl: input.test.runUrl,
   });
   // The pull request is open, so a failure to record it must not turn the run
   // into a reported failure. The thread is how a later turn on the pull
-  // request finds its branch and opener; without it, Intake finds them
-  // through the ledger's pullRequestKey, as for pull requests opened before
-  // threads.
+  // request finds its branch and opener: without it, Intake refuses such a
+  // turn as not Factorial's, and the error below says why.
   try {
     await recordThreadPullRequest(ctx.threadKey, { pullRequestKey: pullRequestKey(repo, pr.number), number: pr.number, openedBy: ctx.workItem.id });
   } catch (error) {

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { PullRequestState } from '@factorial/github-app';
 
-import { STALE_AFTER_MS, admitTurn, pullRequestMismatch, stateFromHistory, type ThreadState } from './thread-policy.ts';
+import { STALE_AFTER_MS, admitTurn, pullRequestMismatch, type ThreadState } from './thread-policy.ts';
 
 const BRANCH = 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 const BOT = 'factorial-x[bot]';
@@ -119,27 +119,5 @@ describe('admitTurn: automatic reworks after failed checks', () => {
   it('checks the holder before the limit, so a busy thread is never announced as limited', () => {
     const admission = admitTurn(checks, { ...held('a', 10), automaticReworks: 2 }, 'testing', NOW);
     assert.ok(!admission.ok && admission.status === 'busy');
-  });
-});
-
-describe('stateFromHistory', () => {
-  const item = (workItemId: string, status: string, cause?: string) => ({ workItemId, status, ...(cause ? { cause } : {}) });
-
-  it('counts automatic reworks in a row back to the last item a person asked for', () => {
-    assert.deepEqual(stateFromHistory([item('c', 'pr-updated', 'checks-failed'), item('b', 'pr-updated', 'review'), item('a', 'pr-updated', 'checks-failed')]), {
-      automaticReworks: 1,
-      limitAnnounced: false,
-    });
-    assert.deepEqual(stateFromHistory([]), { automaticReworks: 0, limitAnnounced: false });
-  });
-
-  it('skips refused items, which never counted as attempts', () => {
-    const history = [item('d', 'busy', 'checks-failed'), item('c', 'covered-by-review', 'review'), item('b', 'tests-failed', 'checks-failed'), item('a', 'pr-updated', 'checks-failed')];
-    assert.equal(stateFromHistory(history).automaticReworks, 2);
-  });
-
-  it('carries over an announcement made by the newest item', () => {
-    assert.equal(stateFromHistory([item('c', 'rework-limit', 'checks-failed'), item('b', 'pr-updated', 'checks-failed')]).limitAnnounced, true);
-    assert.equal(stateFromHistory([item('d', 'busy'), item('c', 'rework-limit', 'checks-failed')]).limitAnnounced, false);
   });
 });

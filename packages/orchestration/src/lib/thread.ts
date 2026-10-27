@@ -67,6 +67,22 @@ export async function threadForPullRequest(pullRequestKey: string): Promise<Thre
   return key === undefined ? undefined : getThread(key);
 }
 
+/** The newest thread a request opened, if any: where a new attempt at the request may resume. */
+export async function newestThreadForSource(sourceKey: string): Promise<Thread | undefined> {
+  const result = await documents.send(
+    new QueryCommand({
+      TableName: tableName(),
+      IndexName: 'sourceKey-createdAt-index',
+      KeyConditionExpression: 'sourceKey = :key',
+      ExpressionAttributeValues: { ':key': sourceKey },
+      ScanIndexForward: false,
+      Limit: 1,
+    }),
+  );
+  const key = (result.Items?.[0] as { threadKey?: string } | undefined)?.threadKey;
+  return key === undefined ? undefined : getThread(key);
+}
+
 /** Create the thread, or return it as it is when another turn created it first. */
 export async function openThread(thread: NewThread): Promise<Thread> {
   const now = new Date().toISOString();

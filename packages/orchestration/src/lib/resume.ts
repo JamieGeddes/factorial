@@ -5,13 +5,13 @@
  */
 import type { WorkItem } from '@factorial/workitem';
 
-/** One earlier attempt at the same source, as the ledger's source index returns it. */
+/** One earlier attempt at the same source: a turn on the newest thread the source opened. */
 export interface Attempt {
   workItemId: string;
   status?: string;
   branch?: string;
   savedWork?: boolean;
-  /** Not projected into the source index; read from the attempt's own row. */
+  /** Read from the attempt's own row. */
   attempt?: number;
 }
 
