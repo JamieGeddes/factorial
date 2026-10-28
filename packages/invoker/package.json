@@ -17,6 +17,7 @@
     "@factorial/artefacts": "^0.1.0",
     "@factorial/log": "^0.1.0",
     "@factorial/roles": "^0.1.0",
+    "@factorial/run": "^0.1.0",
     "@factorial/workitem": "^0.1.0"
   }
 }

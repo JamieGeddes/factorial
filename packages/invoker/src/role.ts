@@ -4,6 +4,7 @@
  * overrides, and this checks they belong together before anything is invoked.
  */
 import { isRoleName, type RoleManifest, type RoleName, type SensitivePath } from '@factorial/roles';
+import type { RunOutcome as Outcome } from '@factorial/run';
 
 /**
  * The exit code for a run of a role that must finish (the builder) that
@@ -19,8 +20,8 @@ export const INCOMPLETE_EXIT_CODE = 3;
  * manifest's `mustFinish`): a half-finished build must not become a pull
  * request, while CollectReview already checks what the reviewer left behind.
  */
-export function incompleteReason(role: RoleManifest, stopReason: string | undefined): string | undefined {
-  if (!role.mustFinish || stopReason === 'success') return undefined;
+export function incompleteReason(role: RoleManifest, outcome: Outcome | undefined, stopReason: string | undefined): string | undefined {
+  if (!role.mustFinish || outcome === 'complete') return undefined;
   return `incomplete: the ${role.name} stopped with ${stopReason ?? 'no stop reason'} before finishing`;
 }
 

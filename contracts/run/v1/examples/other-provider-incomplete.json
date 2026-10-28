@@ -1,0 +1,14 @@
+[
+  {
+    "type": "run.started",
+    "contract": 1,
+    "harness": { "name": "factorial-loop", "version": "1.0.0" },
+    "role": "builder",
+    "models": [{ "purpose": "main", "provider": "openai", "id": "gpt-example" }]
+  },
+  { "type": "reasoning", "text": "The tests live under packages/." },
+  { "type": "model.call", "usage": { "inputTokens": 1200, "outputTokens": 340, "reasoningTokens": 300 } },
+  { "type": "tool.call", "callId": "call_1", "tool": "shell", "input": { "command": "npm test" } },
+  { "type": "tool.result", "callId": "call_1", "isError": true, "content": "1 failing" },
+  { "type": "run.ended", "outcome": "incomplete", "reason": "max_turns", "turns": 150, "errors": [] }
+]

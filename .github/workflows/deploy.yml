@@ -171,7 +171,7 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.invoker_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:invoker HEAD:packages/invoker HEAD:packages/artefacts HEAD:packages/log HEAD:packages/roles HEAD:packages/workitem HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:invoker HEAD:packages/invoker HEAD:packages/artefacts HEAD:packages/log HEAD:packages/roles HEAD:packages/run HEAD:contracts/run HEAD:packages/workitem HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/invoker --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Invoker image $tag already exists; skipping the build."
@@ -186,7 +186,7 @@ jobs:
       # The host bundle (agent-runtime/dist) comes from "Build Lambda bundles"
       # above. The tag covers everything the image is built from: the image
       # directory with its own lockfile, the host and the workspace packages
-      # it bundles (the plan and review packages with their contracts),
+      # it bundles (the plan, review and run packages with their contracts),
       # quiet's source, and the root lockfile.
       - name: Build and push the agent runtime image when its inputs change
         id: runtime_image
@@ -194,7 +194,7 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.runtime_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/roles HEAD:packages/log HEAD:packages/artefacts HEAD:packages/plan HEAD:contracts/plan HEAD:packages/review HEAD:contracts/review HEAD:packages/agent-tools HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:agent-runtime HEAD:packages/agent-runtime HEAD:packages/roles HEAD:packages/log HEAD:packages/artefacts HEAD:packages/plan HEAD:contracts/plan HEAD:packages/review HEAD:contracts/review HEAD:packages/run HEAD:contracts/run HEAD:packages/agent-tools HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/agent-runtime --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Agent runtime image $tag already exists; skipping the build."

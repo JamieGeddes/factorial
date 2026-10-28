@@ -4,6 +4,7 @@
  * taken from a request, so the model, limits and tools are fixed by the version.
  */
 import { ROLES, isRoleName, modelVariable, type RoleName } from '@factorial/roles';
+import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE } from '@factorial/run';
 
 export type Role = RoleName;
 
@@ -48,6 +49,9 @@ function positiveNumber(env: NodeJS.ProcessEnv, name: string): number {
 }
 
 export function readConfig(env: NodeJS.ProcessEnv): Config {
+  // The version declares the run contract its host speaks, and the invoker
+  // reads the declaration before it invokes; this keeps the two in step.
+  if (env[RUN_CONTRACT_VARIABLE] !== String(RUN_CONTRACT)) throw new Error(`${RUN_CONTRACT_VARIABLE} must be ${RUN_CONTRACT}, the run contract this host speaks`);
   const role = required(env, 'FACTORIAL_ROLE');
   if (!isRoleName(role)) throw new Error(`FACTORIAL_ROLE must be one of ${Object.keys(ROLES).join(', ')}`);
   const maxTurns = positiveNumber(env, 'FACTORIAL_MAX_TURNS');

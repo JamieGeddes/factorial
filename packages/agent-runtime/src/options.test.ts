@@ -14,6 +14,7 @@ const config = readConfig({
   FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_MAX_TURNS: '150',
+  FACTORIAL_RUN_CONTRACT: '1',
   FACTORIAL_MAX_BUDGET_USD: '10',
   FACTORIAL_MAX_DURATION_SECONDS: '6600',
   AWS_REGION: 'eu-west-1',

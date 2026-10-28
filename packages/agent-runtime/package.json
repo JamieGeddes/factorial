@@ -16,6 +16,7 @@
     "@factorial/plan": "^0.1.0",
     "@factorial/review": "^0.1.0",
     "@factorial/roles": "^0.1.0",
+    "@factorial/run": "^0.1.0",
     "@smithy/signature-v4": "^5.7.4",
     "zod": "^4.6.7"
   }

@@ -1,10 +1,12 @@
 /**
  * Entry point: reads the Runtime version's configuration, then serves the
- * Runtime contract on port 8080 and runs one SDK query when asked.
+ * Runtime contract on port 8080 and runs one SDK query when asked, streamed
+ * as run events (contracts/run/v1/, claude-sdk-events.ts).
  */
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@factorial/log';
 
+import { claudeRunEvents, runStarted } from './claude-sdk-events.ts';
 import { readConfig } from './config.ts';
 import { queryOptions } from './options.ts';
 import { HOST_ROLES } from './roles.ts';
@@ -27,8 +29,9 @@ const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
 
 const role = HOST_ROLES[config.role];
+const started = runStarted(config, role.tools);
 
-function startQuery(request: RunRequest): AsyncIterable<unknown> {
+function startRun(request: RunRequest): ReturnType<typeof claudeRunEvents> {
   log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
   const session = role.session(config.workspace, (message, fields) => log.info(message, fields));
   const options = queryOptions(config, role, {
@@ -41,19 +44,19 @@ function startQuery(request: RunRequest): AsyncIterable<unknown> {
     abortController,
     stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
   });
-  return query({ prompt: session.prompt(request.prompt), options });
+  return claudeRunEvents(started, query({ prompt: session.prompt(request.prompt), options }));
 }
 
 const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };
-const run = new Run(config.stateDirectory, startQuery, (state) => {
+const run = new Run(config.stateDirectory, startRun, (state) => {
   setBusy(state === 'running');
   if (state === 'running') return;
-  const { messages, outcome, stopReason, error } = run.status();
-  log.info('run ended', { state, messages, outcome, stopReason, error });
+  const { events, ended } = run.status();
+  log.info('run ended', { state, events, outcome: ended?.outcome, reason: ended?.reason, detail: ended?.detail, errors: ended?.errors });
 }, limits);
 
 const server = createServer(run, ping, (request) =>
-  log.info('run started', { role: config.role, model: config.model, round: request.round }),
+  log.info('run started', { role: config.role, model: config.model, harness: started.harness, round: request.round }),
 );
 server.listen(config.port, '0.0.0.0', () => log.info('listening', { port: config.port, role: config.role, model: config.model }));
 

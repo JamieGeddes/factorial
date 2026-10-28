@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JamieGeddes/factorial/contracts/run/v1/invocation.schema.json",
+  "title": "Run invocation",
+  "description": "The body of POST /invocations on a role's Runtime. The model, limits and tools are the Runtime version's; a host ignores any other field.",
+  "oneOf": [
+    {
+      "description": "Start the session's one run and stream its events.",
+      "type": "object",
+      "required": ["action", "contract", "prompt", "round"],
+      "properties": {
+        "action": { "const": "run" },
+        "contract": { "description": "The contract version the caller reads. A host that does not speak it answers 400.", "const": 1 },
+        "prompt": { "type": "string", "minLength": 1, "pattern": "\\S" },
+        "round": { "type": "integer", "minimum": 1 },
+        "workItemId": { "type": "string" },
+        "attempt": { "type": "integer" }
+      }
+    },
+    {
+      "description": "Stream the events after `after`, replayed, then live until the run ends.",
+      "type": "object",
+      "required": ["action"],
+      "properties": { "action": { "const": "attach" }, "after": { "type": "integer", "minimum": 0 } }
+    },
+    {
+      "description": "The run's state, and once it has ended, its run.ended event.",
+      "type": "object",
+      "required": ["action"],
+      "properties": { "action": { "const": "status" } }
+    }
+  ]
+}
