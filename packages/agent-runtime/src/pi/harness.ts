@@ -18,7 +18,9 @@
  *   agent_before_settle before the run may end. It also enforces the turn
  *   limit; the budget is checked after each model call.
  * - Subagents are a `task` tool that runs a child session with the subagent's
- *   prompt, tools, model and turn limit, under the same policy.
+ *   prompt, tools, model and turn limit, under the same policy. pi runs the
+ *   tool calls in one response at once, so at most MAX_CONCURRENT_SUBAGENTS
+ *   child sessions run together, as on the SDK host; a call beyond it waits.
  * The model is reached through pi's amazon-bedrock provider with the
  * execution role's credentials, in the version's region.
  */
@@ -40,7 +42,7 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import type { RunEnded, RunEvent } from '@factorial/run';
 
-import type { SubagentSpec } from '../agents.ts';
+import { MAX_CONCURRENT_SUBAGENTS, type SubagentSpec } from '../agents.ts';
 import type { Config } from '../config.ts';
 import type { Harness } from '../harness.ts';
 import type { HostRole, Note, RolePolicy } from '../roles.ts';
@@ -52,6 +54,7 @@ import { shellEnvironment } from './environment.ts';
 import { PiEvents, runStarted } from './events.ts';
 import { fetchTool } from './fetch.ts';
 import type { Helper } from './operations.ts';
+import { Slots } from './slots.ts';
 import { PI_TOOLS, toolCallOf, toolsFor, type AnyTool } from './tools.ts';
 
 const PROVIDER_ID = 'amazon-bedrock';
@@ -260,7 +263,8 @@ async function* runPi(
     return session;
   };
 
-  /** The subagent tool: one child session per call, ending at its own turn limit. */
+  /** The subagent tool: one child session per call, ending at its own turn limit, at most MAX_CONCURRENT_SUBAGENTS at once. */
+  const subagentSlots = new Slots(MAX_CONCURRENT_SUBAGENTS);
   const taskTool = (subagents: Readonly<Record<string, SubagentSpec>>): AnyTool | undefined => {
     const names = Object.keys(subagents);
     if (names.length === 0) return undefined;
@@ -272,7 +276,11 @@ async function* runPi(
         subagent_type: Type.Union(names.map((name) => Type.Literal(name))),
         prompt: Type.String({ description: 'The task, with everything the subagent needs to know.' }),
       }),
-      async execute(toolCallId, params) {
+      execute: (toolCallId, params) => subagentSlots.run(async () => {
+        // A call that waited for a slot while the run stopped starts nothing.
+        if (stopped || abortController.signal.aborted) {
+          return { content: [{ type: 'text' as const, text: 'The run has stopped; the subagent was not started.' }], details: undefined, isError: true };
+        }
         const spec = subagents[params.subagent_type]!;
         queue.push({ type: 'subagent.started', agentId: toolCallId, agentType: params.subagent_type });
         const childStarted = Date.now();
@@ -314,7 +322,7 @@ async function* runPi(
             finalContextTokens: events.lastInput.get(toolCallId) ?? 0,
           });
         }
-      },
+      }),
     });
   };
 

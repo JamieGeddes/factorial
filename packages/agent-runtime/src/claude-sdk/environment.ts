@@ -4,6 +4,7 @@
  * host's own environment plus fixed settings. Nothing from a request reaches it,
  * and anything else the host process holds stays out of the model's shell.
  */
+import { MAX_CONCURRENT_SUBAGENTS } from '../agents.ts';
 import type { Config } from '../config.ts';
 
 /** Passed through from the host when present. */
@@ -45,7 +46,7 @@ export function agentEnvironment(config: Config, host: NodeJS.ProcessEnv): Recor
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
     CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS: '1',
     CLAUDE_CODE_MAX_SUBAGENT_SPAWN_DEPTH: '1',
-    CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: '4',
+    CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: String(MAX_CONCURRENT_SUBAGENTS),
     // Claude Code starts subagents in the background by default: on #125 the
     // plan subagent ran while the builder slept 90 seconds waiting for it, and
     // a less patient builder could have edited before the plan existed. With

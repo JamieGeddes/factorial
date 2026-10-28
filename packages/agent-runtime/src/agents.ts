@@ -20,6 +20,9 @@ export interface SubagentSpec {
 
 export const READ_ONLY_TOOLS: readonly ToolKind[] = ['read', 'grep', 'glob'];
 
+/** Subagents that may run at once, on any harness; a call beyond it waits for one to finish. */
+export const MAX_CONCURRENT_SUBAGENTS = 4;
+
 export const EXPLORE: SubagentSpec = {
   description:
     'Read-only codebase search. Use it to answer a specific question about the repository (where something is defined, which files follow a pattern, how a convention is applied) without filling your own context with file contents.',
