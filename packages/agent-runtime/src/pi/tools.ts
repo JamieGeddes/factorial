@@ -2,15 +2,18 @@
  * pi's tools: what it calls each kind (../tools.ts), its tool calls as the
  * rules see them, and the tool set for a list of kinds. Every tool that
  * touches the workspace or runs a command does it as the agent user
- * (operations.ts). pi's own grep is not used: it runs ripgrep as the host
- * process and downloads it if missing; `grep` here searches through the file
- * helper instead.
+ * (operations.ts). pi's grep starts ripgrep from the host process; the image's
+ * `rg` is a wrapper that runs it as the agent user (agent-runtime/rg-as-agent),
+ * and the host refuses to start pi without it (harness.ts). Its own file reads
+ * go through the helper. pi's find is given a glob operation, so it never
+ * starts fd.
  */
 import { Type } from '@earendil-works/pi-ai';
 import {
   createBashToolDefinition,
   createEditToolDefinition,
   createFindToolDefinition,
+  createGrepToolDefinition,
   createReadToolDefinition,
   createWriteToolDefinition,
   defineTool,
@@ -23,7 +26,7 @@ export type AnyTool = ToolDefinition<any, any, any>;
 import type { ToolCall, ToolKind, ToolNames } from '../tools.ts';
 import { MAX_RESULTS_DESCRIPTION, QUERY_DESCRIPTION, WEB_SEARCH_DESCRIPTION, WEB_SEARCH_TOOL, search, type GatewayCall } from '../web-search.ts';
 import type { AgentRunner } from './as-agent.ts';
-import { bashOperations, editOperations, findOperations, grepFiles, readOperations, writeOperations, type Helper } from './operations.ts';
+import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
 
 export const PI_TOOLS: ToolNames = {
   shell: 'bash',
@@ -47,38 +50,6 @@ export function toolCallOf(toolName: string, input: unknown): ToolCall {
 }
 
 const text = (value: string, isError = false) => ({ content: [{ type: 'text' as const, text: value }], details: undefined, ...(isError ? { isError: true } : {}) });
-
-const GREP_LIMIT = 100;
-
-export function grepTool(helper: Helper, cwd: string): AnyTool {
-  return defineTool({
-    name: PI_TOOLS.grep,
-    label: 'grep',
-    description: `Search file contents for a JavaScript regular expression. Returns matching lines as path:line: text, at most ${GREP_LIMIT} by default. Skips .git, node_modules and binary files.`,
-    parameters: Type.Object({
-      pattern: Type.String({ description: 'Regular expression to search for.' }),
-      path: Type.Optional(Type.String({ description: 'File or directory to search; default the working directory.' })),
-      glob: Type.Optional(Type.String({ description: 'Only files whose name or relative path matches this glob, e.g. *.ts.' })),
-      ignoreCase: Type.Optional(Type.Boolean()),
-      limit: Type.Optional(Type.Number({ description: `Maximum matches; default ${GREP_LIMIT}.` })),
-    }),
-    async execute(_id, params) {
-      try {
-        new RegExp(params.pattern);
-      } catch (error) {
-        return text(`Invalid pattern: ${error instanceof Error ? error.message : String(error)}`, true);
-      }
-      const root = params.path ? (params.path.startsWith('/') ? params.path : `${cwd}/${params.path}`) : cwd;
-      try {
-        const matches = await grepFiles(helper, root, params.pattern, { limit: params.limit ?? GREP_LIMIT, ignoreCase: params.ignoreCase ?? false, include: params.glob });
-        if (matches.length === 0) return text('No matches.');
-        return text(matches.map((m) => `${m.file.startsWith(`${cwd}/`) ? m.file.slice(cwd.length + 1) : m.file}:${m.line}: ${m.text}`).join('\n'));
-      } catch (error) {
-        return text(`grep failed: ${error instanceof Error ? error.message : String(error)}`, true);
-      }
-    },
-  });
-}
 
 export function webSearchTool(call: GatewayCall): AnyTool {
   return defineTool({
@@ -124,7 +95,7 @@ export function toolsFor(kinds: readonly ToolKind[], deps: ToolDeps): AnyTool[] 
         case 'glob':
           return createFindToolDefinition(deps.cwd, { operations: findOperations(deps.helper) });
         case 'grep':
-          return grepTool(deps.helper, deps.cwd);
+          return createGrepToolDefinition(deps.cwd, { operations: grepOperations(deps.helper) });
         case 'webSearch':
           return deps.webSearch ? webSearchTool(deps.webSearch) : undefined;
         case 'fetch':

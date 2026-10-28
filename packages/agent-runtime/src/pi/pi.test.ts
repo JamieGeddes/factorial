@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -14,7 +14,8 @@ import { runAsAgent, type AgentRunner } from './as-agent.ts';
 import { shellEnvironment } from './environment.ts';
 import { PiEvents, runStarted, usageOf } from './events.ts';
 import { pageText } from './fetch.ts';
-import { bashOperations, editOperations, findOperations, grepFiles, readOperations, writeOperations, type Helper } from './operations.ts';
+import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
+import { RG_WRAPPER, firstOnPath } from './harness.ts';
 import { PI_TOOLS, toolCallOf, toolsFor } from './tools.ts';
 
 const config = readConfig({
@@ -81,18 +82,26 @@ describe('runAsAgent and the operations', () => {
     assert.equal(await findOperations(h).exists(path.join(cwd, 'src')), true);
   });
 
-  it('greps file contents, skipping node_modules and binaries, and follows links with the rights of whoever runs it', async () => {
+  it("gives pi's grep its directory check and context reads through the helper", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'pi-'));
-    writeFileSync(path.join(cwd, 'a.ts'), 'const VERSION = 1;\nconst other = 2;\n');
-    writeFileSync(path.join(cwd, 'b.bin'), Buffer.from([0, 1, 2, 86, 69, 82]));
-    mkdirSync(path.join(cwd, 'node_modules'));
-    writeFileSync(path.join(cwd, 'node_modules/c.ts'), 'VERSION');
-    const matches = await grepFiles(helper(cwd), cwd, 'version', { limit: 10, ignoreCase: true });
-    assert.deepEqual(matches, [{ file: path.join(cwd, 'a.ts'), line: 1, text: 'const VERSION = 1;' }]);
-    assert.deepEqual(await grepFiles(helper(cwd), cwd, 'VERSION', { limit: 10, ignoreCase: false, include: '*.md' }), []);
-    symlinkSync('/etc/hosts', path.join(cwd, 'hosts.ts'));
-    // The helper runs as the agent user on the Runtime; here it is the test user.
-    assert.ok(Array.isArray(await grepFiles(helper(cwd), cwd, 'localhost', { limit: 1, ignoreCase: false })));
+    writeFileSync(path.join(cwd, 'a.ts'), 'const VERSION = 1;\n');
+    const ops = grepOperations(helper(cwd));
+    assert.equal(await ops.isDirectory(cwd), true);
+    assert.equal(await ops.isDirectory(path.join(cwd, 'a.ts')), false);
+    assert.equal(await ops.readFile(path.join(cwd, 'a.ts')), 'const VERSION = 1;\n');
+  });
+});
+
+describe('firstOnPath', () => {
+  it('finds the first executable of a name on PATH, as a spawn would', () => {
+    const first = mkdtempSync(path.join(tmpdir(), 'bin-'));
+    const second = mkdtempSync(path.join(tmpdir(), 'bin-'));
+    writeFileSync(path.join(first, 'rg'), 'not executable', { mode: 0o644 });
+    writeFileSync(path.join(second, 'rg'), '#!/bin/sh\n', { mode: 0o755 });
+    assert.equal(firstOnPath('rg', `${first}:${second}`), path.join(second, 'rg'));
+    assert.equal(firstOnPath('rg', first), undefined);
+    assert.equal(firstOnPath('rg', undefined), undefined);
+    assert.equal(RG_WRAPPER, '/usr/local/bin/rg');
   });
 });
 

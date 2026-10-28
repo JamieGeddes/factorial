@@ -39,6 +39,7 @@ RUN apt-get update \
       procps \
       python3 \
       python3-venv \
+      ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
 # cfn-lint at CI's version (.github/workflows/ci.yml), with every dependency
@@ -82,8 +83,12 @@ RUN npm ci --omit=dev --omit=peer \
  && rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl \
  && npm cache clean --force
 COPY dist/host.mjs dist/quiet.mjs dist/agent-ops.mjs claude-as-agent ./
+# pi's grep starts `rg` as the root host; this wrapper, ahead of /usr/bin/rg on
+# PATH, runs it as the agent user instead (see the file).
+COPY rg-as-agent /usr/local/bin/rg
 RUN printf '#!/bin/sh\nexec node /opt/factorial/agent-runtime/quiet.mjs "$@"\n' > /usr/local/bin/quiet \
  && chmod 755 /usr/local/bin/quiet \
+ && chown root:root /usr/local/bin/rg && chmod 755 /usr/local/bin/rg \
  && chown -R root:root /opt/factorial \
  && chmod -R go-w /opt/factorial \
  && mkdir -m 0700 /var/lib/factorial

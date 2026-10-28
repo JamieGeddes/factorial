@@ -5,10 +5,9 @@
  * happens with the agent's privileges. pi's own environment for a command is
  * ignored: the runner's is the only one the agent sees.
  */
-import type { BashOperations, EditOperations, FindOperations, ReadOperations, WriteOperations } from '@earendil-works/pi-coding-agent';
+import type { BashOperations, EditOperations, FindOperations, GrepOperations, ReadOperations, WriteOperations } from '@earendil-works/pi-coding-agent';
 
 import { runAsAgent, type AgentRunner } from './as-agent.ts';
-import type { GrepMatch } from './agent-ops.ts';
 
 /** How to start the file helper: node and the helper's path (agent-ops.mjs beside the host bundle). */
 export interface Helper {
@@ -69,6 +68,14 @@ export function findOperations(helper: Helper): FindOperations {
   };
 }
 
-export function grepFiles(helper: Helper, root: string, pattern: string, options: { limit: number; ignoreCase: boolean; include?: string | undefined }): Promise<GrepMatch[]> {
-  return json<GrepMatch[]>(helper, ['grep', root, pattern, String(options.limit), String(options.ignoreCase), options.include ?? '']);
+/**
+ * What pi's grep reads itself: whether the search path is a directory, and
+ * files for context lines. The search is ripgrep, which the image's `rg`
+ * wrapper runs as the agent user (agent-runtime/rg-as-agent).
+ */
+export function grepOperations(helper: Helper): GrepOperations {
+  return {
+    isDirectory: (file) => json<boolean>(helper, ['isdir', file]),
+    readFile: async (file) => (await op(helper, ['read', file])).toString('utf8'),
+  };
 }
