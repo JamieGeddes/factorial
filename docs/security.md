@@ -241,6 +241,8 @@ On the Harness, the tool allow-list, the model and the loop's limits are enforce
 
 ### 9.2b The pi harness (spike #181)
 
+`docs/session-boundaries.md` draws where the root host and the `agent` user meet on both hosts, and what differs.
+
 `FACTORIAL_HARNESS=pi` on a Runtime version runs the role on pi (`packages/agent-runtime/src/pi/`) instead of the SDK. The default is `claude-agent-sdk`; the builder's version sets `pi` for the spike's runs. pi runs its loop in the host process, so the mitigations above are kept as follows:
 - **Tools, not the loop, drop to the agent user.** The loop, the role's policy and the limits stay in the root host, out of the model's reach. Every tool that runs a command or touches a file does it as the agent user with the same `setpriv` restrictions as `claude-as-agent`. The shell runs as `bash -c` that way. Read, write, edit, find and grep go through a file helper (`agent-ops.mjs`) run that way, so root never follows a link the model planted.
 - **No root-run search binaries.** pi's own grep always runs `ripgrep` from the host process and downloads it when it is missing, so the harness does not offer it and searches through the helper instead. Its find is given a glob operation, so it never starts `fd`. `PI_OFFLINE=1` stops pi downloading any tool or checking for updates.
