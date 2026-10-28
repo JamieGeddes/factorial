@@ -352,13 +352,18 @@ Evaluated on 2026-10-28 as a sixth option, for flexibility rather than cost. pi 
 - **Prompts and models.** The prompts are tuned for Claude Code's tools and for Claude. Another model needs its own prompt work, and quality is per model: GLM 5.3 Flash's step counts (see **The evidence**) were the model, not the harness.
 - **Binding decisions.** `CLAUDE.md`'s target architecture names the Claude Agent SDK and Claude on Bedrock. Adopting pi, as a second harness or the default, changes both and needs human approval.
 
-**Spike (#181).** The builder only, with `FACTORIAL_HARNESS` on the Runtime version choosing the harness (default `claude-agent-sdk`), and the same image, Runtime contract and invoker. First the role logic in `hooks.ts`, `report.ts` and `review.ts` is separated from the SDK so both hosts share it. Then three runs:
+**Spike (#181).** Scoped on 2026-10-28 to the harness alone: the builder on pi with the same models and limits as the SDK host (Sonnet 5.5 for the main loop and `plan`, Haiku 5.5 for `explore`, through the EU inference profiles on Bedrock; 150 turns, $5, 6,600 seconds). Non-Claude models are out of scope; once pi runs, another Bedrock model is configuration and gets its own item. `FACTORIAL_HARNESS` on the Runtime version chooses the harness (default `claude-agent-sdk`), with the same image, Runtime contract and invoker.
 
-- **(a) Parity:** a #87-sized item, pi with Sonnet 5.5 against the SDK host's PR #128, which compares harnesses with the model held constant.
-- **(b) Model switch:** the same item on a non-Claude Bedrock model, changing only the version's environment and the role's inference profiles.
-- **(c) Limits:** forced turn limits and rounds.
+First, a short local check of the Bedrock route. pi 1.4's Converse path adds a cache point on the system prompt and on the latest message, maps cache reads and writes into usage, and supports thinking. But its catalogue entries for the EU Claude profiles use the `eu-central-1` endpoint, where the execution role's grants name `eu-west-1`, and its prices may differ from the SDK's estimate. So the spike pins the region, matches the thinking settings, and prices runs from one table so that $5 means the same on both harnesses. Then the role logic in `hooks.ts`, `report.ts` and `review.ts` is separated from the SDK so both hosts share it, and the pi harness is built. Two runs:
 
-The gate: (a) finishes in one session with a valid plan, a complete report and passing tests, within 1.5 times the SDK host's turns and input tokens; (b) runs end to end with no code change; no finding against the security mitigations; (c) continues in rounds with work saved. The outcome of (b) is recorded, not gated: the spike proves that the model is configuration, not that a given model is good enough.
+- **(a) Parity:** a #87-sized item, pi against the SDK host's PR #128.
+- **(b) Limits:** forced turn limits and rounds.
+
+The gate:
+- (a) finishes in one session with a valid plan, a complete report and passing tests, within 1.5 times the SDK host's turns and input tokens and with cache reads at least 90% of input;
+- (a) runs through the run contract with no change to the invoker or orchestrator;
+- no finding against the security mitigations;
+- (b) continues in rounds with its work saved.
 
 ## If building from scratch
 
