@@ -5,10 +5,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
+import type { RunEvent } from '@factorial/run';
+
 import { Run } from './run.ts';
 import { createServer, parseInvocation, pingTracker } from './server.ts';
 
-const result = { type: 'result', subtype: 'success' };
+const started: RunEvent = { type: 'run.started', contract: 1, harness: { name: 'test-harness' }, role: 'builder', models: [{ purpose: 'main', id: 'm' }] };
+const result: RunEvent = { type: 'run.ended', outcome: 'complete', reason: 'completed' };
 
 function events(text: string): { id: number; data: unknown }[] {
   return text
@@ -23,7 +26,7 @@ function events(text: string): { id: number; data: unknown }[] {
 
 describe('parseInvocation', () => {
   it('accepts the three actions', () => {
-    assert.deepEqual(parseInvocation({ action: 'run', prompt: 'go', round: 1, workItemId: 'w', attempt: 2 }), {
+    assert.deepEqual(parseInvocation({ action: 'run', contract: 1, prompt: 'go', round: 1, workItemId: 'w', attempt: 2 }), {
       action: 'run',
       request: { prompt: 'go', round: 1, workItemId: 'w', attempt: 2 },
     });
@@ -33,15 +36,20 @@ describe('parseInvocation', () => {
   });
 
   it('rejects anything else', () => {
-    assert.equal(typeof parseInvocation({ action: 'run', prompt: ' ', round: 1 }), 'string');
-    assert.equal(typeof parseInvocation({ action: 'run', prompt: 'go', round: 0 }), 'string');
+    assert.equal(typeof parseInvocation({ action: 'run', contract: 1, prompt: ' ', round: 1 }), 'string');
+    assert.equal(typeof parseInvocation({ action: 'run', contract: 1, prompt: 'go', round: 0 }), 'string');
     assert.equal(typeof parseInvocation({ action: 'attach', after: -1 }), 'string');
     assert.equal(typeof parseInvocation({ action: 'deploy' }), 'string');
     assert.equal(typeof parseInvocation(null), 'string');
   });
 
+  it('refuses a run from a caller that reads another run contract, or names none', () => {
+    assert.match(String(parseInvocation({ action: 'run', prompt: 'go', round: 1 })), /contract 1/);
+    assert.match(String(parseInvocation({ action: 'run', contract: 2, prompt: 'go', round: 1 })), /contract 1/);
+  });
+
   it('ignores a model or other settings in the request', () => {
-    const parsed = parseInvocation({ action: 'run', prompt: 'go', round: 1, model: 'other', maxTurns: 9999 });
+    const parsed = parseInvocation({ action: 'run', contract: 1, prompt: 'go', round: 1, model: 'other', maxTurns: 9999 });
     assert.deepEqual(parsed, { action: 'run', request: { prompt: 'go', round: 1, workItemId: undefined, attempt: undefined } });
   });
 });
@@ -76,7 +84,7 @@ describe('createServer', async () => {
   const gate = new Promise<void>((resolve) => (release = resolve));
   const tracker = pingTracker(() => 1);
   const run = new Run(mkdtempSync(path.join(tmpdir(), 'agent-runtime-')), async function* () {
-    yield { type: 'system', subtype: 'init' };
+    yield started;
     await gate;
     yield result;
   }, (state) => tracker.setBusy(state === 'running'));
@@ -92,18 +100,19 @@ describe('createServer', async () => {
     assert.equal(((await (await fetch(`${base}/ping`)).json()) as { status: string }).status, 'Healthy');
     assert.equal((await invoke({ action: 'attach' })).status, 409);
 
-    const response = await invoke({ action: 'run', prompt: 'go', round: 1 });
+    assert.equal((await invoke({ action: 'run', prompt: 'go', round: 1 })).status, 400);
+    const response = await invoke({ action: 'run', contract: 1, prompt: 'go', round: 1 });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get('content-type'), 'text/event-stream');
     const body = response.text();
 
     await new Promise((resolve) => setTimeout(resolve, 20));
     assert.equal(((await (await fetch(`${base}/ping`)).json()) as { status: string }).status, 'HealthyBusy');
-    assert.equal((await invoke({ action: 'run', prompt: 'again', round: 1 })).status, 409);
+    assert.equal((await invoke({ action: 'run', contract: 1, prompt: 'again', round: 1 })).status, 409);
 
     release();
     assert.deepEqual(events(await body), [
-      { id: 1, data: { type: 'system', subtype: 'init' } },
+      { id: 1, data: started },
       { id: 2, data: result },
     ]);
     assert.equal(((await (await fetch(`${base}/ping`)).json()) as { status: string }).status, 'Healthy');
@@ -111,9 +120,10 @@ describe('createServer', async () => {
 
   it('replays after a given message on attach, and reports status', async () => {
     assert.deepEqual(events(await (await invoke({ action: 'attach', after: 1 })).text()), [{ id: 2, data: result }]);
-    const status = (await (await invoke({ action: 'status' })).json()) as { state: string; outcome: string };
+    const status = (await (await invoke({ action: 'status' })).json()) as { contract: number; state: string; ended: { outcome: string } };
+    assert.equal(status.contract, 1);
     assert.equal(status.state, 'finished');
-    assert.equal(status.outcome, 'complete');
+    assert.equal(status.ended.outcome, 'complete');
   });
 
   it('rejects bad requests and unknown paths', async () => {

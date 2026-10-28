@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JamieGeddes/factorial/contracts/run/v1/run-status.schema.json",
+  "title": "Run status",
+  "description": "The host's reply to the status action. `ended` is the run's run.ended event, recorded once; the invoker checks it against the streamed one.",
+  "type": "object",
+  "required": ["contract", "state", "events"],
+  "properties": {
+    "contract": { "const": 1 },
+    "state": { "enum": ["idle", "running", "finished", "failed"] },
+    "events": { "description": "How many events the run has recorded.", "type": "integer", "minimum": 0 },
+    "ended": { "$ref": "run-event.schema.json#/$defs/runEnded" }
+  }
+}

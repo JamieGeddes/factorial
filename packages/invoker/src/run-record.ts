@@ -2,8 +2,10 @@
  * What a stage records about its agent's run: `build/usage.json` or
  * `review/usage.json`. Holds counts and identifiers only, never content.
  */
+import { RUN_CONTRACT_VARIABLE, type ModelRef, type ModelTotal } from '@factorial/run';
+
 import type { CallUsage, RunUsage } from './usage.ts';
-import type { SubagentRun, SubagentTotal } from './sdk-messages.ts';
+import type { SubagentRun, SubagentTotal } from './run-events.ts';
 
 /**
  * The Runtime version the `live` endpoint served, and its model and limits,
@@ -19,6 +21,8 @@ export interface VersionInfo {
   maxTurns?: number;
   maxBudgetUsd?: number;
   maxDurationSeconds?: number;
+  /** The run contract the version's host speaks (contracts/run/v1/). */
+  runContract?: number;
 }
 
 /** A runtime version's model and limits, from its environment variables. */
@@ -37,34 +41,43 @@ export function runtimeInfoOf(environment: Record<string, string> | undefined): 
   if (maxTurns !== undefined) info.maxTurns = maxTurns;
   if (maxBudgetUsd !== undefined) info.maxBudgetUsd = maxBudgetUsd;
   if (maxDurationSeconds !== undefined) info.maxDurationSeconds = maxDurationSeconds;
+  const runContract = number(RUN_CONTRACT_VARIABLE);
+  if (runContract !== undefined) info.runContract = runContract;
   return info;
 }
 
 export interface UsageRecord extends VersionInfo {
-  /** How the run ended (the SDK's result subtype, or the host's own stop), or `interrupted` when the task was stopped first. */
+  /** How the run ended (run.ended's reason, or the invoker's own), or `interrupted` when the task was stopped first. */
   stopReason: string;
   toolCalls: number;
   durationSeconds: number;
   usage: RunUsage;
   /** One entry per model call, in order. */
   calls: CallUsage[];
-  /** From the Agent SDK's result message. */
-  sdk?: SdkRecord;
+  /** What the harness reported beyond the counts above. */
+  harness?: HarnessRecord;
   error?: string;
 }
 
 /**
- * What only the SDK reports. costUsd is the SDK's estimate at list prices;
- * modelUsage covers every model call, subagents included, so it is the
- * figure to compare with the summed calls.
+ * What the harness reports, from run.started and run.ended. costUsd is the
+ * harness's estimate at list prices; models covers every model call,
+ * subagents included, so it is the figure to compare with the summed calls.
  */
-export interface SdkRecord {
-  resultSubtype?: string;
-  numTurns?: number;
+export interface HarnessRecord {
+  name?: string;
+  version?: string;
+  /** The models the version names, by purpose. */
+  configuredModels?: (ModelRef & { purpose: string })[];
+  /** The harness's own code for the ending, e.g. an SDK result subtype. */
+  detail?: string;
+  turns?: number;
   costUsd?: number;
-  modelUsage?: Record<string, unknown>;
-  permissionDenials?: number;
+  models?: ModelTotal[];
+  deniedToolCalls?: number;
   reconnects?: number;
+  /** Events that did not meet the run contract; counted, never read. */
+  invalidEvents?: number;
   /** Each subagent run in order and a total per agent type (see SubagentRun for where each figure comes from). Already inside the run's own totals. */
   subagents?: { runs: SubagentRun[]; totals: SubagentTotal[] };
 }
@@ -78,7 +91,7 @@ export function usageRecord(params: {
   endedAt: number;
   usage: RunUsage;
   calls: CallUsage[];
-  sdk?: SdkRecord | undefined;
+  harness?: HarnessRecord | undefined;
   error?: string | undefined;
 }): UsageRecord {
   return {
@@ -88,7 +101,7 @@ export function usageRecord(params: {
     durationSeconds: Math.round((params.endedAt - params.startedAt) / 1000),
     usage: params.usage,
     calls: params.calls,
-    ...(params.sdk ? { sdk: params.sdk } : {}),
+    ...(params.harness ? { harness: params.harness } : {}),
     ...(params.error ? { error: params.error } : {}),
   };
 }

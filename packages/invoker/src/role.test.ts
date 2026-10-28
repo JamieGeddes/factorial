@@ -102,13 +102,15 @@ test('refuses sensitive paths that are not repository paths', () => {
 });
 
 test('leaves the reviewer to its Collect step', () => {
-  assert.equal(incompleteReason(ROLES.reviewer, 'error_max_turns'), undefined);
+  assert.equal(incompleteReason(ROLES.reviewer, 'incomplete', 'max_turns'), undefined);
 });
 
-test("treats the Agent SDK's success as a finished build and its limits as incomplete", () => {
-  assert.equal(incompleteReason(ROLES.builder, 'success'), undefined);
-  assert.match(incompleteReason(ROLES.builder, 'error_max_turns') ?? '', /stopped with error_max_turns/);
-  assert.match(incompleteReason(ROLES.builder, 'error_max_budget_usd') ?? '', /error_max_budget_usd/);
-  assert.match(incompleteReason(ROLES.builder, 'max_duration') ?? '', /max_duration/);
-  assert.match(incompleteReason(ROLES.builder, undefined) ?? '', /no stop reason/);
+test('treats a complete run as a finished build and any other as incomplete, whatever the reason', () => {
+  assert.equal(incompleteReason(ROLES.builder, 'complete', 'completed'), undefined);
+  // A reason from a future harness still decides by its outcome.
+  assert.equal(incompleteReason(ROLES.builder, 'complete', 'goal_reached'), undefined);
+  assert.match(incompleteReason(ROLES.builder, 'incomplete', 'max_turns') ?? '', /stopped with max_turns/);
+  assert.match(incompleteReason(ROLES.builder, 'incomplete', 'max_budget') ?? '', /max_budget/);
+  assert.match(incompleteReason(ROLES.builder, 'incomplete', 'max_duration') ?? '', /max_duration/);
+  assert.match(incompleteReason(ROLES.builder, undefined, undefined) ?? '', /no stop reason/);
 });

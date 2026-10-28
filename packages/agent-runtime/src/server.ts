@@ -3,13 +3,17 @@
  * port 8080. /ping reports HealthyBusy while the run is in progress, which keeps
  * the session alive past its idle timeout. /invocations takes one of three
  * actions:
- * - run: start the session's one run and stream its messages as server-sent
- *   events, one numbered SDK message per event; 409 if the session has had one.
- * - attach: stream the messages after `after` (default 0), replayed from the
+ * - run: start the session's one run and stream its events as server-sent
+ *   events, one numbered run event per event; 400 unless the request names
+ *   the run contract this host speaks, 409 if the session has had one.
+ * - attach: stream the events after `after` (default 0), replayed from the
  *   transcript, then live until the run ends; 409 if no run has started.
- * - status: the run's state and, once finished, its outcome and result message.
+ * - status: the run's state and, once it has ended, its run.ended event.
+ * The bodies, events and status are contracts/run/v1/.
  */
 import http from 'node:http';
+
+import { RUN_CONTRACT } from '@factorial/run';
 
 import type { Run, RunRequest } from './run.ts';
 
@@ -31,6 +35,9 @@ export function parseInvocation(body: unknown): Invocation | string {
   const fields = body as Record<string, unknown>;
   switch (fields.action) {
     case 'run': {
+      // The caller names the event format it reads, so an invoker from before
+      // or after a contract change fails here, before any model call.
+      if (fields.contract !== RUN_CONTRACT) return `run needs contract ${RUN_CONTRACT}, the only run contract this host speaks`;
       if (typeof fields.prompt !== 'string' || fields.prompt.trim().length === 0) return 'run needs a prompt';
       if (!Number.isInteger(fields.round) || (fields.round as number) < 1) return 'run needs a round of 1 or more';
       const workItemId = typeof fields.workItemId === 'string' ? fields.workItemId : undefined;
@@ -58,7 +65,7 @@ function stream(run: Run, after: number, request: http.IncomingMessage, response
   response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
   const unsubscribe = run.subscribe(
     after,
-    (entry) => response.write(`id: ${entry.seq}\ndata: ${JSON.stringify(entry.message)}\n\n`),
+    (entry) => response.write(`id: ${entry.seq}\ndata: ${JSON.stringify(entry.event)}\n\n`),
     () => response.end(),
   );
   // The run carries on when the caller goes away; it can attach again.

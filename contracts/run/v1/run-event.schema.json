@@ -1,0 +1,216 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/JamieGeddes/factorial/contracts/run/v1/run-event.schema.json",
+  "title": "Run event",
+  "description": "One event in an agent run's stream, from the host on the role's Runtime to the invoker. The host owns the harness and the model; this contract is all the invoker reads. Consumers ignore event types and fields they do not know, so additive changes stay in v1.",
+  "type": "object",
+  "required": ["type"],
+  "properties": {
+    "type": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z][a-z0-9]*)*$", "maxLength": 64 }
+  },
+  "allOf": [
+    { "if": { "properties": { "type": { "const": "run.started" } } }, "then": { "$ref": "#/$defs/runStarted" } },
+    { "if": { "properties": { "type": { "const": "model.call" } } }, "then": { "$ref": "#/$defs/modelCall" } },
+    { "if": { "properties": { "type": { "const": "model.retry" } } }, "then": { "$ref": "#/$defs/modelRetry" } },
+    { "if": { "properties": { "type": { "const": "text" } } }, "then": { "$ref": "#/$defs/text" } },
+    { "if": { "properties": { "type": { "const": "reasoning" } } }, "then": { "$ref": "#/$defs/text" } },
+    { "if": { "properties": { "type": { "const": "tool.call" } } }, "then": { "$ref": "#/$defs/toolCall" } },
+    { "if": { "properties": { "type": { "const": "tool.result" } } }, "then": { "$ref": "#/$defs/toolResult" } },
+    { "if": { "properties": { "type": { "const": "subagent.started" } } }, "then": { "$ref": "#/$defs/subagentStarted" } },
+    { "if": { "properties": { "type": { "const": "subagent.ended" } } }, "then": { "$ref": "#/$defs/subagentEnded" } },
+    { "if": { "properties": { "type": { "const": "context.compacted" } } }, "then": { "$ref": "#/$defs/contextCompacted" } },
+    { "if": { "properties": { "type": { "const": "harness" } } }, "then": { "$ref": "#/$defs/harnessNative" } },
+    { "if": { "properties": { "type": { "const": "run.ended" } } }, "then": { "$ref": "#/$defs/runEnded" } }
+  ],
+  "$defs": {
+    "count": { "type": "integer", "minimum": 0 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "agentId": {
+      "description": "The subagent the event belongs to, as named by its subagent.started event. Absent for the role's own loop.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "model": {
+      "description": "A model as the provider names it. `provider` is how it is reached (bedrock, anthropic, vertex, openai, ...), not who trained it.",
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "provider": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "id": { "$ref": "#/$defs/name" }
+      }
+    },
+    "usage": {
+      "description": "Token counts. inputTokens is the whole prompt, cache reads and writes included; cache and reasoning figures are subsets of the totals, absent when the provider does not report them.",
+      "type": "object",
+      "required": ["inputTokens", "outputTokens"],
+      "properties": {
+        "inputTokens": { "$ref": "#/$defs/count" },
+        "outputTokens": { "$ref": "#/$defs/count" },
+        "cacheReadInputTokens": { "$ref": "#/$defs/count" },
+        "cacheWriteInputTokens": { "$ref": "#/$defs/count" },
+        "reasoningTokens": { "$ref": "#/$defs/count" }
+      }
+    },
+    "runStarted": {
+      "description": "Always the first event.",
+      "type": "object",
+      "required": ["contract", "harness", "role", "models"],
+      "properties": {
+        "contract": { "const": 1 },
+        "harness": {
+          "description": "What runs the agent loop, e.g. claude-agent-sdk and its version.",
+          "type": "object",
+          "required": ["name"],
+          "properties": { "name": { "$ref": "#/$defs/name" }, "version": { "type": "string", "maxLength": 100 } }
+        },
+        "role": { "$ref": "#/$defs/name" },
+        "models": {
+          "description": "The models the Runtime version names, by what each is for (main, explore, background, ...).",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "allOf": [{ "$ref": "#/$defs/model" }],
+            "required": ["purpose"],
+            "properties": { "purpose": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" } }
+          }
+        },
+        "tools": { "type": "array", "items": { "$ref": "#/$defs/name" } }
+      }
+    },
+    "modelCall": {
+      "description": "One model call and its usage, once per call however the harness splits the response.",
+      "type": "object",
+      "required": ["usage"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "model": { "$ref": "#/$defs/model" },
+        "usage": { "$ref": "#/$defs/usage" },
+        "exact": {
+          "description": "False when the harness reports the call before its output is finished, so outputTokens is a lower bound. run.ended's totals are then the figure to trust.",
+          "type": "boolean"
+        }
+      }
+    },
+    "modelRetry": {
+      "type": "object",
+      "required": ["attempt"],
+      "properties": {
+        "attempt": { "type": "integer", "minimum": 1 },
+        "maxRetries": { "$ref": "#/$defs/count" },
+        "delayMs": { "$ref": "#/$defs/count" },
+        "status": { "type": ["integer", "null"] },
+        "error": { "type": "string" }
+      }
+    },
+    "text": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "model": { "$ref": "#/$defs/model" },
+        "text": { "type": "string" }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "required": ["callId", "tool", "input"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "callId": { "$ref": "#/$defs/name" },
+        "tool": { "$ref": "#/$defs/name" },
+        "input": {}
+      }
+    },
+    "toolResult": {
+      "type": "object",
+      "required": ["callId", "content"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "callId": { "$ref": "#/$defs/name" },
+        "isError": { "type": "boolean" },
+        "content": { "type": "string" }
+      }
+    },
+    "subagentStarted": {
+      "type": "object",
+      "required": ["agentId", "agentType"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "agentType": { "$ref": "#/$defs/name" },
+        "parentAgentId": { "$ref": "#/$defs/agentId" }
+      }
+    },
+    "subagentEnded": {
+      "description": "Its model calls are the model.call events with its agentId; these are the harness's own figures for the run.",
+      "type": "object",
+      "required": ["agentId", "agentType"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "agentType": { "$ref": "#/$defs/name" },
+        "durationMs": { "$ref": "#/$defs/count" },
+        "toolCalls": { "$ref": "#/$defs/count" },
+        "finalContextTokens": { "$ref": "#/$defs/count" }
+      }
+    },
+    "contextCompacted": {
+      "type": "object",
+      "required": ["trigger"],
+      "properties": {
+        "agentId": { "$ref": "#/$defs/agentId" },
+        "trigger": { "enum": ["auto", "manual"] },
+        "tokensBefore": { "$ref": "#/$defs/count" },
+        "tokensAfter": { "$ref": "#/$defs/count" }
+      }
+    },
+    "harnessNative": {
+      "description": "A message the harness produced that no other event type carries, kept for the transcript. Never interpreted.",
+      "type": "object",
+      "required": ["name", "message"],
+      "properties": { "name": { "$ref": "#/$defs/name" }, "message": {} }
+    },
+    "runEnded": {
+      "description": "Always the last event, exactly once. The host's status reply carries the same object.",
+      "type": "object",
+      "required": ["outcome", "reason"],
+      "properties": {
+        "outcome": {
+          "description": "complete: the role finished. incomplete: a turn, budget or time limit stopped it (the rounds path). failed: anything else.",
+          "enum": ["complete", "incomplete", "failed"]
+        },
+        "reason": {
+          "description": "Why, in Factorial's terms (see the README for the known values). Open, so a new harness can add one; consumers decide by outcome.",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{0,63}$"
+        },
+        "detail": { "description": "The harness's own code for the ending, e.g. an SDK result subtype.", "type": "string", "maxLength": 200 },
+        "errors": { "type": "array", "items": { "type": "string" }, "maxItems": 50 },
+        "turns": { "$ref": "#/$defs/count" },
+        "durationMs": { "$ref": "#/$defs/count" },
+        "cost": {
+          "type": "object",
+          "required": ["usd", "basis"],
+          "properties": {
+            "usd": { "type": "number", "minimum": 0 },
+            "basis": { "description": "harness-estimate: the harness's figure at list prices, not a bill.", "enum": ["harness-estimate"] }
+          }
+        },
+        "models": {
+          "description": "Usage per model over every call in the run, subagents included: the run's totals when present.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["model", "usage"],
+            "properties": {
+              "model": { "$ref": "#/$defs/model" },
+              "usage": { "$ref": "#/$defs/usage" },
+              "costUsd": { "type": "number", "minimum": 0 }
+            }
+          }
+        },
+        "deniedToolCalls": { "$ref": "#/$defs/count" }
+      }
+    }
+  }
+}

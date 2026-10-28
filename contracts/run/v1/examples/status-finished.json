@@ -1,0 +1,6 @@
+{
+  "contract": 1,
+  "state": "finished",
+  "events": 14,
+  "ended": { "type": "run.ended", "outcome": "complete", "reason": "completed", "detail": "success", "turns": 41 }
+}
