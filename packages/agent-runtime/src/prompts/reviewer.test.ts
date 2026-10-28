@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { reviewerPrompt } from './reviewer.ts';
+import { CLAUDE_TOOLS } from '../claude-sdk/tools.ts';
+import { reviewerPrompt as prompt } from './reviewer.ts';
+
+const reviewerPrompt = prompt(CLAUDE_TOOLS);
 
 describe('reviewer prompt', () => {
   it('names the review file, its shape and the inputs', () => {

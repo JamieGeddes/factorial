@@ -1,6 +1,6 @@
 /**
- * The reviewer's review, checked before its run may end. A Stop hook in the
- * host validates /workspace/review.json against the review contract and,
+ * The reviewer's review, checked before its run may end. The host's stop
+ * check validates /workspace/review.json against the review contract and,
  * while it is missing or invalid, sends the reviewer back with what is wrong,
  * at most MAX_REVIEW_CHECKS times. On the harness, #87's first review read
  * until its step limit and wrote nothing.
@@ -22,7 +22,6 @@
  */
 import path from 'node:path';
 
-import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { parseReviewJson } from '@factorial/review';
 
 import { readAgentFile } from './report.ts';
@@ -58,34 +57,27 @@ export const SECOND_PASS = [
 ].join('\n');
 
 /**
- * The Stop hook: send the reviewer back while its review is missing or
- * invalid, at most MAX_REVIEW_CHECKS times, and send the first valid review
- * back once for the second pass.
+ * The stop check: what to send the reviewer back with while its review is
+ * missing or invalid, at most MAX_REVIEW_CHECKS times, and the second pass
+ * once after its first valid review.
  */
-export function reviewStopHooks(workspace: string, onBlocked: (reason: string) => void): HookCallbackMatcher[] {
+export function reviewStopCheck(workspace: string, onBlocked: (reason: string) => void): () => string | undefined {
   let checks = 0;
   let secondPass = false;
-  return [
-    {
-      hooks: [
-        async (input: HookInput): Promise<SyncHookJSONOutput> => {
-          if (input.hook_event_name !== 'Stop') return {};
-          // One byte over the cap, so an oversized file is reported as one.
-          const errors = reviewErrors(readAgentFile(path.join(workspace, 'review.json'), MAX_REVIEW_BYTES + 1));
-          let reason: string | undefined;
-          if (errors !== undefined) {
-            if (checks >= MAX_REVIEW_CHECKS) return {};
-            checks += 1;
-            reason = reviewInstruction(errors);
-          } else if (!secondPass) {
-            secondPass = true;
-            reason = SECOND_PASS;
-          }
-          if (reason === undefined) return {};
-          onBlocked(reason);
-          return { decision: 'block', reason };
-        },
-      ],
-    },
-  ];
+  return () => {
+    // One byte over the cap, so an oversized file is reported as one.
+    const errors = reviewErrors(readAgentFile(path.join(workspace, 'review.json'), MAX_REVIEW_BYTES + 1));
+    let reason: string | undefined;
+    if (errors !== undefined) {
+      if (checks >= MAX_REVIEW_CHECKS) return undefined;
+      checks += 1;
+      reason = reviewInstruction(errors);
+    } else if (!secondPass) {
+      secondPass = true;
+      reason = SECOND_PASS;
+    }
+    if (reason === undefined) return undefined;
+    onBlocked(reason);
+    return reason;
+  };
 }

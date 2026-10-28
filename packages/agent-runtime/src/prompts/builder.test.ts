@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { builderPrompt } from './builder.ts';
+import { CLAUDE_TOOLS } from '../claude-sdk/tools.ts';
+import { builderPrompt as prompt } from './builder.ts';
+
+const builderPrompt = prompt(CLAUDE_TOOLS);
 
 const HEADINGS = ['## Summary', '## Behaviour impact', '## Breaking changes', '## Uncertainties', '## Not tested', '## Plan steps'];
 

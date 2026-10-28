@@ -2,7 +2,7 @@
 
 A run is one agent role's session on its AgentCore Runtime: the host process in the container runs the agent loop (the harness) against the role's model, and the invoker reads what happened. This contract is everything between the two: the invocation bodies, the stream of run events and the status reply. The invoker reads nothing else, so a different harness, or a model from another provider, changes the host on the Runtime and leaves the invoker, the state machine and the records as they are.
 
-Today the only host is `packages/agent-runtime`, running the Claude Agent SDK with Claude on Amazon Bedrock; its adapter (`claude-sdk-events.ts`) is the one place SDK messages are read. The contract is internal to Factorial, not part of the `WorkItem` API, but the host and the invoker deploy at different moments, so it is versioned like the others. The canonical definitions are the JSON Schemas in `v1/`; `@factorial/run` validates against those files.
+Today the only host is `packages/agent-runtime`, running the Claude Agent SDK with Claude on Amazon Bedrock; its adapter (`src/claude-sdk/events.ts`) is the one place SDK messages are read, and everything that touches the SDK is in `src/claude-sdk/`. The contract is internal to Factorial, not part of the `WorkItem` API, but the host and the invoker deploy at different moments, so it is versioned like the others. The canonical definitions are the JSON Schemas in `v1/`; `@factorial/run` validates against those files.
 
 ## Protocol
 

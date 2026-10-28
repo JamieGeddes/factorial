@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { builderAgents } from './agents.ts';
-import { readConfig } from './config.ts';
+import { BUILDER_SUBAGENTS } from '../agents.ts';
+import { readConfig } from '../config.ts';
+import { agentDefinition } from './options.ts';
+
+const builderAgents = (config: ReturnType<typeof readConfig>, webSearch: boolean) =>
+  Object.fromEntries(Object.entries(BUILDER_SUBAGENTS).map(([name, spec]) => [name, agentDefinition(config, spec, webSearch)]));
 
 const config = readConfig({
   FACTORIAL_ROLE: 'builder',
@@ -16,7 +20,7 @@ const config = readConfig({
   AWS_REGION: 'eu-west-1',
 });
 
-describe('builderAgents', () => {
+describe('the builder subagents as SDK definitions', () => {
   const agents = builderAgents(config, true);
   const explore = agents.explore;
 

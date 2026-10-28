@@ -1,18 +1,15 @@
 /**
  * Entry point: reads the Runtime version's configuration, then serves the
- * Runtime contract on port 8080 and runs one SDK query when asked, streamed
- * as run events (contracts/run/v1/, claude-sdk-events.ts).
+ * Runtime contract on port 8080 and runs the role once when asked, on the
+ * harness (claude-sdk/harness.ts), streamed as run events (contracts/run/v1/).
  */
-import { query } from '@anthropic-ai/claude-agent-sdk';
 import { createLogger } from '@factorial/log';
 
-import { claudeRunEvents, runStarted } from './claude-sdk-events.ts';
+import { claudeHarness } from './claude-sdk/harness.ts';
 import { readConfig } from './config.ts';
-import { queryOptions } from './options.ts';
 import { HOST_ROLES } from './roles.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
-import { signedGatewayCall, webSearchServer } from './web-search.ts';
 
 const config = readConfig(process.env);
 // The host must be root so the agent user, which the SDK subprocess drops to,
@@ -28,23 +25,12 @@ let log = createLogger('agent-runtime');
 const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
 
-const role = HOST_ROLES[config.role];
-const started = runStarted(config, role.tools);
+const harness = claudeHarness(config, HOST_ROLES[config.role], abortController);
+const { started } = harness;
 
-function startRun(request: RunRequest): ReturnType<typeof claudeRunEvents> {
+function startRun(request: RunRequest) {
   log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
-  const session = role.session(config.workspace, (message, fields) => log.info(message, fields));
-  const options = queryOptions(config, role, {
-    hostEnv: process.env,
-    preToolUse: session.preToolUse,
-    postToolUse: session.postToolUse,
-    stop: session.stop,
-    webSearch:
-      role.webSearch && config.webSearchGatewayUrl ? webSearchServer(signedGatewayCall(config.webSearchGatewayUrl, config.region)) : undefined,
-    abortController,
-    stderr: (data) => log.info('sdk stderr', { data: data.slice(0, 2000) }),
-  });
-  return claudeRunEvents(started, query({ prompt: session.prompt(request.prompt), options }));
+  return harness.start(request, (message, fields) => log.info(message, fields));
 }
 
 const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };

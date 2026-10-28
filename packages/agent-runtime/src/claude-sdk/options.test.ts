@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
-import { readConfig } from './config.ts';
+import { readConfig } from '../config.ts';
+import { reviewerPrompt } from '../prompts/reviewer.ts';
+import { HOST_ROLES } from '../roles.ts';
 import { queryOptions } from './options.ts';
-import { BUILDER_TOOLS, HOST_ROLES, REVIEWER_TOOLS } from './roles.ts';
-import { reviewerPrompt } from './prompts/reviewer.ts';
+import { CLAUDE_TOOLS } from './tools.ts';
 import { TOOL_NAME, webSearchServer } from './web-search.ts';
 
 const config = readConfig({
@@ -38,8 +39,7 @@ describe('queryOptions', () => {
     assert.equal(options.permissionMode, 'bypassPermissions');
     assert.equal(options.maxTurns, 150);
     assert.equal(options.maxBudgetUsd, 10);
-    assert.deepEqual(options.tools, BUILDER_TOOLS);
-    assert.ok(BUILDER_TOOLS.includes('WebFetch'));
+    assert.deepEqual(options.tools, ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'Agent']);
     assert.deepEqual(Object.keys(options.agents ?? {}), ['explore', 'plan']);
     assert.deepEqual(Object.keys(options.hooks ?? {}), ['PreToolUse', 'PostToolUse', 'Stop']);
     assert.deepEqual(options.agents?.explore?.tools, ['Read', 'Grep', 'Glob']);
@@ -61,9 +61,8 @@ describe('queryOptions for the reviewer', () => {
 
   it('gives it its own prompt and read-only tools, and no subagents', () => {
     const options = queryOptions(reviewer, HOST_ROLES.reviewer, { ...parts, webSearch: undefined });
-    assert.equal(options.systemPrompt, reviewerPrompt);
-    assert.deepEqual(options.tools, REVIEWER_TOOLS);
-    assert.ok(!REVIEWER_TOOLS.includes('Agent') && !REVIEWER_TOOLS.includes('WebFetch'));
+    assert.equal(options.systemPrompt, reviewerPrompt(CLAUDE_TOOLS));
+    assert.deepEqual(options.tools, ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit']);
     assert.deepEqual(options.agents, {});
     assert.equal(options.permissionMode, 'bypassPermissions');
     assert.deepEqual(options.settingSources, []);
@@ -79,8 +78,8 @@ describe('queryOptions for the reviewer', () => {
 describe('the SDK pin', () => {
   it('is the same exact version in the workspace and the image', () => {
     const read = (file: string) => JSON.parse(readFileSync(new URL(file, import.meta.url), 'utf8'));
-    const workspace = read('../package.json').dependencies['@anthropic-ai/claude-agent-sdk'];
-    const image = read('../../../agent-runtime/package.json').dependencies['@anthropic-ai/claude-agent-sdk'];
+    const workspace = read('../../package.json').dependencies['@anthropic-ai/claude-agent-sdk'];
+    const image = read('../../../../agent-runtime/package.json').dependencies['@anthropic-ai/claude-agent-sdk'];
     assert.match(workspace, /^\d+\.\d+\.\d+$/);
     assert.equal(image, workspace);
   });

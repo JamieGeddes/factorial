@@ -1,58 +1,58 @@
 /**
- * Subagents the builder may start. Defined in code and passed to the SDK, with
- * the built-in agents turned off (CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS), so
- * these are the only ones that exist. Subagents share the builder's session and
- * trust level, and their reports are the model's claim, never evidence.
+ * Subagents the builder may start, defined once for every harness. Each
+ * harness turns a spec into its own subagent (claude-sdk/options.ts passes
+ * them to the SDK with its built-in agents turned off, so these are the only
+ * ones that exist). Subagents share the builder's session and trust level,
+ * and their reports are the model's claim, never evidence.
  */
-import type { AgentDefinition } from '@anthropic-ai/claude-agent-sdk';
-
-import type { Config } from './config.ts';
 import { planPrompt } from './prompts/plan.ts';
-import { TOOL_NAME } from './web-search.ts';
+import type { ToolKind, ToolNames } from './tools.ts';
 
-export const READ_ONLY_TOOLS = ['Read', 'Grep', 'Glob'];
+export interface SubagentSpec {
+  description: string;
+  prompt: (tools: ToolNames) => string;
+  /** In this order. `webSearch` is dropped when the gateway is not configured. */
+  tools: readonly ToolKind[];
+  /** `inherit` runs on the role's main model; `explore` on the Runtime version's explore model. */
+  model: 'inherit' | 'explore';
+  maxTurns: number;
+}
 
-export function explore(config: Config): AgentDefinition {
-  return {
-    description:
-      'Read-only codebase search. Use it to answer a specific question about the repository (where something is defined, which files follow a pattern, how a convention is applied) without filling your own context with file contents.',
-    prompt: [
+export const READ_ONLY_TOOLS: readonly ToolKind[] = ['read', 'grep', 'glob'];
+
+export const EXPLORE: SubagentSpec = {
+  description:
+    'Read-only codebase search. Use it to answer a specific question about the repository (where something is defined, which files follow a pattern, how a convention is applied) without filling your own context with file contents.',
+  prompt: (t) =>
+    [
       "You are a read-only search agent inside Factorial's builder session.",
-      'Answer the question you are given about the repository at /workspace/repo, using Read, Grep and Glob only.',
+      `Answer the question you are given about the repository at /workspace/repo, using ${t.read}, ${t.grep} and ${t.glob} only.`,
       'Read selectively: search first, then read only the line ranges that answer the question.',
       'Reply with the answer, the file paths and line numbers it rests on, and nothing else. Do not propose changes.',
     ].join('\n'),
-    tools: READ_ONLY_TOOLS,
-    // The full inference profile id from the Runtime version, not an alias;
-    // readConfig requires it for the builder.
-    ...(config.exploreModel ? { model: config.exploreModel } : {}),
-    maxTurns: 30,
-  };
-}
+  tools: READ_ONLY_TOOLS,
+  model: 'explore',
+  maxTurns: 30,
+};
 
-/** The plan subagent's name, which hooks see as `agent_type` on its tool calls. */
+/** The plan subagent's name, which the rules see as the agent type on its tool calls. */
 export const PLAN_AGENT = 'plan';
 
 /**
  * The planner, inside the builder's session since phase 3.1 of
  * docs/agent-sdk-plan.md, on the builder's own model: planning is where the
  * reasoning pays. It reads, searches the web like the planner harness did,
- * reads the pages it finds (WebFetch, as the builder does), and writes the
- * two plan files itself: the PreToolUse hook (hooks.ts) lets
- * it write nothing else, and the plan hook (report.ts) sends it the
- * validation errors, so the planner fixes its own plan.
+ * reads the pages it finds, and writes the two plan files itself: the rules
+ * (tool-rules.ts) let it write nothing else, and the plan check (report.ts)
+ * sends it the validation errors, so the planner fixes its own plan.
  */
-export function plan(webSearch: boolean): AgentDefinition {
-  return {
-    description:
-      'Planner. Run it once, before any change, with the request and anything already on the branch; it writes /workspace/plan.json and /workspace/plan.md and replies with a short summary.',
-    prompt: planPrompt,
-    tools: [...READ_ONLY_TOOLS, 'Write', 'WebFetch', ...(webSearch ? [TOOL_NAME] : [])],
-    model: 'inherit',
-    maxTurns: 40,
-  };
-}
+export const PLAN: SubagentSpec = {
+  description:
+    'Planner. Run it once, before any change, with the request and anything already on the branch; it writes /workspace/plan.json and /workspace/plan.md and replies with a short summary.',
+  prompt: planPrompt,
+  tools: [...READ_ONLY_TOOLS, 'write', 'fetch', 'webSearch'],
+  model: 'inherit',
+  maxTurns: 40,
+};
 
-export function builderAgents(config: Config, webSearch: boolean): Record<string, AgentDefinition> {
-  return { explore: explore(config), [PLAN_AGENT]: plan(webSearch) };
-}
+export const BUILDER_SUBAGENTS: Readonly<Record<string, SubagentSpec>> = { explore: EXPLORE, [PLAN_AGENT]: PLAN };

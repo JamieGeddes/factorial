@@ -3,8 +3,8 @@ import { describe, it } from 'node:test';
 
 import { validateRunEvent, type RunEvent } from '@factorial/run';
 
-import { ClaudeSdkEvents, claudeRunEvents, runEndedOf, runStarted, sdkVersion, usageOf } from './claude-sdk-events.ts';
-import { readConfig } from './config.ts';
+import { ClaudeSdkEvents, claudeRunEvents, runEndedOf, runStarted, sdkVersion, usageOf } from './events.ts';
+import { readConfig } from '../config.ts';
 
 const env = {
   FACTORIAL_ROLE: 'builder',
