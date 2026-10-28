@@ -8,8 +8,18 @@ import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE } from '@factorial/run';
 
 export type Role = RoleName;
 
+/** What runs the agent loop (harness.ts). The Claude Agent SDK unless the Runtime version names pi (spike #181). */
+export const HARNESSES = ['claude-agent-sdk', 'pi'] as const;
+export type HarnessName = (typeof HARNESSES)[number];
+
+/** Reasoning effort, where the harness and model take one. Unset leaves each harness's default. */
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type Effort = (typeof EFFORTS)[number];
+
 export interface Config {
   role: Role;
+  harness: HarnessName;
+  effort: Effort | undefined;
   // Bedrock inference profile ids, named by what each model does rather than
   // by size, so changing one (Sonnet to Opus for the main loop, say) is one
   // value on the Runtime version.
@@ -56,8 +66,14 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   if (!isRoleName(role)) throw new Error(`FACTORIAL_ROLE must be one of ${Object.keys(ROLES).join(', ')}`);
   const maxTurns = positiveNumber(env, 'FACTORIAL_MAX_TURNS');
   if (!Number.isInteger(maxTurns)) throw new Error('FACTORIAL_MAX_TURNS must be an integer');
+  const harness = env.FACTORIAL_HARNESS || 'claude-agent-sdk';
+  if (!(HARNESSES as readonly string[]).includes(harness)) throw new Error(`FACTORIAL_HARNESS must be one of ${HARNESSES.join(', ')}`);
+  const effort = env.FACTORIAL_EFFORT || undefined;
+  if (effort !== undefined && !(EFFORTS as readonly string[]).includes(effort)) throw new Error(`FACTORIAL_EFFORT must be one of ${EFFORTS.join(', ')}`);
   return {
     role,
+    harness: harness as HarnessName,
+    effort: effort as Effort | undefined,
     model: required(env, 'FACTORIAL_MODEL'),
     exploreModel: ROLES[role].models.includes('explore') ? required(env, modelVariable('explore')) : undefined,
     backgroundModel: required(env, 'FACTORIAL_BACKGROUND_MODEL'),

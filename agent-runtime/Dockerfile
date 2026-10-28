@@ -81,7 +81,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --omit=peer \
  && rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl \
  && npm cache clean --force
-COPY dist/host.mjs dist/quiet.mjs claude-as-agent ./
+COPY dist/host.mjs dist/quiet.mjs dist/agent-ops.mjs claude-as-agent ./
 RUN printf '#!/bin/sh\nexec node /opt/factorial/agent-runtime/quiet.mjs "$@"\n' > /usr/local/bin/quiet \
  && chmod 755 /usr/local/bin/quiet \
  && chown -R root:root /opt/factorial \

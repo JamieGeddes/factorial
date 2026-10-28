@@ -239,6 +239,19 @@ On the Harness, the tool allow-list, the model and the loop's limits are enforce
 - **Caps in the host.** Subagent depth, concurrency, per-agent turns, `maxTurns` and `maxBudgetUsd` are set by the host process.
 - **No subagent output is evidence.** Subagent reports are the model's claim, like the builder's summary. Anything the orchestrator acts on still leaves as a named file and is validated outside the session.
 
+### 9.2b The pi harness (spike #181)
+
+`FACTORIAL_HARNESS=pi` on a Runtime version runs the role on pi (`packages/agent-runtime/src/pi/`) instead of the SDK. It is off on every deployed version (the default is `claude-agent-sdk`). pi runs its loop in the host process, so the mitigations above are kept as follows:
+- **Tools, not the loop, drop to the agent user.** The loop, the role's policy and the limits stay in the root host, out of the model's reach. Every tool that runs a command or touches a file does it as the agent user with the same `setpriv` restrictions as `claude-as-agent`. The shell runs as `bash -c` that way. Read, write, edit, find and grep go through a file helper (`agent-ops.mjs`) run that way, so root never follows a link the model planted.
+- **No root-run search binaries.** pi's own grep always runs `ripgrep` from the host process and downloads it when it is missing, so the harness does not offer it and searches through the helper instead. Its find is given a glob operation, so it never starts `fd`. `PI_OFFLINE=1` stops pi downloading any tool or checking for updates.
+- **The shell's environment** is the SDK subprocess's allow-list without the SDK's own settings, so the agent's shell holds what it holds on the SDK host and nothing else the host has.
+- **Nothing read from disk.** No extensions, skills, prompt templates, themes or context files load from the workspace or a home directory, the session is in memory, and pi's agent directory is root-only under `/var/lib/factorial`. Only the host's own inline extension loads. A local check showed this is required: with pi's defaults, a workspace `AGENTS.md` changed the model's reply and a workspace `.pi/extensions` file ran, with no trust prompt in SDK use.
+- **Fetches as the agent.** The fetch tool runs `curl` as the agent user, so the host never requests a URL the model chose, and answers from the page with the background model, as WebFetch does.
+- **Checked locally on 2026-10-28** in the real image, with credentials limited to the builder role's Bedrock grants:
+  - the shell ran as uid 1000;
+  - `git push`, a write outside `/workspace` and a write into `/workspace/.claude` were denied by the policy;
+  - the helper got `EACCES` on the host's state, the host bundle and a planted link into `/var/lib/factorial`, and could not regain root.
+
 ### 9.2a Runtime V2 snapshots
 
 Both Runtimes use platform version V2: a session is restored from a snapshot of the container taken once per Runtime version, so the host process (started before the snapshot) shares its in-memory state, including any OpenSSL or `Math.random` state, across sessions. The host generates no secrets or identifiers; its only TLS connections are the web search gateway calls, whose client randoms could repeat across sessions (residual risk, accepted: the calls are SigV4-signed and carry no secret the randoms protect; where randomness is needed, read `/dev/urandom` directly). The Claude Code subprocess, git and command-API processes start after restore. Restored instances all report hostname `localhost` and PID 1; nothing in Factorial uses either. These points are pending confirmation by the V2 spike (issue 147).
