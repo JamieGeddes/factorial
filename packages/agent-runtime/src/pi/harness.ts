@@ -55,6 +55,7 @@ import { PiEvents, runStarted } from './events.ts';
 import { fetchTool } from './fetch.ts';
 import type { Helper } from './operations.ts';
 import { Slots } from './slots.ts';
+import { taskDescription, taskResult } from './task.ts';
 import { PI_TOOLS, toolCallOf, toolsFor, type AnyTool } from './tools.ts';
 
 const PROVIDER_ID = 'amazon-bedrock';
@@ -271,10 +272,10 @@ async function* runPi(
     return defineTool({
       name: PI_TOOLS.agent,
       label: 'subagent',
-      description: `Run a subagent on a task and return its reply. Subagents: ${names.map((name) => `${name}: ${subagents[name]!.description}`).join(' ')}`,
+      description: taskDescription(subagents),
       parameters: Type.Object({
-        subagent_type: Type.Union(names.map((name) => Type.Literal(name))),
-        prompt: Type.String({ description: 'The task, with everything the subagent needs to know.' }),
+        subagent_type: Type.Union(names.map((name) => Type.Literal(name)), { description: 'Which subagent to run.' }),
+        prompt: Type.String({ description: 'The complete brief: the subagent sees nothing else from your conversation.' }),
       }),
       execute: (toolCallId, params) => subagentSlots.run(async () => {
         // A call that waited for a slot while the run stopped starts nothing.
@@ -285,6 +286,7 @@ async function* runPi(
         queue.push({ type: 'subagent.started', agentId: toolCallId, agentType: params.subagent_type });
         const childStarted = Date.now();
         let childTurns = 0;
+        let stoppedAtLimit: number | undefined;
         let toolCalls = 0;
         let child: AgentSession | undefined;
         try {
@@ -296,7 +298,10 @@ async function* runPi(
               agentType: params.subagent_type,
               onTurn: () => {
                 childTurns += 1;
-                if (childTurns >= spec.maxTurns) void child?.abort();
+                if (childTurns >= spec.maxTurns && stoppedAtLimit === undefined) {
+                  stoppedAtLimit = spec.maxTurns;
+                  void child?.abort();
+                }
               },
             },
             {},
@@ -307,7 +312,7 @@ async function* runPi(
           });
           await child.prompt(params.prompt);
           const reply = child.getLastAssistantText() ?? '';
-          return { content: [{ type: 'text' as const, text: reply || `The ${params.subagent_type} subagent stopped without a reply.` }], details: undefined };
+          return { content: [{ type: 'text' as const, text: taskResult(params.subagent_type, reply, stoppedAtLimit) }], details: undefined };
         } finally {
           if (child) {
             sessions.delete(child);
