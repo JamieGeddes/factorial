@@ -1,14 +1,18 @@
 /**
  * Types and validation for the Factorial `WorkItem` contract.
  *
- * The canonical contract is the JSON Schema at `contracts/workitem/v1/workitem.schema.json`.
+ * The canonical contract is the JSON Schema at `contracts/workitem/v2/workitem.schema.json`.
  * The types here mirror it for convenience; validation always runs against the schema file,
  * so the schema wins if the two ever disagree.
+ *
+ * `v1` is still read, against its own schema, until the items emitted before the adapters
+ * moved to `v2` have drained.
  */
 import Ajv2020Module from 'ajv/dist/2020.js';
 import type { ErrorObject } from 'ajv';
 import addFormatsModule from 'ajv-formats';
-import schema from '../../../contracts/workitem/v1/workitem.schema.json' with { type: 'json' };
+import schemaV1 from '../../../contracts/workitem/v1/workitem.schema.json' with { type: 'json' };
+import schema from '../../../contracts/workitem/v2/workitem.schema.json' with { type: 'json' };
 
 // ajv and ajv-formats are CommonJS. Under Node's ESM loader their default import is the
 // module object, which also carries the class or function on `.default`.
@@ -16,7 +20,10 @@ const Ajv2020 = Ajv2020Module.default;
 const addFormats = addFormatsModule.default;
 
 /** Contract version implemented by this package. */
-export const WORKITEM_SCHEMA_VERSION = 1 as const;
+export const WORKITEM_SCHEMA_VERSION = 2 as const;
+
+/** Contract versions this package reads: the current one, and `v1` until its items have drained. */
+export type WorkItemSchemaVersion = 1 | typeof WORKITEM_SCHEMA_VERSION;
 
 /** EventBridge envelope values used to route WorkItems. */
 export const WORKITEM_EVENT_SOURCE = 'factorial.triggers' as const;
@@ -72,7 +79,7 @@ export interface WorkItemReviewDetail {
   body: string;
 }
 
-/** Context about a rework of a previous WorkItem's pull request. */
+/** Context about a rework of a previous WorkItem's pull request. `v1` only. */
 export interface ReworkContext {
   kind: 'rework';
   pullRequest: {
@@ -115,7 +122,7 @@ export interface WorkItemGroup {
 }
 
 export interface WorkItem {
-  schemaVersion: typeof WORKITEM_SCHEMA_VERSION;
+  schemaVersion: WorkItemSchemaVersion;
   id: string;
   source: WorkItemSource;
   repository: WorkItemRepository;
@@ -128,9 +135,9 @@ export interface WorkItem {
   group?: WorkItemGroup;
   /** Optional: the WorkItem whose Plan stage emitted this one. */
   parentId?: string;
-  /** Optional: what this item continues. Absent for a new request. Never set together with `context`. */
+  /** Optional: what this item continues. Absent for a new request. */
   inReplyTo?: WorkItemInReplyTo;
-  /** Optional structured context. A consumer that ignores it still has `body`. Superseded by `inReplyTo`. */
+  /** `v1` only, removed in `v2`: superseded by `inReplyTo`. Intake refuses an item that carries it. */
   context?: WorkItemContext;
 }
 
@@ -150,7 +157,12 @@ export class WorkItemValidationError extends Error {
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 addFormats(ajv);
-const validate = ajv.compile<WorkItem>(schema);
+const validateV1 = ajv.compile<WorkItem>(schemaV1);
+const validateCurrent = ajv.compile<WorkItem>(schema);
+
+/** The validator for the version the input claims; anything but `v1` is checked against the current schema. */
+const validatorFor = (input: unknown): typeof validateCurrent =>
+  typeof input === 'object' && input !== null && (input as { schemaVersion?: unknown }).schemaVersion === 1 ? validateV1 : validateCurrent;
 
 function describe(error: ErrorObject): string {
   const path = error.instancePath === '' ? '(root)' : error.instancePath;
@@ -173,6 +185,7 @@ function crossFieldErrors(item: WorkItem): string[] {
 
 /** Validate an unknown value against the WorkItem schema without throwing. */
 export function validateWorkItem(input: unknown): WorkItemValidationResult {
+  const validate = validatorFor(input);
   if (validate(input)) {
     const errors = crossFieldErrors(input);
     return errors.length === 0 ? { ok: true, value: input } : { ok: false, errors };

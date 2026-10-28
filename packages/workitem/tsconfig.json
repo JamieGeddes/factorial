@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["src/**/*.ts", "../../contracts/workitem/v1/*.json"]
+  "include": ["src/**/*.ts", "../../contracts/workitem/v1/*.json", "../../contracts/workitem/v2/*.json"]
 }

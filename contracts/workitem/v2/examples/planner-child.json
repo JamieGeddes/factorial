@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "id": "5d7f9b1c-2e4a-4c6e-8f0a-1b3d5f7a9c2e",
+  "source": {
+    "type": "github-issue",
+    "id": "42",
+    "url": "https://github.com/example-org/orders-service/issues/42"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "example-org",
+    "name": "orders-service"
+  },
+  "title": "Validate order quantities in the create-order handler",
+  "body": "Step 2 of 2 from the plan for issue #42: reject orders whose quantity is zero or negative, with a test for each case.",
+  "requestedBy": "example-user",
+  "createdAt": "2026-10-19T09:15:00Z",
+  "group": {
+    "id": "e1f2a3b4-c5d6-4e7f-8a9b-0c1d2e3f4a5b",
+    "size": 2,
+    "index": 2
+  },
+  "parentId": "7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c"
+}
