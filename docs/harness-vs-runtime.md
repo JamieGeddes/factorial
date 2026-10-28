@@ -6,6 +6,8 @@
 
 **2026-10-25:** the builder spike passed its gate; see **Spike results**. Phase 2 cuts the builder over.
 
+**2026-10-28:** pi evaluated as a sixth option, for model and provider flexibility; see **pi on AgentCore Runtime**. Spike: #181.
+
 A decision record, as principle 6 in `docs/architecture-principles.md` asks for: the question, the evidence, the options, the decision and its consequences. It extends the one-paragraph decision in `docs/design-plan.md` §3.2 with the evidence from the first week of runs.
 
 ## The question
@@ -58,6 +60,7 @@ Checked against the AWS documentation on 2026-10-22.
 3. **Move every role to Runtime.** Option 2 for the planner and reviewer as well.
 4. **Move the builder to Bedrock Managed Agents.** OpenAI's Codex harness as a managed service, with the builder's commands running in an AgentCore Runtime. See the section below.
 5. **Move the builder to the Claude Agent SDK on an AgentCore Runtime.** Claude Code's harness as a TypeScript library inside a Runtime container Factorial owns. See the section below.
+6. **Run the builder on pi on an AgentCore Runtime** (added 2026-10-28). An open TypeScript harness in the host process that reaches any Bedrock model with tool use. See **pi on AgentCore Runtime**.
 
 ## The decision
 
@@ -313,6 +316,50 @@ Across every run: one stream per invocation with no reconnect (the longest 8.7 m
 
 **For phase 2.** `maxTurns` 150 is 3.5 times the largest run and can stay. `maxBudgetUsd` 10 is 10 times #87's cost and can come down to 5. No successful item needed a second round, so `MaxBuildRounds` can come down from 6 to 3.
 
+## pi on AgentCore Runtime
+
+Evaluated on 2026-10-28 as a sixth option, for flexibility rather than cost. pi (`@earendil-works/pi-coding-agent`, MIT, 1.4.0 checked) is a coding agent as a TypeScript library: `createAgentSession()` runs the agent loop in the host's own process, with built-in tools, automatic compaction, sessions and an extension API. It comes from `badlogic/pi-mono` (packages `@mariozechner/*`), now `earendil-works/pi`. Spike: #181.
+
+**Why consider it**
+
+- **Model and provider choice on the route Factorial already uses.** `pi-ai` calls Bedrock's Converse API with the AWS credential chain, so the execution role reaches any Bedrock model with tool use and no key enters the sandbox. Its 1.4.0 catalogue lists Claude, Amazon Nova, Mistral, Meta Llama, Qwen, GLM, DeepSeek, OpenAI's open-weight models and others, with EU inference profiles. Anthropic, OpenAI, Gemini, Vertex, Azure and OpenAI-compatible endpoints sit behind the same API. The Claude Agent SDK speaks only the Anthropic Messages API (Bedrock's Invoke API, or Mantle), so it reaches Claude alone; other models would need a translating gateway, which Anthropic does not support.
+- **An open harness.** The loop, tools and compaction are TypeScript in the host process, MIT licensed, with no bundled binary. Factorial can read them, extend them and, if it must, patch them, rather than configure around a closed subprocess.
+- **Hooks where Factorial needs them.** Extensions run in the host process, out of the model's reach. A `tool_call` handler can block a call (`{ block: true, reason }`), `tool_result` can rewrite a result, and `agent_before_settle` can send the agent back (`continue: true`), which covers today's `PreToolUse`, `PostToolUse` and `Stop` hooks.
+- **Pluggable tool execution.** The bash, read, edit and write tools take an `operations` object (`exec`, `readFile`, `writeFile`, ...), so the host can stay root while the model's commands and file changes run as the `agent` user.
+- **It fits the run contract** (`contracts/run/v1/`, #180). A pi host is a second implementation of that contract, with an adapter from pi's events to run events. The invoker, the state machine and the records stay as they are.
+
+**How Factorial's guarantees map**
+
+| Today, on the Claude Agent SDK | pi 1.4.0 | Work for Factorial |
+|---|---|---|
+| Built-in tools (Bash, Read, Edit, Write, Grep, Glob) | bash, read, edit, write, grep, find, ls | The prompts name tools, so they take the names as parameters. |
+| The model's shell runs as `agent` (`claude-as-agent`), the host as root | Tools run as the pi process's user; no sandbox or permission prompts, by design | `operations` that run as `agent`: commands through `setpriv`, file operations through a helper running as `agent`, so root never follows a link the model planted. Check whether grep, find and ls take operations. |
+| `PreToolUse` denies (`hooks.ts`) | `tool_call` returns `{ block, reason }` | Port the decisions. |
+| `PostToolUse` plan validation (`report.ts`) | `tool_result` patches the result | Port. |
+| `Stop` hooks: report checks, the review's second pass | `agent_before_settle` with `continue: true`, re-evaluated after each response | Port, keeping the caps so a check cannot loop. |
+| Subagents `plan` and `explore`, sharing the working tree | None built in | A `task` tool that starts a child session with its own tools, model and turn limit. This is the largest piece. |
+| Compaction near the model's window | Above `contextWindow - reserveTokens`, configurable, with events | Settings, and `context.compacted` in the adapter. |
+| `maxTurns`, `maxBudgetUsd` | Neither | Count turns on `turn_end`, total the message cost, abort at either limit. The budget depends on pi's catalogue pricing the model. |
+| `settingSources: []`: nothing read from the workspace or home | Discovers `~/.pi` and the project's `.pi/` (project resources only once trusted) | A resource loader that discovers nothing, `SessionManager.inMemory()`, a root-owned agent directory. |
+| Usage and cost in the result message | Usage on each message, cost from its catalogue | The adapter maps them to `model.call` and `run.ended`. |
+| Web search as an in-process MCP tool | MCP extension, or `registerTool` | Port `web-search.ts` as a tool. |
+| Licence: Anthropic's Commercial Terms | MIT. Direct dependencies MIT, Apache-2.0 or BSD-3-Clause (checked 2026-10-28) | None. |
+
+**Costs and risks**
+
+- **Young and fast-moving.** 1.0 on 2026-10-04, 1.4 on 2026-10-21, and the packages were renamed from `@mariozechner/*` to `@earendil-works/*`. Pin exact versions, as for the SDK, and expect API changes between minors.
+- **More code in the security surface.** Subagents, limits and the privilege drop for tools are code the SDK provided. The microVM, the `agent` user and the execution role's IAM stay the isolation; pi adds none.
+- **Prompts and models.** The prompts are tuned for Claude Code's tools and for Claude. Another model needs its own prompt work, and quality is per model: GLM 5.3 Flash's step counts (see **The evidence**) were the model, not the harness.
+- **Binding decisions.** `CLAUDE.md`'s target architecture names the Claude Agent SDK and Claude on Bedrock. Adopting pi, as a second harness or the default, changes both and needs human approval.
+
+**Spike (#181).** The builder only, with `FACTORIAL_HARNESS` on the Runtime version choosing the harness (default `claude-agent-sdk`), and the same image, Runtime contract and invoker. First the role logic in `hooks.ts`, `report.ts` and `review.ts` is separated from the SDK so both hosts share it. Then three runs:
+
+- **(a) Parity:** a #87-sized item, pi with Sonnet 5.5 against the SDK host's PR #128, which compares harnesses with the model held constant.
+- **(b) Model switch:** the same item on a non-Claude Bedrock model, changing only the version's environment and the role's inference profiles.
+- **(c) Limits:** forced turn limits and rounds.
+
+The gate: (a) finishes in one session with a valid plan, a complete report and passing tests, within 1.5 times the SDK host's turns and input tokens; (b) runs end to end with no code change; no finding against the security mitigations; (c) continues in rounds with work saved. The outcome of (b) is recorded, not gated: the spike proves that the model is configuration, not that a given model is good enough.
+
 ## If building from scratch
 
 Asked on 2026-10-22: with Claude models allowed in production (GLM was chosen to keep the proof of concept cheap), would a different agent layer be the better choice from the start? Yes. The Harness would not be the first choice; the spine would be built exactly as it is, with the Claude Agent SDK on an AgentCore Runtime inside it, and Claude Managed Agents weighed as the alternative.
@@ -360,6 +407,7 @@ What would still be built: the reviewer as a separate session, because judged ou
 - The model moves to one whose vendor SDK brings its own harness, and running that harness on Runtime is cheaper than reproducing it in configuration.
 - Bedrock Managed Agents passes its gates above, which would make it the managed alternative to the Agent SDK spike.
 - Claude Managed Agents leaves beta on Claude Platform on AWS, which makes it the managed alternative with the least code to own (see **If building from scratch**).
+- A role needs a model the Claude Agent SDK cannot reach, or a change to the loop that its configuration cannot make: the pi spike (#181) answers both.
 
 If revisited, the order is: the Claude Agent SDK on a Runtime (available now, closes both gaps, TypeScript); then Bedrock Managed Agents if its gates are met (managed, no loop code); then Strands on Runtime as the last resort. Each is kept to the builder, with the planner and reviewer staying on Harness so that the roles that judge the builder's output never run its code.
 
@@ -388,3 +436,11 @@ If revisited, the order is: the Claude Agent SDK on a Runtime (available now, cl
 - Z.ai Claude Code integration: https://docs.z.ai/scenario-example/develop-tools/claude
 - Claude Managed Agents: https://platform.claude.com/docs/en/managed-agents/overview
 - Claude Managed Agents self-hosted sandboxes: https://platform.claude.com/docs/en/managed-agents/self-hosted-sandboxes
+- pi repository: https://github.com/earendil-works/pi
+- pi SDK: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md
+- pi extensions: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md
+- pi providers: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/providers.md
+- pi security: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md
+- pi compaction: https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/compaction.md
+- Claude Code on Amazon Bedrock (Invoke API and Mantle only): https://code.claude.com/docs/en/amazon-bedrock
+- Claude Code with LLM gateways (non-Claude models unsupported): https://code.claude.com/docs/en/llm-gateway
