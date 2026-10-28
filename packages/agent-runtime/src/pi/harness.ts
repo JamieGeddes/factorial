@@ -6,9 +6,10 @@
  * pi runs its loop in the host process, so the host does here what the SDK
  * host gets from Claude Code's subprocess:
  * - Every tool runs commands and file operations as the agent user
- *   (operations.ts), and pi's own grep, which would run ripgrep as root, is
- *   replaced (tools.ts). PI_OFFLINE stops pi downloading tools or checking
- *   for updates.
+ *   (operations.ts). pi's grep starts `rg` from the host, so the image's `rg`
+ *   is a wrapper that runs ripgrep as the agent user, and the host refuses to
+ *   start pi unless that wrapper is the `rg` on its PATH. PI_OFFLINE stops pi
+ *   downloading tools or checking for updates.
  * - Nothing is discovered: no extensions, skills, prompt templates, themes or
  *   context files from the workspace or a home directory, an in-memory session
  *   and a root-owned agent directory. Only the host's own inline extension
@@ -24,7 +25,7 @@
  * The model is reached through pi's amazon-bedrock provider with the
  * execution role's credentials, in the version's region.
  */
-import { mkdirSync, readFileSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -110,8 +111,28 @@ export interface PiParts {
   webSearch: GatewayCall | undefined;
 }
 
+/** The image's ripgrep wrapper, which runs ripgrep as the agent user (agent-runtime/rg-as-agent). */
+export const RG_WRAPPER = '/usr/local/bin/rg';
+
+/** The first executable `name` on `pathVariable`, as a spawn would find it, or undefined. */
+export function firstOnPath(name: string, pathVariable: string | undefined): string | undefined {
+  for (const dir of (pathVariable ?? '').split(':').filter((d) => d.length > 0)) {
+    const candidate = path.join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // not here
+    }
+  }
+  return undefined;
+}
+
 /** The parts the Runtime uses: setpriv to the agent user, the helper beside the bundle, state under the host's directory. */
 export function runtimeParts(config: Config): PiParts {
+  // pi's grep spawns `rg` as this root process: anything but the wrapper would search as root.
+  const rg = firstOnPath('rg', process.env.PATH);
+  if (rg !== RG_WRAPPER) throw new Error(`pi needs ${RG_WRAPPER} to be the rg on PATH, so ripgrep runs as the agent user; found ${rg ?? 'none'}`);
   const runner: AgentRunner = { prefix: SETPRIV, env: shellEnvironment(config, process.env) };
   const agentDir = path.join(config.stateDirectory, 'pi');
   mkdirSync(agentDir, { recursive: true, mode: 0o700 });
