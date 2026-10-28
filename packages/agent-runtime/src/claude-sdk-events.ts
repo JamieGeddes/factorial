@@ -17,8 +17,8 @@
  * transcript.
  */
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import type { ModelTotal, RunEnded, RunEvent, RunStarted, TokenUsage } from '@factorial/run';
 import { RUN_CONTRACT } from '@factorial/run';
@@ -31,10 +31,15 @@ export const PROVIDER = 'bedrock';
 /** The SDK's tool for starting a subagent, and its name before SDK 0.2. */
 const AGENT_TOOLS = new Set(['Agent', 'Task']);
 
-/** The installed SDK's version; its package exports no package.json, so it is read beside the entry point. */
+/**
+ * The installed SDK's version; its package exports no package.json, so it is
+ * read beside the entry point. Resolved through import.meta, not
+ * createRequire: the host bundle's banner already declares createRequire, and
+ * a second import of it made host.mjs fail to load (2026-10-28).
+ */
 export function sdkVersion(): string | undefined {
   try {
-    const entry = createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk');
+    const entry = fileURLToPath(import.meta.resolve('@anthropic-ai/claude-agent-sdk'));
     return (JSON.parse(readFileSync(path.join(path.dirname(entry), 'package.json'), 'utf8')) as { version?: string }).version;
   } catch {
     return undefined;

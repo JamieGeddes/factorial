@@ -12,13 +12,14 @@
   ],
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && npm run typecheck --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present && npm run check:bundles",
     "test": "node --disable-warning=ExperimentalWarning --test 'scripts/*.test.ts' && npm test --workspaces --if-present",
     "check:yml": "node --disable-warning=ExperimentalWarning scripts/check-yml-extension.ts",
     "lint:cfn": "cfn-lint",
     "ci": "npm run typecheck && npm run build && npm test && npm run check:yml && npm run check:workflows && npm run lint:cfn",
     "deploy:foundation": "node --disable-warning=ExperimentalWarning scripts/deploy-foundation.ts",
-    "check:workflows": "node --disable-warning=ExperimentalWarning scripts/check-workflows.ts"
+    "check:workflows": "node --disable-warning=ExperimentalWarning scripts/check-workflows.ts",
+    "check:bundles": "node --disable-warning=ExperimentalWarning scripts/check-bundles.ts"
   },
   "devDependencies": {
     "@types/aws-lambda": "^8.10.164",
