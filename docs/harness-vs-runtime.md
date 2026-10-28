@@ -352,13 +352,18 @@ Evaluated on 2026-10-28 as a sixth option, for flexibility rather than cost. pi 
 - **Prompts and models.** The prompts are tuned for Claude Code's tools and for Claude. Another model needs its own prompt work, and quality is per model: GLM 5.3 Flash's step counts (see **The evidence**) were the model, not the harness.
 - **Binding decisions.** `CLAUDE.md`'s target architecture names the Claude Agent SDK and Claude on Bedrock. Adopting pi, as a second harness or the default, changes both and needs human approval.
 
-**Spike (#181).** The builder only, with `FACTORIAL_HARNESS` on the Runtime version choosing the harness (default `claude-agent-sdk`), and the same image, Runtime contract and invoker. First the role logic in `hooks.ts`, `report.ts` and `review.ts` is separated from the SDK so both hosts share it. Then three runs:
+**Spike (#181).** Scoped on 2026-10-28 to the harness alone: the builder on pi with the same models and limits as the SDK host (Sonnet 5.5 for the main loop and `plan`, Haiku 5.5 for `explore`; 150 turns, $5, 6,600 seconds) and the same reasoning effort on both (`FACTORIAL_EFFORT: high`). Non-Claude models are out of scope; once pi runs, another Bedrock model is configuration and gets its own item. `FACTORIAL_HARNESS` on the Runtime version chooses the harness (default `claude-agent-sdk`), with the same image, Runtime contract and invoker.
 
-- **(a) Parity:** a #87-sized item, pi with Sonnet 5.5 against the SDK host's PR #128, which compares harnesses with the model held constant.
-- **(b) Model switch:** the same item on a non-Claude Bedrock model, changing only the version's environment and the role's inference profiles.
-- **(c) Limits:** forced turn limits and rounds.
+A local check of the Bedrock route came first. pi 1.4's Converse path adds a cache point on the system prompt and on the latest message, maps cache reads and writes into usage, and supports thinking. Its catalogue's EU Claude entries use the `eu-central-1` endpoint, so the host pins the region. pi prices EU profiles at Bedrock's EU rates, 10% above the global rates the SDK estimates with. So from 2026-10-28 both roles use the **global** inference profiles, on either harness. Requests may then be served in any commercial region, which is accepted for the proof of concept. Both harnesses' estimates are then the global list prices, and the same $5 means the same on both. The role logic is separated from the SDK so both hosts share it (#184), and the pi harness is #185. Two runs:
 
-The gate: (a) finishes in one session with a valid plan, a complete report and passing tests, within 1.5 times the SDK host's turns and input tokens; (b) runs end to end with no code change; no finding against the security mitigations; (c) continues in rounds with work saved. The outcome of (b) is recorded, not gated: the spike proves that the model is configuration, not that a given model is good enough.
+- **(a) Parity:** a #87-sized item, pi against the SDK host's PR #128.
+- **(b) Limits:** forced turn limits and rounds.
+
+The gate:
+- (a) finishes in one session with a valid plan, a complete report and passing tests, within 1.5 times the SDK host's turns and input tokens and with cache reads at least 90% of input;
+- (a) runs through the run contract with no change to the invoker or orchestrator;
+- no finding against the security mitigations;
+- (b) continues in rounds with its work saved.
 
 ## If building from scratch
 

@@ -1,0 +1,309 @@
+<title>Session Boundaries</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  /* Layout: one reading column; two diagrams on the same grid so the moved parts line up, then the differences and the shared layers. */
+  :root {
+    --bg: #f4f6f8;
+    --panel: #ffffff;
+    --fg: #1b2230;
+    --muted: #5a6474;
+    --line: #c5ccd7;
+    --root: #a8521c;
+    --root-tint: #f6e5d6;
+    --agent: #1c7465;
+    --agent-tint: #d9eee9;
+    --loop: #3346c8;
+    --loop-tint: #e6e9fb;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #11151b; --panel: #1a2029; --fg: #e3e8ef; --muted: #9aa4b4; --line: #3a4351;
+      --root: #e48c55; --root-tint: #35241a; --agent: #52c2b0; --agent-tint: #15302c;
+      --loop: #93a2ff; --loop-tint: #232a4d; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #11151b; --panel: #1a2029; --fg: #e3e8ef; --muted: #9aa4b4; --line: #3a4351;
+    --root: #e48c55; --root-tint: #35241a; --agent: #52c2b0; --agent-tint: #15302c;
+    --loop: #93a2ff; --loop-tint: #232a4d; color-scheme: dark;
+  }
+  body {
+    background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 15px; line-height: 1.55;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 32px 56px;
+  }
+  main { max-width: 900px; margin: 0 auto; display: grid; gap: 40px; }
+  header { display: grid; gap: 10px; }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 5vw, 42px); line-height: 1.1; margin: 0; text-wrap: balance; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 24px; line-height: 1.2; margin: 0; text-wrap: balance; }
+  p { margin: 0; max-width: 68ch; }
+  .lede { color: var(--muted); font-size: 16px; }
+  code { font-family: var(--mono); font-size: .9em; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; font-size: 13px; color: var(--muted); }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .sw { width: 18px; height: 12px; border-radius: 3px; border: 1.5px solid; flex: none; }
+  .sw.root { background: var(--root-tint); border-color: var(--root); }
+  .sw.agent { background: var(--agent-tint); border-color: var(--agent); }
+  .sw.loop { background: var(--loop-tint); border-color: var(--loop); border-width: 2.5px; }
+  .sw.hook { width: 22px; height: 0; border: 0; border-top: 2px dashed var(--fg); border-radius: 0; }
+
+  section { display: grid; gap: 14px; }
+  figure { margin: 0; display: grid; gap: 12px; }
+  .scroll { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .dia { display: block; width: 100%; min-width: 720px; height: auto; color: var(--fg); font-family: var(--body); }
+  figcaption { color: var(--muted); font-size: 14px; max-width: 72ch; }
+
+  .dia .vm { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 2 5; }
+  .dia .zr { fill: var(--root-tint); stroke: var(--root); stroke-width: 1.5; }
+  .dia .za { fill: var(--agent-tint); stroke: var(--agent); stroke-width: 1.5; }
+  .dia .box { fill: var(--panel); stroke: var(--line); stroke-width: 1.2; }
+  .dia .ext { fill: var(--bg); stroke: var(--muted); stroke-width: 1.2; }
+  .dia .loopb { fill: var(--loop-tint); stroke: var(--loop); stroke-width: 2.5; }
+  .dia .ln { fill: none; stroke: currentColor; stroke-width: 1.4; }
+  .dia .hook { stroke-dasharray: 5 4; }
+  .dia .t { fill: var(--fg); font-size: 12.5px; font-weight: 500; }
+  .dia .s { fill: var(--muted); font-size: 10.5px; }
+  .dia .l { fill: var(--fg); font-size: 11px; }
+  .dia .zt { font-family: var(--mono); font-size: 10.5px; letter-spacing: .05em; text-transform: uppercase; }
+  .dia .zt.r { fill: var(--root); }
+  .dia .zt.a { fill: var(--agent); }
+  .dia .vt { fill: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+  .dia .lt { fill: var(--loop); font-weight: 600; font-size: 12.5px; }
+
+  .tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); }
+  table { border-collapse: collapse; width: 100%; min-width: 560px; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+  tr:last-child th, tr:last-child td { border-bottom: 0; }
+  thead th { font-family: var(--mono); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+  tbody th { font-weight: 600; width: 30%; }
+  td.flag { background: var(--root-tint); }
+  .tag { display: inline-block; font-family: var(--mono); font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid; margin-right: 6px; white-space: nowrap; }
+  .tag.r { color: var(--root); border-color: var(--root); }
+  .tag.a { color: var(--agent); border-color: var(--agent); }
+
+  .layers { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .layer { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+  .layer h3 { margin: 0; font-size: 15px; font-weight: 600; }
+  .layer p { font-size: 14px; color: var(--muted); }
+  .layer .what { font-family: var(--mono); font-size: 11.5px; color: var(--fg); letter-spacing: .03em; }
+</style>
+
+<main>
+  <header>
+    <p class="eyebrow">Factorial · agent Runtime · spike #181</p>
+    <h1>Session Boundaries</h1>
+    <p class="lede">Inside each AgentCore session, the host process runs as root and everything the model makes happen runs as the unprivileged <code>agent</code> user (uid 1000). The two harnesses draw that line in different places.</p>
+    <div class="legend" aria-label="Legend">
+      <span><i class="sw root"></i>root</span>
+      <span><i class="sw agent"></i>agent user</span>
+      <span><i class="sw loop"></i>the model's loop</span>
+      <span><i class="sw hook"></i>hook call back to the host</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Claude Agent SDK host</h2>
+    <figure>
+      <div class="scroll">
+        <svg class="dia" viewBox="0 0 940 550" role="img" aria-label="Claude Agent SDK host: the root host starts Claude Code once as the agent user; the model's loop and its tools run as agent, reach the host's policy through hook calls, and call Bedrock and the network with the execution role's credentials.">
+          <defs>
+            <marker id="arSdk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          </defs>
+          <rect class="vm" x="290" y="24" width="430" height="510" rx="12"/>
+          <text class="vt" x="305" y="44">AgentCore Runtime session (microVM)</text>
+
+          <rect class="zr" x="310" y="58" width="390" height="170" rx="9"/>
+          <rect class="za" x="310" y="320" width="390" height="200" rx="9"/>
+          <text class="zt r" x="325" y="80">Host process · root</text>
+          <rect class="box" x="325" y="92" width="150" height="40" rx="6"/>
+          <text class="t" x="400" y="117" text-anchor="middle">Run contract server</text>
+          <rect class="box" x="535" y="92" width="150" height="40" rx="6"/>
+          <text class="t" x="610" y="117" text-anchor="middle">Time limit · abort</text>
+          <rect class="box" x="325" y="172" width="150" height="40" rx="6"/>
+          <text class="t" x="400" y="197" text-anchor="middle">Policy hooks</text>
+          <rect class="box" x="535" y="172" width="150" height="40" rx="6"/>
+          <text class="t" x="610" y="190" text-anchor="middle">Run record</text>
+          <text class="s" x="610" y="204" text-anchor="middle">/var/lib/factorial (0700)</text>
+
+          <line class="ln hook" x1="400" y1="360" x2="400" y2="214" marker-end="url(#arSdk)"/>
+          <text class="l" x="410" y="252">hook calls over stdio</text>
+          <text class="s" x="410" y="266">allow · deny · send back</text>
+          <line class="ln" x1="610" y1="214" x2="610" y2="358" marker-end="url(#arSdk)"/>
+          <text class="l" x="600" y="290" text-anchor="end">starts Claude Code once</text>
+          <text class="s" x="600" y="304" text-anchor="end">setpriv → agent, no capabilities</text>
+
+          <rect class="box" x="325" y="360" width="150" height="48" rx="6"/>
+          <text class="t" x="400" y="380" text-anchor="middle">Tools</text>
+          <text class="s" x="400" y="396" text-anchor="middle">Bash · Read · Edit · Write…</text>
+          <rect class="loopb" x="535" y="360" width="150" height="48" rx="6"/>
+          <text class="lt" x="610" y="380" text-anchor="middle">Model loop</text>
+          <text class="s" x="610" y="396" text-anchor="middle">+ subagents</text>
+          <line class="ln" x1="535" y1="384" x2="478" y2="384" marker-end="url(#arSdk)"/>
+          <text class="s" x="506" y="377" text-anchor="middle">calls</text>
+          <rect class="box" x="325" y="446" width="150" height="40" rx="6"/>
+          <text class="t" x="400" y="463" text-anchor="middle">/workspace</text>
+          <text class="s" x="400" y="477" text-anchor="middle">agent-owned</text>
+          <line class="ln" x1="400" y1="408" x2="400" y2="444" marker-end="url(#arSdk)"/>
+          <text class="s" x="408" y="431">read · write · run</text>
+          <text class="zt a" x="325" y="508">Claude Code subprocess · agent (uid 1000)</text>
+
+          <rect class="ext" x="790" y="360" width="130" height="48" rx="6"/>
+          <text class="t" x="855" y="380" text-anchor="middle">Amazon Bedrock</text>
+          <text class="s" x="855" y="396" text-anchor="middle">Claude, global profiles</text>
+          <line class="ln" x1="685" y1="384" x2="788" y2="384" marker-end="url(#arSdk)"/>
+          <text class="s" x="737" y="376" text-anchor="middle">model calls</text>
+
+          <rect class="ext" x="790" y="446" width="130" height="48" rx="6"/>
+          <text class="t" x="855" y="466" text-anchor="middle">Internet · AWS</text>
+          <text class="s" x="855" y="482" text-anchor="middle">as the execution role</text>
+          <polyline class="ln" points="475,398 500,398 500,470 788,470" marker-end="url(#arSdk)"/>
+          <text class="s" x="600" y="462" text-anchor="middle">shell: network + role credentials</text>
+
+          <rect class="ext" x="20" y="92" width="150" height="48" rx="6"/>
+          <text class="t" x="95" y="112" text-anchor="middle">Invoker</text>
+          <text class="s" x="95" y="128" text-anchor="middle">Fargate task</text>
+          <line class="ln" x1="170" y1="104" x2="323" y2="104" marker-end="url(#arSdk)"/>
+          <text class="s" x="230" y="97" text-anchor="middle">run · attach · status</text>
+          <line class="ln" x1="325" y1="122" x2="172" y2="122" marker-end="url(#arSdk)"/>
+          <text class="s" x="230" y="137" text-anchor="middle">run events (SSE)</text>
+
+          <rect class="ext" x="20" y="438" width="150" height="56" rx="6"/>
+          <text class="t" x="95" y="461" text-anchor="middle">Orchestrator</text>
+          <text class="s" x="95" y="477" text-anchor="middle">session commands</text>
+          <line class="ln" x1="170" y1="466" x2="323" y2="466" marker-end="url(#arSdk)"/>
+          <text class="s" x="95" y="512" text-anchor="middle">seeds as root, then chown;</text>
+          <text class="s" x="95" y="526" text-anchor="middle">reads back as agent</text>
+        </svg>
+      </div>
+      <figcaption>The root host starts Claude Code once, through <code>claude-as-agent</code>. From then on the model's loop, its subagents and every tool run as <code>agent</code>. The policy stays in the root host: Claude Code asks it on each tool call and before ending, over the SDK's control channel.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>pi host</h2>
+    <figure>
+      <div class="scroll">
+        <svg class="dia" viewBox="0 0 940 630" role="img" aria-label="pi host: the model's loop runs inside the root host with the policy as an in-process extension and calls Bedrock itself; each tool call that runs a command or touches a file starts a process as the agent user.">
+          <defs>
+            <marker id="arPi" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          </defs>
+          <rect class="vm" x="290" y="24" width="430" height="590" rx="12"/>
+          <text class="vt" x="305" y="44">AgentCore Runtime session (microVM)</text>
+
+          <rect class="zr" x="310" y="58" width="390" height="250" rx="9"/>
+          <rect class="za" x="310" y="400" width="390" height="200" rx="9"/>
+          <text class="zt r" x="325" y="80">Host process · root</text>
+          <rect class="box" x="325" y="92" width="150" height="48" rx="6"/>
+          <text class="t" x="400" y="120" text-anchor="middle">Run contract server</text>
+          <rect class="box" x="535" y="92" width="150" height="48" rx="6"/>
+          <text class="t" x="610" y="112" text-anchor="middle">Limits</text>
+          <text class="s" x="610" y="128" text-anchor="middle">turns · budget · time</text>
+          <rect class="box" x="325" y="160" width="150" height="48" rx="6"/>
+          <text class="t" x="400" y="180" text-anchor="middle">Policy extension</text>
+          <text class="s" x="400" y="196" text-anchor="middle">same rules and checks</text>
+          <rect class="loopb" x="535" y="160" width="150" height="48" rx="6"/>
+          <text class="lt" x="610" y="180" text-anchor="middle">pi model loop</text>
+          <text class="s" x="610" y="196" text-anchor="middle">+ subagent sessions</text>
+          <line class="ln" x1="535" y1="184" x2="478" y2="184" marker-end="url(#arPi)"/>
+          <text class="s" x="506" y="177" text-anchor="middle">in-process</text>
+          <rect class="box" x="325" y="228" width="150" height="48" rx="6"/>
+          <text class="t" x="400" y="248" text-anchor="middle">Run record</text>
+          <text class="s" x="400" y="264" text-anchor="middle">/var/lib/factorial (0700)</text>
+
+          <line class="ln" x1="610" y1="208" x2="610" y2="438" marker-end="url(#arPi)"/>
+          <polyline class="ln" points="610,330 400,330 400,438" marker-end="url(#arPi)"/>
+          <text class="l" x="600" y="362" text-anchor="end">each tool call</text>
+          <text class="s" x="600" y="376" text-anchor="end">setpriv → agent, no capabilities</text>
+
+          <rect class="box" x="325" y="440" width="150" height="48" rx="6"/>
+          <text class="t" x="400" y="460" text-anchor="middle">File helper</text>
+          <text class="s" x="400" y="476" text-anchor="middle">read · write · find · grep</text>
+          <rect class="box" x="535" y="440" width="150" height="48" rx="6"/>
+          <text class="t" x="610" y="460" text-anchor="middle">bash -c · curl</text>
+          <text class="s" x="610" y="476" text-anchor="middle">shell and fetch</text>
+          <rect class="box" x="325" y="526" width="360" height="40" rx="6"/>
+          <text class="t" x="505" y="543" text-anchor="middle">/workspace</text>
+          <text class="s" x="505" y="557" text-anchor="middle">agent-owned</text>
+          <line class="ln" x1="400" y1="488" x2="400" y2="524" marker-end="url(#arPi)"/>
+          <line class="ln" x1="610" y1="488" x2="610" y2="524" marker-end="url(#arPi)"/>
+          <text class="zt a" x="325" y="588">Tool processes · agent (uid 1000)</text>
+
+          <rect class="ext" x="790" y="160" width="130" height="48" rx="6"/>
+          <text class="t" x="855" y="180" text-anchor="middle">Amazon Bedrock</text>
+          <text class="s" x="855" y="196" text-anchor="middle">Claude, global profiles</text>
+          <line class="ln" x1="685" y1="184" x2="788" y2="184" marker-end="url(#arPi)"/>
+          <text class="s" x="737" y="176" text-anchor="middle">model calls</text>
+
+          <rect class="ext" x="790" y="440" width="130" height="48" rx="6"/>
+          <text class="t" x="855" y="460" text-anchor="middle">Internet · AWS</text>
+          <text class="s" x="855" y="476" text-anchor="middle">as the execution role</text>
+          <line class="ln" x1="685" y1="464" x2="788" y2="464" marker-end="url(#arPi)"/>
+          <text class="s" x="855" y="506" text-anchor="middle">shell: network +</text>
+          <text class="s" x="855" y="520" text-anchor="middle">role credentials</text>
+
+          <rect class="ext" x="20" y="92" width="150" height="48" rx="6"/>
+          <text class="t" x="95" y="112" text-anchor="middle">Invoker</text>
+          <text class="s" x="95" y="128" text-anchor="middle">Fargate task</text>
+          <line class="ln" x1="170" y1="104" x2="323" y2="104" marker-end="url(#arPi)"/>
+          <text class="s" x="230" y="97" text-anchor="middle">run · attach · status</text>
+          <line class="ln" x1="325" y1="126" x2="172" y2="126" marker-end="url(#arPi)"/>
+          <text class="s" x="230" y="141" text-anchor="middle">run events (SSE)</text>
+
+          <rect class="ext" x="20" y="518" width="150" height="56" rx="6"/>
+          <text class="t" x="95" y="541" text-anchor="middle">Orchestrator</text>
+          <text class="s" x="95" y="557" text-anchor="middle">session commands</text>
+          <line class="ln" x1="170" y1="546" x2="323" y2="546" marker-end="url(#arPi)"/>
+          <text class="s" x="95" y="592" text-anchor="middle">seeds as root, then chown;</text>
+          <text class="s" x="95" y="606" text-anchor="middle">reads back as agent</text>
+        </svg>
+      </div>
+      <figcaption>pi runs the model's loop inside the root host, with the policy as an in-process extension. The loop never acts directly: it can only ask for tool calls. Each call that runs a command or touches a file starts a short-lived process as <code>agent</code>, through the same <code>setpriv</code> drop.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>What differs</h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th scope="col"></th><th scope="col">Claude Agent SDK host</th><th scope="col">pi host</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Where the model's loop runs</th><td><span class="tag a">agent</span>Claude Code subprocess</td><td><span class="tag r">root</span>inside the host process</td></tr>
+          <tr><th scope="row">Where privileges drop</th><td>Once, when the host starts Claude Code</td><td>On every tool call that runs a command or touches a file</td></tr>
+          <tr><th scope="row">How the policy is reached</th><td>Hook calls from the subprocess to the host</td><td>In-process extension; no boundary crossed</td></tr>
+          <tr><th scope="row">Who calls Bedrock</th><td>The subprocess, with the role's credentials in its environment</td><td>The host</td></tr>
+          <tr><th scope="row">Credentials in the model's shell</th><td>The execution role's</td><td>The same allow-list, so the same</td></tr>
+          <tr><th scope="row">A harness bug the model can trigger</th><td>Runs as <code>agent</code></td><td class="flag">Runs as root: pi's own code joins the trusted base</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>The same on both</h2>
+    <p>The user split protects the host, its record and its code. The model's real reach is set by the layers outside the session, which neither harness changes.</p>
+    <div class="layers">
+      <div class="layer">
+        <p class="what">IAM</p>
+        <h3>Execution role and permissions boundary</h3>
+        <p>Only the named Bedrock profiles and the web search gateway. The boundary denies deploying or promoting Factorial.</p>
+      </div>
+      <div class="layer">
+        <p class="what">Orchestrator</p>
+        <h3>What leaves the session</h3>
+        <p>Only named, capped and validated files. Commits leave as a git bundle and are pushed from a clean-room clone. No GitHub credentials enter the session.</p>
+      </div>
+      <div class="layer">
+        <p class="what">Policy</p>
+        <h3>A guard rail, not the gate</h3>
+        <p>Denying <code>git push</code> or writes outside <code>/workspace</code> narrows what a prompt injection can drive. The gates are the two layers above.</p>
+      </div>
+    </div>
+  </section>
+</main>
