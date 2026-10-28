@@ -278,6 +278,10 @@ Resources:
       # existing stack. AWS_REGION is reserved and set by the service.
       EnvironmentVariables:
         FACTORIAL_ROLE: builder
+        # What runs the agent loop: claude-agent-sdk, or pi for spike #181
+        # (packages/agent-runtime/src/pi/). The models, limits and policy are
+        # the same on both. Switching is a new Runtime version.
+        FACTORIAL_HARNESS: claude-agent-sdk
         # The run contract the host speaks (contracts/run/v1/). The invoker
         # reads it from the version serving `live` before it invokes, so a
         # version from either side of a contract change fails before any

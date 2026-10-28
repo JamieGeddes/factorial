@@ -60,6 +60,8 @@ export function queryOptions(config: Config, role: HostRole, parts: OptionParts)
     allowDangerouslySkipPermissions: true,
     maxTurns: config.maxTurns,
     maxBudgetUsd: config.maxBudgetUsd,
+    // Unset leaves Claude Code's default, as before FACTORIAL_EFFORT existed.
+    ...(config.effort ? { effort: config.effort } : {}),
     env: agentEnvironment(config, parts.hostEnv),
     pathToClaudeCodeExecutable: config.claudeExecutable,
     persistSession: true,

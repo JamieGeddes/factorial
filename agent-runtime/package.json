@@ -2,9 +2,11 @@
   "name": "factorial-agent-runtime-image",
   "version": "0.0.0",
   "private": true,
-  "description": "What the agent runtime image installs beside the bundled host: the Claude Agent SDK, which ships the Claude Code binary as a platform package",
+  "description": "What the agent runtime image installs beside the bundled host: the Claude Agent SDK, which ships the Claude Code binary as a platform package, and pi (spike #181), kept external so its WebAssembly modules load from their own package",
   "type": "module",
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "0.3.309"
+    "@anthropic-ai/claude-agent-sdk": "0.3.309",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0"
   }
 }
