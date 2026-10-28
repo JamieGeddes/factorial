@@ -2,15 +2,15 @@
  * The builder's report, checked before its run may end. The prompt asks for a
  * `## Plan steps` section in /workspace/summary.md with a line per step of
  * /workspace/plan.json; on the first Runtime item the model wrote a one-line
- * summary without reading the plan. A Stop hook in the host sends it back,
+ * summary without reading the plan. The host's stop check sends it back,
  * at most MAX_REPORT_CHECKS times, until the section names every step.
  *
  * The plan is checked too. Since phase 3.1 the builder writes
- * /workspace/plan.json itself, from the plan subagent's reply: a PostToolUse
- * hook validates it against the plan contract after every Write or Edit to
- * it and sends the errors back, and the Stop hook will not let the run end
- * without a valid plan. After MAX_PLAN_REJECTIONS invalid plans the gate
- * closes: every further tool call is denied (hooks.ts) and the run may end,
+ * /workspace/plan.json itself, from the plan subagent's reply: the plan check
+ * validates it against the plan contract after every write or edit to it and
+ * sends the errors back, and the stop check will not let the run end without
+ * a valid plan. After MAX_PLAN_REJECTIONS invalid plans the gate closes:
+ * every further tool call is denied (roles.ts) and the run may end,
  * as a finished run, so Collect reports it as invalid-plan. Collect validates
  * the plan again and is the gate; these only spare a build from an unusable
  * plan.
@@ -21,11 +21,13 @@
  * them reaches the model except the plan, which the model wrote or could read
  * itself: its step ids, its validation errors, and its steps in full at the
  * start of a later round (planBrief).
+ *
+ * The checks return what to send the model, or undefined; each harness turns
+ * that into its own hook result (claude-sdk/hooks.ts).
  */
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';
 
-import type { HookCallbackMatcher, HookInput, SyncHookJSONOutput } from '@anthropic-ai/claude-agent-sdk';
 import { parsePlanJson } from '@factorial/plan';
 
 export const MAX_REPORT_CHECKS = 2;
@@ -141,28 +143,23 @@ export interface PlanGate {
 
 export const PLAN_GATE_CLOSED = 'The plan was invalid twice, so nothing will be built and the orchestrator reports it. Make no more tool calls: end the session now with a one-line reply.';
 
-/** The PostToolUse hook: validate plan.json after each Write or Edit to it; close the gate at MAX_PLAN_REJECTIONS. */
-export function planHooks(workspace: string, gate: PlanGate, onRejected: (errors: string[], closed: boolean) => void): HookCallbackMatcher[] {
+/**
+ * The plan check, after each file write or edit: validates plan.json when the
+ * call changed it, and returns what to send back while it is invalid. Closes
+ * the gate at MAX_PLAN_REJECTIONS.
+ */
+export function planCheck(workspace: string, gate: PlanGate, onRejected: (errors: string[], closed: boolean) => void): (target: string) => string | undefined {
   const file = path.join(workspace, 'plan.json');
   let rejections = 0;
-  return [
-    {
-      matcher: 'Write|Edit',
-      hooks: [
-        async (input: HookInput): Promise<SyncHookJSONOutput> => {
-          if (input.hook_event_name !== 'PostToolUse') return {};
-          const target = (input.tool_input as { file_path?: unknown } | null)?.file_path;
-          if (typeof target !== 'string' || path.resolve(workspace, target) !== file) return {};
-          const errors = planErrors(readAgentFile(file));
-          if (errors === undefined) return {};
-          rejections += 1;
-          if (rejections >= MAX_PLAN_REJECTIONS) gate.closed = true;
-          onRejected(errors, gate.closed);
-          return { decision: 'block', reason: gate.closed ? PLAN_GATE_CLOSED : planInstruction(errors) };
-        },
-      ],
-    },
-  ];
+  return (target) => {
+    if (path.resolve(workspace, target) !== file) return undefined;
+    const errors = planErrors(readAgentFile(file));
+    if (errors === undefined) return undefined;
+    rejections += 1;
+    if (rejections >= MAX_PLAN_REJECTIONS) gate.closed = true;
+    onRejected(errors, gate.closed);
+    return gate.closed ? PLAN_GATE_CLOSED : planInstruction(errors);
+  };
 }
 
 /** The lines of the summary's `## Plan steps` section, or undefined if it has none. */
@@ -195,23 +192,17 @@ export function reportProblem(summary: string | undefined, stepIds: string[] | u
   return `The "## Plan steps" section of /workspace/summary.md has no line for ${missing.join(', ')}. Add one line per missing step in the form \`- <id>: done|skipped|changed: <why, when not done as planned>\`.`;
 }
 
-/** The Stop hook: send the builder back while its plan is invalid or its report incomplete, at most MAX_REPORT_CHECKS times. */
-export function stopHooks(workspace: string, gate: PlanGate, onBlocked: (reason: string) => void): HookCallbackMatcher[] {
+/** The stop check: what to send the builder back with while its plan is invalid or its report incomplete, at most MAX_REPORT_CHECKS times. */
+export function reportStopCheck(workspace: string, gate: PlanGate, onBlocked: (reason: string) => void): () => string | undefined {
   let checks = 0;
-  return [
-    {
-      hooks: [
-        async (input: HookInput): Promise<SyncHookJSONOutput> => {
-          if (input.hook_event_name !== 'Stop' || checks >= MAX_REPORT_CHECKS || gate.closed) return {};
-          const planJson = readAgentFile(path.join(workspace, 'plan.json'));
-          const errors = planErrors(planJson);
-          const reason = errors ? planInstruction(errors) : reportProblem(readAgentFile(path.join(workspace, 'summary.md')), planStepIds(planJson));
-          if (reason === undefined) return {};
-          checks += 1;
-          onBlocked(reason);
-          return { decision: 'block', reason };
-        },
-      ],
-    },
-  ];
+  return () => {
+    if (checks >= MAX_REPORT_CHECKS || gate.closed) return undefined;
+    const planJson = readAgentFile(path.join(workspace, 'plan.json'));
+    const errors = planErrors(planJson);
+    const reason = errors ? planInstruction(errors) : reportProblem(readAgentFile(path.join(workspace, 'summary.md')), planStepIds(planJson));
+    if (reason === undefined) return undefined;
+    checks += 1;
+    onBlocked(reason);
+    return reason;
+  };
 }

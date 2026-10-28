@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { readConfig } from './config.ts';
+import { readConfig } from '../config.ts';
 import { agentEnvironment } from './environment.ts';
 
 const config = readConfig({

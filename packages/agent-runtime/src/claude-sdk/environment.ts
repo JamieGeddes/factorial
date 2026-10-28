@@ -4,7 +4,7 @@
  * host's own environment plus fixed settings. Nothing from a request reaches it,
  * and anything else the host process holds stays out of the model's shell.
  */
-import type { Config } from './config.ts';
+import type { Config } from '../config.ts';
 
 /** Passed through from the host when present. */
 export const PASSED_THROUGH: readonly string[] = [

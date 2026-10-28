@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import type { ModelTotal, RunEnded, RunEvent, RunStarted, TokenUsage } from '@factorial/run';
 import { RUN_CONTRACT } from '@factorial/run';
 
-import type { Config } from './config.ts';
+import type { Config } from '../config.ts';
 
 export const HARNESS = 'claude-agent-sdk';
 /** How the SDK reaches the model (environment.ts sets CLAUDE_CODE_USE_BEDROCK). */
