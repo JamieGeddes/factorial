@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { ROLE_STAGES, incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget } from './role.ts';
+import { ROLES } from '@factorial/roles';
+
+import { incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget } from './role.ts';
 
 const env = {
   ROLE: 'builder',
@@ -52,7 +54,7 @@ test('rejects a malformed qualifier', () => {
 
 test("the builder's outcome keeps its existing ledger names", () => {
   const outcome = { stopReason: 'success', toolCalls: 3, durationSeconds: 60, usage: { inputTokens: 1 }, error: undefined, record: { usageKey: 'k' } };
-  assert.deepEqual(outcomeAttributes('builder', outcome), {
+  assert.deepEqual(outcomeAttributes(ROLES.builder, outcome), {
     stopReason: 'success',
     toolCalls: 3,
     buildDurationSeconds: 60,
@@ -64,10 +66,9 @@ test("the builder's outcome keeps its existing ledger names", () => {
 
 test("another role's outcome sits under its stage and leaves the builder's fields alone", () => {
   const outcome = { stopReason: 'success', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', record: { usageKey: 'p' } };
-  assert.deepEqual(outcomeAttributes('reviewer', outcome), {
+  assert.deepEqual(outcomeAttributes(ROLES.reviewer, outcome), {
     review: { stopReason: 'success', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', usageKey: 'p' },
   });
-  assert.deepEqual(ROLE_STAGES.reviewer, { stage: 'review', running: 'reviewing', done: 'review-done', failed: 'review-error' });
 });
 
 test('reads the sensitive paths for the reviewer', () => {
@@ -101,13 +102,15 @@ test('refuses sensitive paths that are not repository paths', () => {
 });
 
 test('leaves the reviewer to its Collect step', () => {
-  assert.equal(incompleteReason('reviewer', 'error_max_turns'), undefined);
+  assert.equal(incompleteReason(ROLES.reviewer, 'incomplete', 'max_turns'), undefined);
 });
 
-test("treats the Agent SDK's success as a finished build and its limits as incomplete", () => {
-  assert.equal(incompleteReason('builder', 'success'), undefined);
-  assert.match(incompleteReason('builder', 'error_max_turns') ?? '', /stopped with error_max_turns/);
-  assert.match(incompleteReason('builder', 'error_max_budget_usd') ?? '', /error_max_budget_usd/);
-  assert.match(incompleteReason('builder', 'max_duration') ?? '', /max_duration/);
-  assert.match(incompleteReason('builder', undefined) ?? '', /no stop reason/);
+test('treats a complete run as a finished build and any other as incomplete, whatever the reason', () => {
+  assert.equal(incompleteReason(ROLES.builder, 'complete', 'completed'), undefined);
+  // A reason from a future harness still decides by its outcome.
+  assert.equal(incompleteReason(ROLES.builder, 'complete', 'goal_reached'), undefined);
+  assert.match(incompleteReason(ROLES.builder, 'incomplete', 'max_turns') ?? '', /stopped with max_turns/);
+  assert.match(incompleteReason(ROLES.builder, 'incomplete', 'max_budget') ?? '', /max_budget/);
+  assert.match(incompleteReason(ROLES.builder, 'incomplete', 'max_duration') ?? '', /max_duration/);
+  assert.match(incompleteReason(ROLES.builder, undefined, undefined) ?? '', /no stop reason/);
 });

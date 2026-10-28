@@ -17,6 +17,7 @@
  */
 import { putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import type { CheckJob, GitHubClient, Repo } from '@factorial/github-app';
+import { ROLES } from '@factorial/roles';
 import { TRIGGER_TYPES, assertWorkItem, type WorkItem, type WorkItemReviewDetail, type WorkItemReworkCause } from '@factorial/workitem';
 
 import type { ReworkTurn, WorkContext } from '../lib/context.ts';
@@ -101,10 +102,6 @@ export function initialNotes(
   workItem: WorkItem,
   options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole } = {},
 ): string {
-  const planSection =
-    options.role === 'reviewer'
-      ? '_The plan the builder followed is /workspace/plan.json, with its explanation in /workspace/plan.md. Your review goes in /workspace/review.json, not here. Keep working notes under # Notes._'
-      : '_Your plan, from the plan subagent, goes in /workspace/plan.json and /workspace/plan.md: follow its steps in order by `id`. Keep a line here per step (done, part done, not started), and note any step you change or skip, and why._';
   return [
     '# Task',
     '',
@@ -120,7 +117,7 @@ export function initialNotes(
     '',
     '# Plan',
     '',
-    planSection,
+    ROLES[options.role ?? 'builder'].notesPlan,
     '',
     '# Notes',
     '',

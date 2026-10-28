@@ -5,18 +5,10 @@
  */
 import type { HookCallbackMatcher, McpSdkServerConfigWithInstance, Options } from '@anthropic-ai/claude-agent-sdk';
 
-import { builderAgents } from './agents.ts';
 import type { Config } from './config.ts';
 import { agentEnvironment } from './environment.ts';
-import { builderPrompt } from './prompts/builder.ts';
-import { reviewerPrompt } from './prompts/reviewer.ts';
+import type { HostRole } from './roles.ts';
 import { TOOL_NAME, SERVER_NAME } from './web-search.ts';
-
-/** The built-in tools the builder may use. `WebFetch` reads a page through the Claude Code subprocess (no permission rule: bypassPermissions skips its prompt; never add an `ask` rule). `Agent` starts the subagents in agents.ts (explore and plan). */
-export const BUILDER_TOOLS = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'Agent'];
-
-/** The reviewer's: it reads, and its PreToolUse hook lets Write and Edit reach only /workspace/review.json. No subagents and no web search: everything it judges is in the session. */
-export const REVIEWER_TOOLS = ['Bash', 'Read', 'Grep', 'Glob', 'Write', 'Edit'];
 
 export interface OptionParts {
   hostEnv: NodeJS.ProcessEnv;
@@ -28,25 +20,23 @@ export interface OptionParts {
   stderr: (data: string) => void;
 }
 
-/** The role's prompt, tools and subagents. The reviewer is never offered web search, whatever the configuration says. */
-function roleOptions(config: Config, parts: OptionParts): Options {
-  if (config.role === 'reviewer') {
-    return { systemPrompt: reviewerPrompt, tools: REVIEWER_TOOLS, allowedTools: [], mcpServers: {}, agents: {} };
-  }
+/** The role's prompt, tools and subagents. A role that is not offered web search never gets it, whatever the configuration says. */
+function roleOptions(config: Config, role: HostRole, parts: OptionParts): Options {
+  const webSearch = role.webSearch ? parts.webSearch : undefined;
   return {
-    systemPrompt: builderPrompt,
-    tools: BUILDER_TOOLS,
-    allowedTools: parts.webSearch ? [TOOL_NAME] : [],
-    mcpServers: parts.webSearch ? { [SERVER_NAME]: parts.webSearch } : {},
-    agents: builderAgents(config, parts.webSearch !== undefined),
+    systemPrompt: role.systemPrompt,
+    tools: [...role.tools],
+    allowedTools: webSearch ? [TOOL_NAME] : [],
+    mcpServers: webSearch ? { [SERVER_NAME]: webSearch } : {},
+    agents: role.agents(config, webSearch !== undefined),
   };
 }
 
-export function queryOptions(config: Config, parts: OptionParts): Options {
+export function queryOptions(config: Config, role: HostRole, parts: OptionParts): Options {
   return {
     cwd: config.workspace,
     model: config.model,
-    ...roleOptions(config, parts),
+    ...roleOptions(config, role, parts),
     strictMcpConfig: true,
     hooks: { PreToolUse: parts.preToolUse, PostToolUse: parts.postToolUse, Stop: parts.stop },
     settingSources: [],

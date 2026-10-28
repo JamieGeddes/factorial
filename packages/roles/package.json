@@ -1,0 +1,17 @@
+{
+  "name": "@factorial/roles",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Role manifests: what each agent role is, shared by the host, the invoker and the orchestrator",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@factorial/workitem": "^0.1.0"
+  }
+}

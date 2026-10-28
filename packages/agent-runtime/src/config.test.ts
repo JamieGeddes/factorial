@@ -9,6 +9,7 @@ const env = {
   FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_MAX_TURNS: '150',
+  FACTORIAL_RUN_CONTRACT: '1',
   FACTORIAL_MAX_BUDGET_USD: '10',
   FACTORIAL_MAX_DURATION_SECONDS: '6600',
   AWS_REGION: 'eu-west-1',
@@ -44,6 +45,8 @@ describe('readConfig', () => {
     assert.throws(() => readConfig({ ...env, FACTORIAL_MODEL: '' }), /FACTORIAL_MODEL/);
     assert.throws(() => readConfig({ ...env, FACTORIAL_ROLE: 'planner' }), /FACTORIAL_ROLE/);
     assert.throws(() => readConfig({ ...env, FACTORIAL_MAX_TURNS: '1.5' }), /integer/);
+    assert.throws(() => readConfig({ ...env, FACTORIAL_RUN_CONTRACT: undefined }), /FACTORIAL_RUN_CONTRACT must be 1/);
+    assert.throws(() => readConfig({ ...env, FACTORIAL_RUN_CONTRACT: '2' }), /FACTORIAL_RUN_CONTRACT must be 1/);
     assert.throws(() => readConfig({ ...env, FACTORIAL_MAX_BUDGET_USD: '0' }), /positive/);
   });
 });

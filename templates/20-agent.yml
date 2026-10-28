@@ -278,6 +278,11 @@ Resources:
       # existing stack. AWS_REGION is reserved and set by the service.
       EnvironmentVariables:
         FACTORIAL_ROLE: builder
+        # The run contract the host speaks (contracts/run/v1/). The invoker
+        # reads it from the version serving `live` before it invokes, so a
+        # version from either side of a contract change fails before any
+        # model call. The host refuses to start unless it matches.
+        FACTORIAL_RUN_CONTRACT: '1'
         # Named by purpose: the main loop, the explore subagent and the
         # SDK's background calls. Each must be allowed in the role above.
         FACTORIAL_MODEL: eu.anthropic.claude-sonnet-5-5
@@ -396,6 +401,8 @@ Resources:
       # no web search gateway.
       EnvironmentVariables:
         FACTORIAL_ROLE: reviewer
+        # As the builder's (contracts/run/v1/).
+        FACTORIAL_RUN_CONTRACT: '1'
         FACTORIAL_MODEL: eu.anthropic.claude-sonnet-5-5
         FACTORIAL_BACKGROUND_MODEL: eu.anthropic.claude-haiku-5-5
         # A review reads a diff and its surroundings and writes one file; the

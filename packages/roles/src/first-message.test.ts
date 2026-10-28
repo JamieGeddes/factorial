@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { buildPrompt, reviewPrompt } from './prompt.ts';
+import { buildPrompt, reviewPrompt } from './first-message.ts';
 
 const workItem = {
   schemaVersion: 1 as const,

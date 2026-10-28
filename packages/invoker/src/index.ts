@@ -6,22 +6,27 @@
  * AgentCore Runtime (packages/agent-runtime), logs its progress as
  * structured lines (CloudWatch Logs; text and tool input capped at 4000
  * characters each), records the outcome, and exits. Step Functions resumes
- * when the task stops, however long the run took. A builder that stops
- * before it succeeds (its turn, budget or time limit) exits with
- * INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
+ * when the task stops, however long the run took. A run of a role that must
+ * finish (the builder) that stops before it succeeds (its turn, budget or
+ * time limit) exits with INCOMPLETE_EXIT_CODE, so its work is saved and reported, never opened as a
  * pull request. Nothing inside the agent sandbox can influence this process:
  * it runs under its own task role.
  *
- * The run's SDK messages are read as server-sent events; a stream that ends
- * before the run is re-attached (runtime-stream.ts), and the host's status
- * decides how the run ended (sdk-messages.ts).
+ * The run's events (contracts/run/v1/) are read as server-sent events; a
+ * stream that ends before the run is re-attached (runtime-stream.ts), and the
+ * streamed run.ended, checked against the host's status, decides how the run
+ * ended (run-events.ts). Nothing here reads the harness's own messages, so the
+ * harness and the model's provider can change on the Runtime alone. The run
+ * contract the version serving `live` declares is checked before invoking.
  *
  * Every stream event is also buffered to disk and, however the run ends
  * (finished, failed, or the task stopped), stored with the run's usage as
  * `<stage>/transcript.jsonl` and `<stage>/usage.json` in the artefact store
- * (`build/` for the builder, `review/` for the reviewer;
- * a build round after the first stores under `build/round-<n>/`, and the
- * ledger's `buildUsageTotal` sums the rounds).
+ * (`build/` for the builder, `review/` for the reviewer; for a role that
+ * works in rounds, a round after the first stores under
+ * `<stage>/round-<n>/`, and the ledger's `<stage>UsageTotal` sums the
+ * rounds). The stage, statuses and first message come from the role's
+ * manifest (@factorial/roles).
  */
 import { readFileSync } from 'node:fs';
 
@@ -32,12 +37,14 @@ import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-
 
 import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts';
 import { createLogger } from '@factorial/log';
+import { ROLES } from '@factorial/roles';
+import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE, validateRunStatus, type RunOutcome, type RunStatus } from '@factorial/run';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { INCOMPLETE_EXIT_CODE, ROLE_STAGES, incompleteReason, outcomeAttributes, parseSensitivePaths, promptFor, runtimeTarget, type RuntimeTarget } from './role.ts';
-import { runtimeInfoOf, usageRecord, type SdkRecord, type VersionInfo } from './run-record.ts';
+import { INCOMPLETE_EXIT_CODE, incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
+import { runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
-import { SdkTally, runUsageOf, runtimeStop, subagentsOf, type HostStatus } from './sdk-messages.ts';
+import { RunTally, runUsageOf, runtimeStop, subagentsOf } from './run-events.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
 import { addCallUsage, addRunUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
@@ -52,6 +59,7 @@ const tableName = requireEnv('TABLE_NAME');
 // The role and its target arrive in the task input, so one task definition serves every role.
 const target = runtimeTarget(process.env);
 const { role, qualifier } = target;
+const manifest = ROLES[role];
 const workItemId = requireEnv('WORK_ITEM_ID');
 const sessionId = requireEnv('SESSION_ID');
 const branch = requireEnv('BRANCH');
@@ -60,12 +68,14 @@ const baseCommit = requireEnv('BASE_COMMIT');
 if (!/^[0-9a-f]{40}$/.test(baseCommit)) throw new Error('BASE_COMMIT is not a commit sha');
 // The changes PrepareReview found to deployment and safety files, for the reviewer's prompt.
 const sensitivePaths = parseSensitivePaths(process.env.SENSITIVE_PATHS);
-// Which round of the build this is: 2 or more when continuing in a fresh session.
+// Which round this is, for a role that works in rounds: 2 or more when continuing in a fresh session.
 const buildRound = Number(process.env.BUILD_ROUND ?? '1');
 if (!Number.isInteger(buildRound) || buildRound < 1) throw new Error('BUILD_ROUND is not a positive integer');
-const { stage, running, done, failed } = ROLE_STAGES[role];
+const round = manifest.rounds ? buildRound : undefined;
+const { stage } = manifest;
+const { running, done, failed } = manifest.statuses;
 /** Where this run's records go: the stage, or a round folder under it after the first round. */
-const recordPath = (name: string): string => (role === 'builder' && buildRound > 1 ? `${stage}/round-${buildRound}/${name}` : `${stage}/${name}`);
+const recordPath = (name: string): string => (round !== undefined && round > 1 ? `${stage}/round-${round}/${name}` : `${stage}/${name}`);
 
 const documents = DynamoDBDocumentClient.from(new DynamoDBClient({}), { marshallOptions: { removeUndefinedValues: true } });
 // The host's own time limit ends the run; this only guards against a
@@ -107,6 +117,7 @@ const run = {
   version: {} as VersionInfo,
   startedAt: Date.now(),
   stopReason: undefined as string | undefined,
+  outcome: undefined as RunOutcome | undefined,
   interrupted: false,
   toolCalls: 0,
   usage: emptyRunUsage(),
@@ -114,8 +125,8 @@ const run = {
   error: undefined as string | undefined,
   /** The build's usage over earlier rounds, from the ledger row, when continuing. */
   previousRoundsUsage: undefined as RunUsage | undefined,
-  /** What only the Agent SDK reports. */
-  sdk: undefined as SdkRecord | undefined,
+  /** What the harness reports beyond the counts. */
+  harness: undefined as HarnessRecord | undefined,
 };
 const transcript = new TranscriptBuffer('/tmp/transcript.jsonl');
 
@@ -169,10 +180,13 @@ function finish(succeeded: boolean): Promise<void> {
     const stored = await storeRunRecord();
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
-    log.info('agent finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.sdk?.costUsd });
-    const outcome = outcomeAttributes(role, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
-    // The builder's figures are this round's; the total across rounds is kept beside them.
-    const rounds = role === 'builder' ? { buildRounds: buildRound, buildUsageTotal: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage } : {};
+    log.info('agent finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.harness?.costUsd });
+    const outcome = outcomeAttributes(manifest, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
+    // A role in rounds records this round's figures; the total across rounds is kept beside them.
+    const rounds =
+      round !== undefined
+        ? { [`${stage}Rounds`]: round, [`${stage}UsageTotal`]: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage }
+        : {};
     await record(succeeded ? done : failed, { ...outcome, ...rounds });
   })();
   return finished;
@@ -194,15 +208,23 @@ async function main(): Promise<number> {
   run.prefix = typeof row.Item?.artefactPrefix === 'string' ? row.Item.artefactPrefix : undefined;
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
-  if (role === 'builder' && buildRound > 1) {
-    const previous = row.Item?.buildUsageTotal ?? row.Item?.usage;
+  if (round !== undefined && round > 1) {
+    const previous = row.Item?.[`${stage}UsageTotal`] ?? row.Item?.usage;
     run.previousRoundsUsage = previous && typeof previous === 'object' ? addRunUsage(emptyRunUsage(), previous as RunUsage) : undefined;
   }
 
   const resumed = typeof row.Item?.resumedFrom === 'string';
-  const prompt = promptFor(role, workItem, branch, baseBranch, { sensitivePaths, buildRound, resumed });
+  const prompt = manifest.firstMessage(workItem, branch, baseBranch, { sensitivePaths, ...(round !== undefined ? { round } : {}), resumed });
   run.version = await runtimeInfo(target);
-  log.info('invoking agent', { role, sessionId, qualifier, ...(role === 'builder' ? { buildRound } : {}), ...run.version });
+  // A version from either side of a run contract change fails here, before
+  // the session starts a run. When the version could not be read, the host's
+  // own check on the request and the first event's still apply.
+  if (run.version.runtimeName !== undefined && run.version.runContract !== RUN_CONTRACT) {
+    throw new Error(
+      `the Runtime version serving ${qualifier} declares run contract ${run.version.runContract ?? 'none'} (${RUN_CONTRACT_VARIABLE}); this invoker reads ${RUN_CONTRACT}`,
+    );
+  }
+  log.info('invoking agent', { role, sessionId, qualifier, ...(round !== undefined ? { buildRound: round } : {}), ...run.version });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
 
   run.startedAt = Date.now();
@@ -212,7 +234,7 @@ async function main(): Promise<number> {
   // A builder that hit its turn, budget or time limit has not finished the
   // plan: fail the task so its work is saved and reported, not tested and
   // opened as a pull request.
-  const incomplete = run.error ? undefined : incompleteReason(role, run.stopReason);
+  const incomplete = run.error ? undefined : incompleteReason(manifest, run.outcome, run.stopReason);
   if (incomplete) run.error = incomplete;
   await finish(!run.error);
   if (incomplete) return INCOMPLETE_EXIT_CODE;
@@ -244,10 +266,10 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
     return response.response as AsyncIterable<Uint8Array>;
   };
 
-  const tally = new SdkTally();
+  const tally = new RunTally();
   const reconnects = await streamRun(
     invoke,
-    { action: 'run', prompt, round: buildRound, workItemId, attempt: run.attempt },
+    { action: 'run', contract: RUN_CONTRACT, prompt, round: buildRound, workItemId, attempt: run.attempt },
     (message) => {
       if (typeof message === 'object' && message !== null) transcript.append(message);
       for (const line of tally.add(message)) log.info(line.message, line.fields);
@@ -265,11 +287,13 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
   );
 
   // The host's own record of how the run ended. Best effort: the streamed
-  // messages are the fallback.
-  let status: HostStatus | undefined;
+  // events are the fallback.
+  let status: RunStatus | undefined;
   try {
     const response = await send({ action: 'status' }, 'application/json');
-    status = JSON.parse((await response.response?.transformToString()) ?? '{}') as HostStatus;
+    const parsed = validateRunStatus(JSON.parse((await response.response?.transformToString()) ?? '{}'));
+    if (parsed.ok) status = parsed.value;
+    else log.error('run status does not meet the run contract', { errors: parsed.errors.slice(0, 5) });
   } catch (error) {
     log.error('run status unknown', { error });
   }
@@ -277,20 +301,34 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
   run.usage = runUsageOf(tally);
   const stop = runtimeStop(tally, status);
   run.stopReason = stop.stopReason;
+  run.outcome = stop.outcome;
   if (stop.error) {
     run.error = stop.error;
     log.error('run failed', { error: run.error });
   }
-  run.sdk = {
-    ...(tally.result ? { resultSubtype: tally.result.subtype } : {}),
-    ...(tally.result?.numTurns === undefined ? {} : { numTurns: tally.result.numTurns }),
-    ...(tally.result?.costUsd === undefined ? {} : { costUsd: tally.result.costUsd }),
-    ...(tally.result?.modelUsage ? { modelUsage: tally.result.modelUsage } : {}),
-    permissionDenials: tally.result?.permissionDenials ?? 0,
+  const { started, end } = tally;
+  run.harness = {
+    ...(started?.harness.name ? { name: started.harness.name } : {}),
+    ...(started?.harness.version ? { version: started.harness.version } : {}),
+    ...(started ? { configuredModels: started.models } : {}),
+    ...(end?.detail ? { detail: end.detail } : {}),
+    ...(end?.turns === undefined ? {} : { turns: end.turns }),
+    ...(end?.cost ? { costUsd: end.cost.usd } : {}),
+    ...(end?.models ? { models: end.models } : {}),
+    deniedToolCalls: end?.deniedToolCalls ?? 0,
     reconnects,
+    ...(tally.invalidEvents > 0 ? { invalidEvents: tally.invalidEvents } : {}),
     ...(tally.subagentRuns.length > 0 ? { subagents: subagentsOf(tally.subagentRuns) } : {}),
   };
-  log.info('runtime run ended', { stopReason: run.stopReason, status: status?.state, outcome: status?.outcome, ...run.sdk, modelUsage: undefined, subagents: undefined });
+  log.info('runtime run ended', {
+    stopReason: run.stopReason,
+    outcome: run.outcome,
+    status: status?.state,
+    ...run.harness,
+    configuredModels: undefined,
+    models: undefined,
+    subagents: undefined,
+  });
 }
 
 main().then(

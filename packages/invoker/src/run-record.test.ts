@@ -20,11 +20,11 @@ describe('usageRecord', () => {
   };
 
   it('holds the summed usage, each call, the version and the outcome', () => {
-    assert.deepEqual(usageRecord({ ...base, stopReason: 'success', interrupted: false }), {
+    assert.deepEqual(usageRecord({ ...base, stopReason: 'completed', interrupted: false }), {
       runtimeName: 'factorial_builder',
       runtimeVersion: '7',
       modelId: 'eu.anthropic.claude-sonnet-5-5',
-      stopReason: 'success',
+      stopReason: 'completed',
       toolCalls: 4,
       durationSeconds: 61,
       usage,
@@ -33,7 +33,7 @@ describe('usageRecord', () => {
   });
 
   it('says interrupted when the task was stopped, whatever the run last said', () => {
-    const record = usageRecord({ ...base, stopReason: 'error_max_turns', interrupted: true, error: 'interrupted' });
+    const record = usageRecord({ ...base, stopReason: 'max_turns', interrupted: true, error: 'interrupted' });
     assert.equal(record.stopReason, 'interrupted');
     assert.equal(record.error, 'interrupted');
   });
@@ -52,6 +52,7 @@ it("reads a runtime version's model and limits from its environment", () => {
       FACTORIAL_MAX_TURNS: '150',
       FACTORIAL_MAX_BUDGET_USD: '10',
       FACTORIAL_MAX_DURATION_SECONDS: '6600',
+      FACTORIAL_RUN_CONTRACT: '1',
     }),
     {
       modelId: 'eu.anthropic.claude-sonnet-5-5',
@@ -59,6 +60,7 @@ it("reads a runtime version's model and limits from its environment", () => {
       maxTurns: 150,
       maxBudgetUsd: 10,
       maxDurationSeconds: 6600,
+      runContract: 1,
     },
   );
   assert.deepEqual(runtimeInfoOf(undefined), {});
