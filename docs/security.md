@@ -65,7 +65,7 @@ Each layer is independent: it stops a class of attack on its own, and it does no
   | Report | `issues: write`, plus `pull_requests: write` for a turn on a pull request |
 
 - A token is sent as an HTTP header on the single git command that needs it and is never written to disk or to the session's environment.
-- **Model access is IAM, not a key.** Every agent reaches Claude on Bedrock. Its execution role may call only its named EU inference profiles and the foundation models behind them, and the agent boundary caps every agent role at Anthropic models, so there is no model credential to hold, rotate, leak or vault. Until 2026-10-26 the harnesses reached a third-party provider (Z.ai) with a key in AgentCore Identity's token vault, resolved only through the service; the credential provider, the secret and the boundary's credential statements were removed in phase 4 of `docs/agent-sdk-plan.md`.
+- **Model access is IAM, not a key.** Every agent reaches Claude on Bedrock. Its execution role may call only its named inference profiles (global since 2026-10-28, which may serve a request in any commercial region; EU before) and the foundation models behind them, and the agent boundary caps every agent role at Anthropic models, so there is no model credential to hold, rotate, leak or vault. Until 2026-10-26 the harnesses reached a third-party provider (Z.ai) with a key in AgentCore Identity's token vault, resolved only through the service; the credential provider, the secret and the boundary's credential statements were removed in phase 4 of `docs/agent-sdk-plan.md`.
 - The GitHub App private key is created by a human and referenced by name. They never pass through templates, parameters, the repository or logs.
 
 ### 3.3 The agent sandbox
@@ -241,7 +241,7 @@ On the Harness, the tool allow-list, the model and the loop's limits are enforce
 
 ### 9.2b The pi harness (spike #181)
 
-`FACTORIAL_HARNESS=pi` on a Runtime version runs the role on pi (`packages/agent-runtime/src/pi/`) instead of the SDK. It is off on every deployed version (the default is `claude-agent-sdk`). pi runs its loop in the host process, so the mitigations above are kept as follows:
+`FACTORIAL_HARNESS=pi` on a Runtime version runs the role on pi (`packages/agent-runtime/src/pi/`) instead of the SDK. The default is `claude-agent-sdk`; the builder's version sets `pi` for the spike's runs. pi runs its loop in the host process, so the mitigations above are kept as follows:
 - **Tools, not the loop, drop to the agent user.** The loop, the role's policy and the limits stay in the root host, out of the model's reach. Every tool that runs a command or touches a file does it as the agent user with the same `setpriv` restrictions as `claude-as-agent`. The shell runs as `bash -c` that way. Read, write, edit, find and grep go through a file helper (`agent-ops.mjs`) run that way, so root never follows a link the model planted.
 - **No root-run search binaries.** pi's own grep always runs `ripgrep` from the host process and downloads it when it is missing, so the harness does not offer it and searches through the helper instead. Its find is given a glob operation, so it never starts `fd`. `PI_OFFLINE=1` stops pi downloading any tool or checking for updates.
 - **The shell's environment** is the SDK subprocess's allow-list without the SDK's own settings, so the agent's shell holds what it holds on the SDK host and nothing else the host has.

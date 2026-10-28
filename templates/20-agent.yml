@@ -216,16 +216,23 @@ Resources:
             Version: '2012-10-17'
             Statement:
               # The models are pinned here as well as on the runtime version
-              # (FACTORIAL_*MODEL below): this role can call only these EU
+              # (FACTORIAL_*MODEL below): this role can call only these
               # inference profiles, and the foundation models only through
-              # them. Changing a model changes both.
+              # them. Changing a model changes both. Global profiles since
+              # 2026-10-28 (#181): requests may be served in any commercial
+              # region, accepted for the proof of concept, and their list
+              # prices are the ones the Agent SDK estimates with. The EU
+              # profiles stay granted until no session runs on a version that
+              # names them; the deploy moves this role before `live`.
               - Sid: InferenceProfiles
                 Effect: Allow
                 Action:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5
                   - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5
                   - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
               - Sid: FoundationModelsThroughProfiles
                 Effect: Allow
@@ -238,7 +245,9 @@ Resources:
                 Condition:
                   StringEquals:
                     bedrock:InferenceProfileArn:
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5
                       - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5
                       - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
               # The host's web_search tool signs gateway calls with this role.
               # The agent's shell shares the role, so could call the gateway
@@ -280,18 +289,23 @@ Resources:
         FACTORIAL_ROLE: builder
         # What runs the agent loop: claude-agent-sdk, or pi for spike #181
         # (packages/agent-runtime/src/pi/). The models, limits and policy are
-        # the same on both. Switching is a new Runtime version.
-        FACTORIAL_HARNESS: claude-agent-sdk
+        # the same on both. Switching is a new Runtime version. pi for the
+        # spike's runs (#181, docs/harness-vs-runtime.md); set back to
+        # claude-agent-sdk when they are done.
+        FACTORIAL_HARNESS: pi
+        # Reasoning effort, fixed so the spike compares harnesses at the same
+        # effort. Unset, each harness keeps its own default.
+        FACTORIAL_EFFORT: high
         # The run contract the host speaks (contracts/run/v1/). The invoker
         # reads it from the version serving `live` before it invokes, so a
         # version from either side of a contract change fails before any
         # model call. The host refuses to start unless it matches.
         FACTORIAL_RUN_CONTRACT: '1'
         # Named by purpose: the main loop, the explore subagent and the
-        # SDK's background calls. Each must be allowed in the role above.
-        FACTORIAL_MODEL: eu.anthropic.claude-sonnet-5-5
-        FACTORIAL_EXPLORE_MODEL: eu.anthropic.claude-haiku-5-5
-        FACTORIAL_BACKGROUND_MODEL: eu.anthropic.claude-haiku-5-5
+        # harness's background calls. Each must be allowed in the role above.
+        FACTORIAL_MODEL: global.anthropic.claude-sonnet-5-5
+        FACTORIAL_EXPLORE_MODEL: global.anthropic.claude-haiku-5-5
+        FACTORIAL_BACKGROUND_MODEL: global.anthropic.claude-haiku-5-5
         # A run that reaches a limit ends incomplete and the next round
         # continues it. Set from the spike (docs/harness-vs-runtime.md,
         # Spike results): the largest run took 42 turns and $1.05.
@@ -361,7 +375,9 @@ Resources:
                   - bedrock:InvokeModel
                   - bedrock:InvokeModelWithResponseStream
                 Resource:
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5
                   - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                  - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5
                   - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
               - Sid: FoundationModelsThroughProfiles
                 Effect: Allow
@@ -374,7 +390,9 @@ Resources:
                 Condition:
                   StringEquals:
                     bedrock:InferenceProfileArn:
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-sonnet-5-5
                       - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-sonnet-5-5
+                      - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.claude-haiku-5-5
                       - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.claude-haiku-5-5
       Tags:
         - Key: Project
@@ -407,8 +425,8 @@ Resources:
         FACTORIAL_ROLE: reviewer
         # As the builder's (contracts/run/v1/).
         FACTORIAL_RUN_CONTRACT: '1'
-        FACTORIAL_MODEL: eu.anthropic.claude-sonnet-5-5
-        FACTORIAL_BACKGROUND_MODEL: eu.anthropic.claude-haiku-5-5
+        FACTORIAL_MODEL: global.anthropic.claude-sonnet-5-5
+        FACTORIAL_BACKGROUND_MODEL: global.anthropic.claude-haiku-5-5
         # A review reads a diff and its surroundings and writes one file; the
         # harness allowed 40 steps. A run that reaches a limit keeps whatever
         # review.json it has written, which CollectReview judges.

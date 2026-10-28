@@ -295,9 +295,12 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Anthropic models only, through this account's EU inference
-          # profiles and the foundation models they route to in any region.
-          # Each execution role narrows this to its own named profiles.
+          # Anthropic models only, through this account's EU or global
+          # inference profiles and the foundation models they route to in any
+          # region (a global profile's have no region in their ARN, which the
+          # `*` matches). Each execution role narrows this to its own named
+          # profiles. Global since 2026-10-28 (#181), for the proof of
+          # concept.
           - Sid: Models
             Effect: Allow
             Action:
@@ -305,6 +308,7 @@ Resources:
               - bedrock:InvokeModelWithResponseStream
             Resource:
               - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/eu.anthropic.*
+              - !Sub arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/global.anthropic.*
               - !Sub arn:${AWS::Partition}:bedrock:*::foundation-model/anthropic.*
           - Sid: Guardrails
             Effect: Allow
