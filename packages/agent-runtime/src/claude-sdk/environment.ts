@@ -12,9 +12,10 @@ export const PASSED_THROUGH: readonly string[] = [
   'PATH',
   'LANG',
   'TZ',
-  // Credentials for SigV4 to Bedrock: the Runtime supplies the execution role
-  // through the container credential variables; the static ones are for local
-  // runs of the image only.
+  // Credentials for SigV4 to Bedrock. On the Runtime none of these is set (pi
+  // found none on 2026-10-29): the execution role reaches the AWS SDK's
+  // default chain another way. The static ones are for local runs of the
+  // image only.
   'AWS_CONTAINER_CREDENTIALS_FULL_URI',
   'AWS_CONTAINER_CREDENTIALS_RELATIVE_URI',
   'AWS_CONTAINER_AUTHORIZATION_TOKEN',
