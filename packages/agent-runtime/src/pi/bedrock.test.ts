@@ -38,6 +38,11 @@ async function withoutCredentialVariables<T>(body: () => Promise<T>): Promise<T>
 const modelRuntime = () => ModelRuntime.create({ authPath: path.join(mkdtempSync(path.join(tmpdir(), 'pi-auth-')), 'auth.json'), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
 
 describe('bedrockProvider', () => {
+  it("fails at startup if pi's provider no longer defines its auth method", () => {
+    const base = bedrockProvider();
+    assert.throws(() => bedrockProvider({ ...base, auth: {} }), /no longer defines its auth method/);
+  });
+
   it('falls back to the default credential chain, with no API key, when the environment names no source', async () => {
     assert.deepEqual(await resolve({}), { auth: {}, source: DEFAULT_CHAIN });
   });
