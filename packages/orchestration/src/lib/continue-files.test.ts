@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { builderSessionId, continuingSection, seedRoundScript } from './continue-files.ts';
+import { builderSessionId, continuingSection } from './continue-files.ts';
 
 const id = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
 
@@ -47,22 +47,5 @@ describe('continuingSection', () => {
     assert.match(planned, /Check each step in \/workspace\/plan\.json against the commits/);
     const unplanned = continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 2, planned: false });
     assert.match(unplanned, /left no valid plan, so there is no \/workspace\/plan\.json\. Plan first/);
-  });
-});
-
-describe('seedRoundScript', () => {
-  it('writes the plan files and the notes, encoded, never as shell text', () => {
-    const script = seedRoundScript({ plan: { json: '{"a":1}', markdown: '# Plan' }, notes: "# Task\n'; touch /x; '" });
-    assert.match(script, /> \/workspace\/plan\.json/);
-    assert.match(script, /> \/workspace\/plan\.md/);
-    assert.match(script, /> \/workspace\/notes\.md/);
-    assert.doesNotMatch(script, /touch \/x/);
-    assert.equal(script.match(/base64 -d/g)?.length, 3);
-  });
-
-  it('writes only the notes when there is no valid plan', () => {
-    const script = seedRoundScript({ notes: '# Task' });
-    assert.doesNotMatch(script, /plan\./);
-    assert.equal(script.match(/base64 -d/g)?.length, 1);
   });
 });

@@ -1,0 +1,7 @@
+{
+  "files": {
+    "notes.md": "# Task\n\n_Copied from the work item by the orchestrator. Do not edit this section; re-read it before you plan, before each commit and before writing summary.md._\n\nSource: https://github.com/JamieGeddes/factorial/issues/7\n\n## Fix typo\n\nThe word \"recieve\" should be \"receive\".\n\nAlso check the README.\n\n# Plan\n\n_Your plan, from the plan subagent, goes in /workspace/plan.json and /workspace/plan.md: follow its steps in order by `id`. Keep a line here per step (done, part done, not started), and note any step you change or skip, and why._\n\n# Notes\n",
+    "workitem.json": "{\n  \"schemaVersion\": 1,\n  \"id\": \"7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c\",\n  \"source\": {\n    \"type\": \"github-issue\",\n    \"id\": \"7\",\n    \"url\": \"https://github.com/JamieGeddes/factorial/issues/7\"\n  },\n  \"repository\": {\n    \"provider\": \"github\",\n    \"owner\": \"JamieGeddes\",\n    \"name\": \"factorial\"\n  },\n  \"title\": \"Fix typo\",\n  \"body\": \"The word \\\"recieve\\\" should be \\\"receive\\\".\\n\\nAlso check the README.\",\n  \"requestedBy\": \"JamieGeddes\",\n  \"createdAt\": \"2026-10-17T09:00:00Z\"\n}"
+  },
+  "sections": {}
+}

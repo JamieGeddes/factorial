@@ -5,27 +5,29 @@
  * attempt or a pull request), and leave the WorkItem on disk for the agent to
  * read, with the request copied to the top of /workspace/notes.md so it stays
  * in view. For a turn on a pull request, the points to address, including
- * the failing checks' logs, fetched here with a short-lived read-only token
- * and redacted, are left at /workspace/rework.md.
+ * the failing checks' logs, fetched with a short-lived read-only token
+ * and redacted, are left at /workspace/rework.md. These files are the seed,
+ * assembled from the providers listed below (`lib/seed.ts`).
  * No model is involved. The builder plans in this session with its plan
  * subagent, so no plan is written here; a later round (ContinueBuild) and the
- * reviewer's session are set up the same way, by `seedSession`.
+ * reviewer's session are seeded the same way, from their own lists of providers.
  *
  * The session is brand new at this point, so no agent code can be running.
  * The read-only token is sent as an HTTP header for the clone only and is not
  * written anywhere in the session.
  */
-import { putJsonArtefact, redactSecrets } from '@factorial/artefacts';
-import type { CheckJob, GitHubClient, Repo } from '@factorial/github-app';
-import { ROLES } from '@factorial/roles';
-import { TRIGGER_TYPES, assertWorkItem, type WorkItem, type WorkItemReviewDetail, type WorkItemReworkCause } from '@factorial/workitem';
+import { putJsonArtefact } from '@factorial/artefacts';
+import type { GitHubClient } from '@factorial/github-app';
+import { assertWorkItem, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
 import type { ReworkTurn, WorkContext } from '../lib/context.ts';
 import { logged, unvalidatedId, type RunKey } from '../lib/log.ts';
 import type { Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
-import { inlineCommentIdFromUrl, pointOrigins, reviewIdFromUrl, reworkPoints } from '../lib/rework-points.ts';
-import { handOverWorkspace, mustRun, sessionTarget, type SessionRole } from '../lib/session.ts';
+import { pointOrigins } from '../lib/rework-points.ts';
+import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
+import { notesProvider, requestProvider, reworkProvider } from '../lib/seed-providers.ts';
+import { handOverWorkspace, mustRun, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
   assertCommitSha,
@@ -36,7 +38,6 @@ import {
   shellQuote,
 } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
-import { reworkDetails } from '../lib/turn.ts';
 
 import type { IntakeResult } from './intake.ts';
 
@@ -47,14 +48,16 @@ interface PrepareInput {
   intake: IntakeResult;
 }
 
+/**
+ * Clone the repository and put the session on the branch; print the head
+ * commit and the base branch. It clears the session's files but writes none:
+ * those are the seed's (`lib/seed.ts`).
+ */
 export function cloneScript(params: {
   owner: string;
   name: string;
   branch: string;
   token: string;
-  workItemJson: string;
-  /** The initial /workspace/notes.md, from `initialNotes`. */
-  notes: string;
   /** Checkout mode: a new branch off the default head, or an existing remote branch. */
   mode: 'create' | 'checkout';
   /**
@@ -68,8 +71,6 @@ export function cloneScript(params: {
   const name = assertGitHubName(params.name, 'repository name');
   const branch = assertGitBranch(params.branch, 'work branch');
   const url = `https://github.com/${owner}/${name}.git`;
-  const workItemBase64 = Buffer.from(params.workItemJson, 'utf8').toString('base64');
-  const notesBase64 = Buffer.from(params.notes, 'utf8').toString('base64');
   const at = params.at === undefined ? undefined : assertCommitSha(params.at, 'start commit');
   const checkout =
     params.mode === 'create'
@@ -87,152 +88,12 @@ export function cloneScript(params: {
     'cd /workspace/repo',
     checkout,
     'git rev-parse HEAD',
-    `printf '%s' ${shellQuote(workItemBase64)} | base64 -d > /workspace/workitem.json`,
-    `printf '%s' ${shellQuote(notesBase64)} | base64 -d > /workspace/notes.md`,
     `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'`,
   ].join('\n');
 }
 
-/**
- * The starting /workspace/notes.md: the request itself, ahead of the agent's
- * own notes. Compaction can summarise older messages, including the prompt,
- * so the notes file is what keeps the task in view for the whole session.
- */
-export function initialNotes(
-  workItem: WorkItem,
-  options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole } = {},
-): string {
-  return [
-    '# Task',
-    '',
-    '_Copied from the work item by the orchestrator. Do not edit this section; re-read it before you plan, before each commit and before writing summary.md._',
-    '',
-    `Source: ${workItem.source.url}`,
-    '',
-    `## ${workItem.title}`,
-    '',
-    workItem.body.trim() || '_No further description was given._',
-    ...(options.rework ? ['', 'This is rework: every numbered point in /workspace/rework.md must be addressed, and answered by its number under `## Rework points` in summary.md.'] : []),
-    ...(options.resumedFrom ? ['', ...previousAttemptSection(options.resumedFrom)] : []),
-    '',
-    '# Plan',
-    '',
-    ROLES[options.role ?? 'builder'].notesPlan,
-    '',
-    '# Notes',
-    '',
-  ].join('\n');
-}
-
-function previousAttemptSection(attempt: Attempt): string[] {
-  const how = attempt.status === 'tests-failed' ? 'finished, but its tests failed' : 'stopped before finishing';
-  return [
-    '# Previous attempt',
-    '',
-    `This continues work item ${attempt.workItemId}, which ${how}. Its commits are already on this branch.`,
-    'Before planning, run `git log --oneline origin/HEAD..HEAD` and `git diff --stat origin/HEAD...HEAD` to see what was done, and check it against the Task.',
-    'Plan only what remains. Do not redo work that is already committed.',
-  ];
-}
-
-/** The last lines of a failing job's log, secrets stripped, as a Markdown section. */
-export function logSection(job: CheckJob, log: string, tailLines = 200): string {
-  const tail = log.split('\n').slice(-tailLines).join('\n');
-  return [
-    `### Failing job: ${job.name} (${job.htmlUrl})`,
-    '',
-    '```text',
-    redactSecrets(tail.trimEnd()),
-    '```',
-  ].join('\n');
-}
-
-const REWORK_CAUSES: Record<WorkItemReworkCause, string> = {
-  review: 'review comments',
-  'checks-failed': 'failed checks',
-  comment: "a request made in the pull request's conversation",
-};
-
-/**
- * `/workspace/rework.md`: the points to address, plus — when the cause is
- * failed checks — the failing jobs and the tail of each of their logs. When
- * the item came from a review (its source URL names one), the review's
- * inline comments follow the work item's own details as further points:
- * they are not in the webhook. Every session seeded for the item builds the
- * same file, so the numbering holds across rounds and for the reviewer.
- * Everything comes from untrusted text and is redacted before it is written
- * into the session.
- */
-export async function buildReworkFile(
-  client: GitHubClient,
-  repo: { owner: string; name: string },
-  headSha: string,
-  rework: Pick<ReworkTurn, 'pullRequest' | 'cause' | 'previousWorkItemId'>,
-  details: readonly WorkItemReviewDetail[],
-  options: { sourceUrl?: string } = {},
-): Promise<{ text: string; points: WorkItemReviewDetail[] }> {
-  const reviewId = rework.cause === 'review' ? reviewIdFromUrl(options.sourceUrl ?? '') : undefined;
-  const points = reworkPoints(details, reviewId === undefined ? [] : await client.listReviewComments(repo, rework.pullRequest.number, reviewId));
-  const lines: string[] = [
-    `# Rework of pull request #${rework.pullRequest.number}`,
-    '',
-    `Previous work item: ${rework.previousWorkItemId}`,
-    `Pull request: ${rework.pullRequest.url}`,
-    `Cause: ${REWORK_CAUSES[rework.cause]}`,
-    '',
-    '## Points to address',
-    '',
-  ];
-  if (points.length === 0) {
-    lines.push('_No specific points were recorded; see the pull request._');
-  }
-  points.forEach((detail, i) => lines.push(...detailSection(detail, i + 1)));
-  if (rework.cause === 'checks-failed') {
-    const jobs = await client.listJobsForHeadSha(repo, headSha);
-    const failing = jobs.filter((job) => job.conclusion === 'failure');
-    lines.push('', '## Failing checks', '');
-    if (failing.length === 0) {
-      lines.push('_The checks are no longer reported as failing on the branch head._');
-    }
-    for (const job of failing) {
-      lines.push('', logSection(job, await client.getJobLog(repo, job.id)));
-    }
-  }
-  return { text: `${lines.join('\n')}\n`, points };
-}
-
-/**
- * One point, numbered from 1 in the order the work item lists them: the
- * builder answers each by its number under `## Rework points` in summary.md,
- * and the orchestrator pairs the answers with the points in its reply.
- */
-function detailSection(detail: WorkItemReviewDetail, n: number): string[] {
-  const where = detail.path
-    ? ` (${detail.path}${detail.line === undefined ? '' : `:${detail.line}`})`
-    : '';
-  return [`### Point ${n}: @${detail.author}${where}`, '', redactSecrets(detail.body.trim()), ''];
-}
-
-/**
- * The points an item carries, with an inline comment's file and line, which
- * an item that names only the comment does not hold (#163): fetched here.
- */
-export async function detailsFor(client: Pick<GitHubClient, 'getReviewComment'>, repo: Repo, workItem: WorkItem): Promise<WorkItemReviewDetail[]> {
-  const details = reworkDetails(workItem);
-  if (workItem.inReplyTo === undefined || workItem.source.type !== TRIGGER_TYPES.githubPullRequestReviewComment) return details;
-  const id = inlineCommentIdFromUrl(workItem.source.url);
-  if (id === undefined) return details;
-  const comment = await client.getReviewComment(repo, id);
-  return details.map((d) => ({ ...d, path: comment.path, ...(comment.line && comment.line > 0 ? { line: comment.line } : {}) }));
-}
-
-/**
- * Clone the repository into one role's session and leave the WorkItem, the
- * notes and, for rework, /workspace/rework.md beside it. The first session
- * fixes the branch head; a later one passes it as `at`, so every role works
- * from the same commit. Returns that commit and the base branch.
- */
-export async function seedSession(params: {
+/** What seeding a session takes from the stage. */
+export interface SessionParams {
   role: SessionRole;
   workItem: WorkItem;
   branch: string;
@@ -244,7 +105,24 @@ export async function seedSession(params: {
   sessionId?: string;
   /** For a turn on a pull request, as Intake established it. */
   rework?: ReworkTurn;
-}): Promise<{ baseCommit: string; baseBranch: string; reworkPoints?: WorkItemReviewDetail[] }> {
+}
+
+/** What a stage supplies to its providers beyond the item and the clone. */
+export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive'>>;
+
+export interface ClonedSession {
+  target: SessionTarget;
+  baseCommit: string;
+  baseBranch: string;
+}
+
+/**
+ * Clone the repository into one role's session and put it on the branch. The
+ * first session fixes the branch head; a later one passes it as `at`, so
+ * every role works from the same commit. Nothing is placed in /workspace
+ * beside the clone: that is `placeSeed`.
+ */
+export async function cloneSession(params: SessionParams): Promise<ClonedSession> {
   const { workItem, branch, resumedFrom, rework } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const token = await repositoryToken(repo, { contents: 'read' });
@@ -256,8 +134,6 @@ export async function seedSession(params: {
       name: repo.name,
       branch,
       token,
-      workItemJson: JSON.stringify(workItem, null, 2),
-      notes: initialNotes(workItem, { rework: rework !== undefined, role: params.role, ...(resumedFrom ? { resumedFrom } : {}) }),
       mode: rework || resumedFrom || params.existing ? 'checkout' : 'create',
       ...(params.at ? { at: params.at } : {}),
     }),
@@ -266,20 +142,45 @@ export async function seedSession(params: {
   const stdoutLines = result.stdout.trim().split('\n');
   const baseCommit = assertCommitSha(stdoutLines[stdoutLines.length - 2] ?? '', 'branch head');
   const baseBranch = rework ? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
-
-  if (rework) {
-    const client = await repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' });
-    const reworkFile = await buildReworkFile(client, repo, baseCommit, rework, await detailsFor(client, repo, workItem), { sourceUrl: workItem.source.url });
-    const encoded = Buffer.from(reworkFile.text, 'utf8').toString('base64');
-    await mustRun(
-      target,
-      [`set -euo pipefail`, `printf '%s' ${shellQuote(encoded)} | base64 -d > /workspace/rework.md`].join('\n'),
-      60,
-    );
-    return { baseCommit, baseBranch, reworkPoints: reworkFile.points };
-  }
-  return { baseCommit, baseBranch };
+  return { target, baseCommit, baseBranch };
 }
+
+/**
+ * Assemble the session's seed from the stage's providers, in order, and place
+ * its files in the session with the one writer. Call it after the clone and
+ * before `handOverWorkspace`. Returns the seed, for its sections and data.
+ */
+export async function placeSeed(cloned: ClonedSession, params: SessionParams, providers: readonly SeedProvider[], extras: SeedExtras = {}): Promise<Seed> {
+  const { workItem, resumedFrom, rework } = params;
+  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
+  let client: Promise<GitHubClient> | undefined;
+  const seed = await assembleSeed(providers, {
+    role: params.role,
+    workItem,
+    baseCommit: cloned.baseCommit,
+    baseBranch: cloned.baseBranch,
+    round: 1,
+    ...(resumedFrom ? { resumedFrom } : {}),
+    ...(rework ? { rework } : {}),
+    ...extras,
+    github: () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' })),
+  });
+  await writeSeed(cloned.target, seed);
+  return seed;
+}
+
+/** Clone the repository into one role's session and seed it: the two steps `cloneSession` and `placeSeed`, when the stage needs nothing between them. */
+export async function seedSession(
+  params: SessionParams & { providers: readonly SeedProvider[]; extras?: SeedExtras },
+): Promise<{ baseCommit: string; baseBranch: string; reworkPoints?: WorkItemReviewDetail[] }> {
+  const cloned = await cloneSession(params);
+  const seed = await placeSeed(cloned, params, params.providers, params.extras);
+  const { baseCommit, baseBranch } = cloned;
+  return { baseCommit, baseBranch, ...(seed.data.reworkPoints ? { reworkPoints: seed.data.reworkPoints } : {}) };
+}
+
+/** What a new session for a change is seeded with, in this order: the numbering of a rework's points depends on it. */
+export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider];
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
@@ -294,6 +195,7 @@ export const handler = logged('prepare', prepareKey, async (input, stageLog): Pr
 
   const branch = assertGitBranch(intake.branch, 'work branch');
   const { baseCommit, baseBranch, reworkPoints: points } = await seedSession({
+    providers: PREPARE_PROVIDERS,
     role: 'builder',
     workItem,
     branch,
