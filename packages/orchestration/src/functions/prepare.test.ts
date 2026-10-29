@@ -61,7 +61,7 @@ describe('cloneScript', () => {
     const release = cloneScript({ ...params, mode: 'checkout', baseBranch: 'release/1' });
     assert.ok(release.includes("base_refspec='+refs/heads/release/1:refs/remotes/origin/release/1'"));
     assert.match(release, /fetch --quiet origin "\$default_refspec" "\$base_refspec" '\+refs\/heads\/factorial/);
-    // a base branch that turns out to be the default adds no second refspec
+    // a base branch that turns out to be the default is fetched by the default's refspec, given twice, which git accepts
     assert.ok(release.includes(`test 'release/1' != "$default" || base_refspec="$default_refspec"`));
   });
 
