@@ -18,7 +18,7 @@ import { MAX_SENSITIVE_JSON_CHARS, sensitivePathsJson } from './review-files.ts'
 import { inlineCommentIdFromUrl, reviewIdFromUrl, reworkPoints } from './rework-points.ts';
 import type { SeedPart, SeedProvider } from './seed.ts';
 import type { SessionRole } from './session.ts';
-import { HARDENED_GIT_ENV, assertGitBranch, shellQuote } from './shell.ts';
+import { assertGitBranch, shellQuote } from './shell.ts';
 import { reworkDetails } from './turn.ts';
 
 const KIB = 1024;
@@ -34,10 +34,6 @@ export const MAX_PLAN_BYTES = 64 * KIB;
 export const MAX_SUMMARY_BYTES = 64 * KIB;
 /** The diff, as large as Collect exports. */
 export const MAX_DIFF_BYTES = 5 * 1024 * KIB;
-/** A repository's instructions. */
-export const MAX_INSTRUCTIONS_BYTES = 32 * KIB;
-/** The repository's instructions file, on the base branch. */
-export const INSTRUCTIONS_FILE = '.factorial/instructions.md';
 
 /**
  * The starting /workspace/notes.md: the request itself, ahead of the agent's
@@ -265,40 +261,3 @@ export const sensitivePathsProvider: SeedProvider = (context): SeedPart => {
 
 /** The id of the section holding the sensitive paths as JSON, which the invoker takes as SENSITIVE_PATHS. */
 export const SENSITIVE_PATHS_SECTION = 'sensitive-paths';
-
-/**
- * The repository's own instructions, from `.factorial/instructions.md` on
- * the target's base branch, never the branch under work: a change cannot
- * write the instructions it is judged by. The notes point to the file, but
- * only when it exists, and not again in a continuation, whose carried-over
- * notes already do.
- */
-export const instructionsProvider: SeedProvider = async (context): Promise<SeedPart> => {
-  const ref = shellQuote(`origin/${assertGitBranch(context.baseBranch, 'base branch')}:${INSTRUCTIONS_FILE}`);
-  const output = await context.read(
-    [
-      'set -eu',
-      HARDENED_GIT_ENV,
-      'cd /workspace/repo',
-      `if git cat-file -e ${ref} 2>/dev/null; then printf 'ok:'; git show ${ref} | head -c ${MAX_INSTRUCTIONS_BYTES + 1}; else printf 'missing:'; fi`,
-    ].join('\n'),
-  );
-  if (!output.startsWith('ok:')) return {};
-  const text = redactSecrets(output.slice('ok:'.length));
-  if (text.trim() === '') return {};
-  return {
-    files: [
-      { path: 'instructions.md', content: text, cap: MAX_INSTRUCTIONS_BYTES, truncate: true },
-      ...(context.round > 1
-        ? []
-        : [
-            {
-              path: 'notes.md',
-              content: '\nThe repository has instructions for work on it, read from its base branch: /workspace/instructions.md. Read them before you start.\n',
-              cap: MAX_NOTES_BYTES,
-              append: true,
-            },
-          ]),
-    ],
-  };
-};

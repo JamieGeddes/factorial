@@ -26,7 +26,7 @@ import type { Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
-import { instructionsProvider, notesProvider, requestProvider, reworkProvider } from '../lib/seed-providers.ts';
+import { notesProvider, requestProvider, reworkProvider } from '../lib/seed-providers.ts';
 import { handOverWorkspace, mustRun, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
 import {
   HARDENED_GIT_ENV,
@@ -163,7 +163,6 @@ export async function placeSeed(cloned: ClonedSession, params: SessionParams, pr
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(rework ? { rework } : {}),
     ...extras,
-    read: async (script) => (await mustRun(cloned.target, script, 300)).stdout,
     github: () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' })),
   });
   await writeSeed(cloned.target, seed);
@@ -181,7 +180,7 @@ export async function seedSession(
 }
 
 /** What a new session for a change is seeded with, in this order: the numbering of a rework's points depends on it. */
-export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider, instructionsProvider];
+export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider];
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 

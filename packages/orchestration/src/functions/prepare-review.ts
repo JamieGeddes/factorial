@@ -40,7 +40,7 @@ import { handOverWorkspace, mustRun } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
-import { SENSITIVE_PATHS_SECTION, diffProvider, instructionsProvider, notesProvider, planProvider, requestProvider, sensitivePathsProvider, summaryProvider, reworkProvider } from '../lib/seed-providers.ts';
+import { SENSITIVE_PATHS_SECTION, diffProvider, notesProvider, planProvider, requestProvider, sensitivePathsProvider, summaryProvider, reworkProvider } from '../lib/seed-providers.ts';
 import { sectionText, type SeedProvider } from '../lib/seed.ts';
 
 import { cloneSession, placeSeed } from './prepare.ts';
@@ -68,7 +68,6 @@ export const REVIEW_PROVIDERS: readonly SeedProvider[] = [
   summaryProvider,
   diffProvider,
   sensitivePathsProvider,
-  instructionsProvider,
 ];
 
 async function planArtefact(ctx: WorkContext, path: string): Promise<string> {

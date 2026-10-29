@@ -1,7 +1,7 @@
 /**
  * The seed: what a session starts with (#166). Every context a session is
  * given — the request, the notes, the points of a rework, the plan, the
- * diff, a repository's own instructions — is owned by one provider, a
+ * diff — is owned by one provider, a
  * function from the seeding context to files for /workspace and sections
  * for the first message. A stage lists its providers in the order they
  * run; `assembleSeed` runs them and checks what they return, and
@@ -92,8 +92,6 @@ export interface SeedContext {
   summary?: string;
   /** The reviewer's flagged paths. */
   sensitive?: SensitiveChange[];
-  /** Run a read-only script in the session's clone and return its output. */
-  read: (script: string) => Promise<string>;
   /** A read-only GitHub client for the repository, made when a provider first needs it. */
   github: () => Promise<GitHubClient>;
 }

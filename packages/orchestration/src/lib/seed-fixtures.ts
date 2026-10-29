@@ -80,7 +80,7 @@ export function fakeClient(): GitHubClient {
   });
 }
 
-/** A context as the stages build it, over a clone with no repository instructions. */
+/** A context as the stages build it. */
 export function contextFor(workItem: WorkItem, extra: Partial<SeedContext> = {}): SeedContext {
   return {
     role: 'builder',
@@ -88,7 +88,6 @@ export function contextFor(workItem: WorkItem, extra: Partial<SeedContext> = {})
     baseCommit: HEAD,
     baseBranch: 'main',
     round: 1,
-    read: async () => 'missing:',
     github: async () => fakeClient(),
     ...extra,
   };

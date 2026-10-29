@@ -19,7 +19,7 @@ import type { WorkContext } from '../lib/context.ts';
 import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId } from '../lib/continue-files.ts';
 import { logged, runKey } from '../lib/log.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
-import { instructionsProvider, planProvider, requestProvider, reworkProvider, roundNotesProvider } from '../lib/seed-providers.ts';
+import { planProvider, requestProvider, reworkProvider, roundNotesProvider } from '../lib/seed-providers.ts';
 import type { SeedProvider } from '../lib/seed.ts';
 import { handOverWorkspace, sessionTarget } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
@@ -44,7 +44,7 @@ export interface ContinueBuildResult {
 }
 
 /** What a continuing round is seeded with, in this order: the numbering of a rework's points depends on it. */
-export const CONTINUE_PROVIDERS: readonly SeedProvider[] = [requestProvider, roundNotesProvider, planProvider, reworkProvider, instructionsProvider];
+export const CONTINUE_PROVIDERS: readonly SeedProvider[] = [requestProvider, roundNotesProvider, planProvider, reworkProvider];
 
 async function artefact(ctx: WorkContext, path: string, maxBytes: number): Promise<string | undefined> {
   const read = await getTextArtefact(ctx.artefactPrefix, path, maxBytes);

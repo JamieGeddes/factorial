@@ -4,17 +4,9 @@ import { describe, it } from 'node:test';
 import { CONTINUE_PROVIDERS } from '../functions/continue-build.ts';
 import { PREPARE_PROVIDERS } from '../functions/prepare.ts';
 import { REVIEW_PROVIDERS } from '../functions/prepare-review.ts';
-import { assembleSeed, type Seed } from './seed.ts';
-import { INSTRUCTIONS_FILE, MAX_INSTRUCTIONS_BYTES, diffProvider, roundNotesProvider } from './seed-providers.ts';
+import { assembleSeed, sectionText, type Seed, type SeedProvider } from './seed.ts';
+import { diffProvider, roundNotesProvider } from './seed-providers.ts';
 import { contextFor, newItem, reworkItem, reworkTurn, snapshotOf } from './seed-fixtures.ts';
-
-const withInstructions = (text: string, reads: string[] = []) =>
-  contextFor(newItem, {
-    read: async (script) => {
-      reads.push(script);
-      return `ok:${text}`;
-    },
-  });
 
 const file = (seed: Seed, path: string): string => {
   const f = seed.files.find((x) => x.path === path);
@@ -68,46 +60,25 @@ describe('diffProvider', () => {
   });
 });
 
-describe('instructionsProvider', () => {
-  it("seeds the repository's instructions from the base branch and points the notes at them", async () => {
-    const reads: string[] = [];
-    const seed = await assembleSeed(PREPARE_PROVIDERS, withInstructions('Use tabs.\n', reads));
-    assert.equal(file(seed, 'instructions.md'), 'Use tabs.\n');
-    assert.match(file(seed, 'notes.md'), /# Notes\n\nThe repository has instructions .* \/workspace\/instructions\.md/);
-    assert.match(reads[0]!, new RegExp(`git show 'origin/main:${INSTRUCTIONS_FILE.replace('.', '\\.')}'`));
-    assert.doesNotMatch(reads[0]!, /HEAD/);
-  });
+describe('the seam', () => {
+  it('seeds what a new provider returns, in list order, from a function and a list entry', async () => {
+    const extra: SeedProvider = () => ({
+      files: [{ path: 'extra.md', content: 'Extra context.\n', cap: 100 }],
+      sections: [{ id: 'extra', text: 'Extra section.', cap: 100 }],
+    });
+    const middle = [...PREPARE_PROVIDERS.slice(0, 1), extra, ...PREPARE_PROVIDERS.slice(1)];
+    const atEnd = [...PREPARE_PROVIDERS, extra];
 
-  it('reads from the context base branch', async () => {
-    const reads: string[] = [];
-    await assembleSeed(PREPARE_PROVIDERS, { ...withInstructions('x', reads), baseBranch: 'release/1' });
-    assert.match(reads[0]!, /origin\/release\/1:\.factorial\/instructions\.md/);
-  });
+    const plain = await assembleSeed(PREPARE_PROVIDERS, contextFor(reworkItem, { rework: reworkTurn }));
+    const names = plain.files.map((f) => f.path);
+    const inMiddle = await assembleSeed(middle, contextFor(reworkItem, { rework: reworkTurn }));
+    assert.deepEqual(inMiddle.files.map((f) => f.path), [names[0], 'extra.md', ...names.slice(1)]);
+    const last = await assembleSeed(atEnd, contextFor(reworkItem, { rework: reworkTurn }));
+    assert.deepEqual(last.files.map((f) => f.path), [...names, 'extra.md']);
 
-  it('seeds nothing, and leaves the notes as they were, when the file is missing or empty', async () => {
-    const plain = snapshotOf(await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem)));
-    for (const output of ['missing:', 'ok:', 'ok: \n']) {
-      const seed = await assembleSeed(PREPARE_PROVIDERS, { ...contextFor(newItem), read: async () => output });
-      assert.deepEqual(snapshotOf(seed), plain);
-    }
-  });
-
-  it('redacts secrets and cuts the file to its cap', async () => {
-    const seed = await assembleSeed(PREPARE_PROVIDERS, withInstructions(`token ghs_${'a'.repeat(36)}\n${'x'.repeat(MAX_INSTRUCTIONS_BYTES + 100)}`));
-    const text = file(seed, 'instructions.md');
-    assert.doesNotMatch(text, /ghs_a/);
-    assert.ok(Buffer.byteLength(text, 'utf8') <= MAX_INSTRUCTIONS_BYTES);
-  });
-
-  it("does not point a continuation's carried-over notes at the file again", async () => {
-    const continuing = { baseCommit: 'b'.repeat(40), pushed: true, commitCount: 1 };
-    const seed = await assembleSeed(CONTINUE_PROVIDERS, { ...withInstructions('Use tabs.'), round: 2, continuing });
-    assert.equal(file(seed, 'instructions.md'), 'Use tabs.');
-    assert.doesNotMatch(file(seed, 'notes.md'), /\/workspace\/instructions\.md/);
-  });
-
-  it('seeds the reviewer too', async () => {
-    const seed = await assembleSeed(REVIEW_PROVIDERS, { ...withInstructions('Use tabs.'), role: 'reviewer' });
-    assert.equal(file(seed, 'instructions.md'), 'Use tabs.');
+    assert.equal(file(last, 'extra.md'), 'Extra context.\n');
+    assert.equal(sectionText(last, 'extra'), 'Extra section.');
+    assert.deepEqual(last.sections.map((s) => s.id), [...plain.sections.map((s) => s.id), 'extra']);
+    assert.equal(plain.files.some((f) => f.path === 'extra.md'), false, 'the real list is untouched');
   });
 });
