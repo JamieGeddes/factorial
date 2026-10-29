@@ -15,10 +15,12 @@ const URL = 'https://github.com/o/n.git';
 const ON_MAIN = 'factorial/11111111-1111-4111-8111-111111111111'; // branched from main
 const ON_RELEASE = 'factorial/22222222-2222-4222-8222-222222222222'; // branched from release/1
 
+type CloneParams = Parameters<typeof cloneScript>[0];
+
 describe('cloneScript, run with bash', { skip: !linux }, () => {
   let root = '';
   let bare = '';
-  const sha: Record<string, string> = {};
+  const sha = { main1: '', main2: '', release: '', onRelease: '', onMain: '' };
 
   const git = (cwd: string, ...args: string[]): string =>
     execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], {
@@ -57,8 +59,8 @@ describe('cloneScript, run with bash', { skip: !linux }, () => {
   after(() => rmSync(root, { recursive: true, force: true }));
 
   /** Run the real script with /workspace pointed at the temporary directory and the GitHub URL at the local repository. */
-  const run = (params: { [K in keyof Parameters<typeof cloneScript>[0]]?: Parameters<typeof cloneScript>[0][K] | undefined }) => {
-    const script = cloneScript({ owner: 'o', name: 'n', branch: ON_MAIN, token: TOKEN, mode: 'create', ...params } as Parameters<typeof cloneScript>[0]);
+  const run = (params: Partial<CloneParams>) => {
+    const script = cloneScript({ owner: 'o', name: 'n', branch: ON_MAIN, token: TOKEN, mode: 'create', ...params });
     const result = spawnSync('bash', ['-c', script.replaceAll('/workspace', root)], {
       encoding: 'utf8',
       env: {
@@ -127,7 +129,7 @@ describe('cloneScript, run with bash', { skip: !linux }, () => {
     assert.equal(session('show', 'origin/release/1:release.txt'), 'release');
   });
 
-  it('a rework whose base is the default branch fetches it once', () => {
+  it('a rework whose base is the default branch has it once, as origin/HEAD and origin/main', () => {
     const r = run({ mode: 'checkout', baseBranch: 'main' });
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(remoteRefs(), ['refs/remotes/origin/HEAD', `refs/remotes/origin/${ON_MAIN}`, 'refs/remotes/origin/main']);

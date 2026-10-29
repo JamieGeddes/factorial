@@ -5,6 +5,22 @@
       {
         "prefix": "templates/",
         "note": "CloudFormation templates change and are deployed from main by GitHub Actions"
+      },
+      {
+        "prefix": "packages/",
+        "note": "Lambda, host or tool code changes and is deployed from main by GitHub Actions"
+      },
+      {
+        "prefix": "contracts/",
+        "note": "Contracts bundled into the Lambdas, host and invoker change and are deployed from main by GitHub Actions"
+      },
+      {
+        "prefix": "agent-runtime/",
+        "note": "The agent image changes and is rebuilt and deployed from main by GitHub Actions"
+      },
+      {
+        "prefix": "invoker/",
+        "note": "The invoker image changes and is rebuilt and deployed from main by GitHub Actions"
       }
     ],
     "humanSteps": [
