@@ -23,7 +23,8 @@
  *   tool calls in one response at once, so at most MAX_CONCURRENT_SUBAGENTS
  *   child sessions run together, as on the SDK host; a call beyond it waits.
  * The model is reached through pi's amazon-bedrock provider with the
- * execution role's credentials, in the version's region.
+ * execution role's credentials, in the version's region, and a failed call is
+ * retried as patiently as Claude Code does (PI_SETTINGS).
  */
 import { accessSync, constants, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -98,6 +99,15 @@ class EventQueue<T> {
     }
   }
 }
+
+/**
+ * pi's settings for every session. pi retries a throttled or failed model call
+ * 3 times by default, waiting 2, 4 and 8 seconds, where Claude Code retries 10
+ * times: one burst of Bedrock throttling would end a pi run as model_error
+ * where the SDK run carries on. 10 retries, doubling from 2 seconds to pi's
+ * 60-second cap, wait about six minutes in all, within the run's time limit.
+ */
+export const PI_SETTINGS = { retry: { enabled: true, maxRetries: 10, baseDelayMs: 2000, maxAgentDelayMs: 60_000 } } as const;
 
 /** Why the host stopped the run before the model finished. */
 type Stop = 'max_turns' | 'max_budget';
@@ -242,7 +252,7 @@ async function* runPi(
   };
 
   const createSession = async (spec: SessionSpec, extra: { agent?: AnyTool | undefined }, agentId?: string): Promise<AgentSession> => {
-    const settingsManager = SettingsManager.inMemory({});
+    const settingsManager = SettingsManager.inMemory(structuredClone(PI_SETTINGS));
     const resourceLoader = new DefaultResourceLoader({
       cwd: config.workspace,
       agentDir: parts.agentDir,

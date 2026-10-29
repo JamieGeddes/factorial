@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import type { AssistantMessage } from '@earendil-works/pi-ai';
-import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
+import { SettingsManager, type AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import { validateRunEvent, type RunEvent } from '@factorial/run';
 
 import { readConfig } from '../config.ts';
@@ -15,7 +15,7 @@ import { shellEnvironment } from './environment.ts';
 import { PiEvents, runStarted, usageOf } from './events.ts';
 import { pageText } from './fetch.ts';
 import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
-import { RG_WRAPPER, firstOnPath } from './harness.ts';
+import { PI_SETTINGS, RG_WRAPPER, firstOnPath } from './harness.ts';
 import { PI_TOOLS, toolCallOf, toolsFor } from './tools.ts';
 
 const config = readConfig({
@@ -192,4 +192,11 @@ it('keeps the pi pin the same in the workspace and the image', () => {
     assert.match(workspace ?? '', /^\d+\.\d+\.\d+$/);
     assert.equal(read('../../../../agent-runtime/package.json').dependencies[name], workspace);
   }
+});
+
+describe('pi settings', () => {
+  it('retries a failed model call 10 times, as Claude Code does', () => {
+    const retry = SettingsManager.inMemory(structuredClone(PI_SETTINGS)).getRetrySettings();
+    assert.deepEqual(retry, { enabled: true, maxRetries: 10, baseDelayMs: 2000, maxAgentDelayMs: 60_000 });
+  });
 });
