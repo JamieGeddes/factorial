@@ -33,15 +33,40 @@ describe('cloneScript', () => {
     mode: 'create' as const,
   };
 
-  it('clones with the token as a header, never in the URL, then creates the branch', () => {
+  it('fetches with the token as a header on the network commands only, never in the URL or the config, then creates the branch', () => {
     const script = cloneScript(params);
     const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
+    const header = `-c http.extraHeader='AUTHORIZATION: basic ${basic}'`;
     assert.match(script, /^set -euo pipefail$/m);
     assert.match(script, /GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
-    assert.match(script, new RegExp(`git -c http\\.extraHeader='AUTHORIZATION: basic ${basic}' clone --quiet 'https://github\\.com/JamieGeddes/factorial\\.git' /workspace/repo`));
+    assert.match(script, /^git init --quiet \/workspace\/repo$/m);
+    assert.match(script, new RegExp(`git ${header.replaceAll('.', '\\.')} ls-remote --symref origin HEAD`));
+    assert.match(script, new RegExp(`git ${header.replaceAll('.', '\\.')} fetch --quiet origin`));
+    assert.doesNotMatch(script, /\bclone\b/);
+    assert.doesNotMatch(script, /--filter/);
+    for (const line of script.split('\n')) {
+      if (/git config|remote add/.test(line)) assert.ok(!line.includes(TOKEN) && !line.includes(basic) && !line.includes('extraHeader'), line);
+    }
+    assert.match(script, /remote add origin 'https:\/\/github\.com\/JamieGeddes\/factorial\.git'/);
     assert.doesNotMatch(script, /ghs_t/);
-    assert.match(script, /git checkout --quiet -b 'factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'/);
+    assert.match(script, /git checkout --quiet --no-track -b 'factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' "origin\/\$default"/);
     assert.doesNotMatch(script, /--force/);
+  });
+
+  it('fetches the work branch only when it is checked out, and a rework base branch only when given and not the default', () => {
+    const work = "'+refs/heads/factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c:refs/remotes/origin/factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'";
+    assert.ok(!cloneScript(params).includes('refs/remotes/origin/factorial/'));
+    assert.ok(cloneScript({ ...params, mode: 'checkout' }).includes(work));
+    assert.doesNotMatch(cloneScript(params), /base_refspec/);
+    const release = cloneScript({ ...params, mode: 'checkout', baseBranch: 'release/1' });
+    assert.ok(release.includes("base_refspec='+refs/heads/release/1:refs/remotes/origin/release/1'"));
+    assert.match(release, /fetch --quiet origin "\$default_refspec" "\$base_refspec" '\+refs\/heads\/factorial/);
+    // a base branch that turns out to be the default adds no second refspec
+    assert.ok(release.includes(`test 'release/1' != "$default" || base_refspec="$default_refspec"`));
+  });
+
+  it('rejects a base branch that is not a plain branch name', () => {
+    assert.throws(() => cloneScript({ ...params, baseBranch: 'x;rm' }), /base branch/);
   });
 
   it('checks out the existing rework branch instead of creating one, and reports the head', () => {
@@ -51,7 +76,7 @@ describe('cloneScript', () => {
     assert.doesNotMatch(script, /checkout --quiet -b/);
     assert.match(script, /git rev-parse HEAD/);
     // the branch head comes before the default branch line, so the handler can tell them apart
-    assert.ok(script.indexOf('git rev-parse HEAD') < script.indexOf('symbolic-ref'));
+    assert.ok(script.indexOf('git rev-parse HEAD') < script.lastIndexOf('symbolic-ref'));
   });
 
   it('clears any stale rework.md from the workspace', () => {
@@ -84,7 +109,7 @@ describe('cloneScript pinned to a commit', () => {
   };
 
   it('creates a new branch at a commit another session fixed', () => {
-    assert.match(cloneScript(params), new RegExp(`git checkout --quiet -b 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' '${'a'.repeat(40)}'`));
+    assert.match(cloneScript(params), new RegExp(`git checkout --quiet --no-track -b 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' '${'a'.repeat(40)}'`));
   });
 
   it('fails if an existing branch is not at the expected commit', () => {

@@ -49,9 +49,18 @@ interface PrepareInput {
 }
 
 /**
- * Clone the repository and put the session on the branch; print the head
- * commit and the base branch. It clears the session's files but writes none:
- * those are the seed's (`lib/seed.ts`).
+ * Fetch the repository into the session and put it on the branch; print the
+ * head commit and the default branch. It clears the session's files but writes
+ * none: those are the seed's (`lib/seed.ts`).
+ *
+ * It is not a `git clone`, which would bring every branch. It runs `git init`,
+ * asks the remote for its default branch (`ls-remote --symref`), and fetches
+ * only the branches the session uses, at full depth: the default branch (so
+ * `origin/HEAD` is real), a rework's base branch when it differs, and, in
+ * checkout mode, the work branch. `origin/HEAD` is then set by hand. A lazy
+ * filter (`--filter=blob:none`) is not used: the token is sent for the network
+ * commands only and is in no file, so git could not fetch a missing object
+ * later.
  */
 export function cloneScript(params: {
   owner: string;
@@ -66,15 +75,26 @@ export function cloneScript(params: {
    * be there.
    */
   at?: string;
+  /** A rework's base branch, when it is not the default branch: fetched as `origin/<baseBranch>` for three-dot diffs. */
+  baseBranch?: string;
 }): string {
   const owner = assertGitHubName(params.owner, 'repository owner');
   const name = assertGitHubName(params.name, 'repository name');
   const branch = assertGitBranch(params.branch, 'work branch');
+  const baseBranch = params.baseBranch === undefined ? undefined : assertGitBranch(params.baseBranch, 'base branch');
   const url = `https://github.com/${owner}/${name}.git`;
   const at = params.at === undefined ? undefined : assertCommitSha(params.at, 'start commit');
+  // the token goes on the commands that reach the network, and is not written to the repository's config
+  const auth = `-c http.extraHeader=${shellQuote(gitAuthHeader(params.token))}`;
+  const refspec = (b: string): string => shellQuote(`+refs/heads/${b}:refs/remotes/origin/${b}`);
+  const fetch = [
+    `git ${auth} fetch --quiet origin "$default_refspec"`,
+    ...(baseBranch ? [`"$base_refspec"`] : []),
+    ...(params.mode === 'checkout' ? [refspec(branch)] : []),
+  ];
   const checkout =
     params.mode === 'create'
-      ? `git checkout --quiet -b ${shellQuote(branch)}${at ? ` ${shellQuote(at)}` : ''}`
+      ? `git checkout --quiet --no-track -b ${shellQuote(branch)} ${at ? shellQuote(at) : '"origin/$default"'}`
       : [
           `git checkout --quiet ${shellQuote(`origin/${branch}`)}`,
           `git branch --quiet ${shellQuote(branch)}`,
@@ -84,8 +104,15 @@ export function cloneScript(params: {
     'set -euo pipefail',
     HARDENED_GIT_ENV,
     'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs /workspace/plan.md /workspace/plan.json /workspace/diff.patch /workspace/review.json',
-    `git -c http.extraHeader=${shellQuote(gitAuthHeader(params.token))} clone --quiet ${shellQuote(url)} /workspace/repo`,
+    'git init --quiet /workspace/repo',
     'cd /workspace/repo',
+    `git remote add origin ${shellQuote(url)}`,
+    `default=$(git ${auth} ls-remote --symref origin HEAD | awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2 }')`,
+    `test -n "$default" || { echo 'the repository has no default branch' >&2; exit 1; }`,
+    `default_refspec="+refs/heads/$default:refs/remotes/origin/$default"`,
+    ...(baseBranch ? [`base_refspec=${refspec(baseBranch)}`, `test ${shellQuote(baseBranch)} != "$default" || base_refspec="$default_refspec"`] : []),
+    fetch.join(' '),
+    'git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$default"',
     checkout,
     'git rev-parse HEAD',
     `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'`,
@@ -136,6 +163,7 @@ export async function cloneSession(params: SessionParams): Promise<ClonedSession
       token,
       mode: rework || resumedFrom || params.existing ? 'checkout' : 'create',
       ...(params.at ? { at: params.at } : {}),
+      ...(rework ? { baseBranch: rework.baseBranch } : {}),
     }),
     600,
   );
