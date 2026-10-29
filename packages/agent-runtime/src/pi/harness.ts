@@ -23,8 +23,8 @@
  *   tool calls in one response at once, so at most MAX_CONCURRENT_SUBAGENTS
  *   child sessions run together, as on the SDK host; a call beyond it waits.
  * The model is reached through pi's amazon-bedrock provider with the
- * execution role's credentials, in the version's region, and a failed call is
- * retried as patiently as Claude Code does (PI_SETTINGS).
+ * execution role's credentials (bedrock.ts), in the version's region, and a
+ * failed call is retried as patiently as Claude Code does (PI_SETTINGS).
  */
 import { accessSync, constants, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -54,6 +54,7 @@ import { signedGatewayCall, type GatewayCall } from '../web-search.ts';
 import { SETPRIV, type AgentRunner } from './as-agent.ts';
 import { shellEnvironment } from './environment.ts';
 import { PiEvents, runStarted } from './events.ts';
+import { bedrockProvider } from './bedrock.ts';
 import { fetchTool } from './fetch.ts';
 import type { Helper } from './operations.ts';
 import { Slots } from './slots.ts';
@@ -191,6 +192,8 @@ async function* runPi(
   const startedAt = Date.now();
   const policy: RolePolicy = role.session(config.workspace, note, PI_TOOLS);
   const runtime = await ModelRuntime.create({ authPath: path.join(parts.agentDir, 'auth.json'), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+  // pi's own Bedrock auth finds no credentials on the Runtime; the execution role is the SDK chain's (bedrock.ts).
+  runtime.registerNativeProvider(bedrockProvider());
   const modelOf = (id: string): Model<Api> => {
     const model = runtime.getModel(PROVIDER_ID, id);
     if (!model) throw new Error(`pi's catalogue has no ${PROVIDER_ID} model ${id}`);
