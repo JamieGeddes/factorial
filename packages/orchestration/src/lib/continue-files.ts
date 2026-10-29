@@ -7,8 +7,6 @@
  * memory between rounds; the old session is discarded, hostile like any
  * session an agent has run in.
  */
-import { shellQuote } from './shell.ts';
-
 /** The previous round's notes are read back from the artefact store at most this large. */
 export const MAX_NOTES_ARTEFACT_BYTES = 64 * 1024;
 
@@ -47,20 +45,5 @@ export function continuingSection(params: { round: number; baseCommit: string; p
     '',
     'Commit after each step, and keep the step record under "# Plan" current: this session can end the same way, and the next one starts from the branch and this file.',
     '',
-  ].join('\n');
-}
-
-/** Write the plan, when there is a valid one, and the notes into the new round's session, over the clone's initial notes. */
-export function seedRoundScript(params: { plan?: { json: string; markdown: string } | undefined; notes: string }): string {
-  const encode = (text: string): string => shellQuote(Buffer.from(text, 'utf8').toString('base64'));
-  return [
-    'set -euo pipefail',
-    ...(params.plan
-      ? [
-          `printf '%s' ${encode(params.plan.json)} | base64 -d > /workspace/plan.json`,
-          `printf '%s' ${encode(params.plan.markdown)} | base64 -d > /workspace/plan.md`,
-        ]
-      : []),
-    `printf '%s' ${encode(params.notes)} | base64 -d > /workspace/notes.md`,
   ].join('\n');
 }

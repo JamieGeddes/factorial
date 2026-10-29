@@ -30,34 +30,29 @@ const ERROR_CHARS = 300;
 /** At most this many sensitive paths travel in the state and the reviewer's prompt. */
 const MAX_SENSITIVE = 20;
 
-const encode = (text: string): string => shellQuote(Buffer.from(text, 'utf8').toString('base64'));
-
 /** The rules file is read at most this large. */
 export const MAX_RULES_FILE_BYTES = 64 * 1024;
 
 /**
- * Write what the reviewer reads into its fresh session, then print the
- * changed paths and the repository's sensitive-path rules as they are on the
- * base branch, never as the branch under review has them, so a change cannot
- * loosen the rules that judge it. The paths are NUL-separated and
- * base64-encoded so no path can break the parse. The diff is three-dot,
- * against the merge base, so it shows what the pull request would change
- * even when the branch started from an earlier attempt. Rename detection is
- * off, so a file moved out of a sensitive directory is listed under its old
- * path as well as its new one.
+ * Print the changed paths and the repository's sensitive-path rules as they
+ * are on the base branch, never as the branch under review has them, so a
+ * change cannot loosen the rules that judge it. Read-only: the files the
+ * reviewer reads, the diff among them, are the seed's (`lib/seed.ts`). The
+ * paths are NUL-separated and base64-encoded so no path can break the parse.
+ * They are from the same three-dot range as the diff, against the merge
+ * base, so they show what the pull request would change even when the branch
+ * started from an earlier attempt. Rename detection is off, so a file moved
+ * out of a sensitive directory is listed under its old path as well as its
+ * new one.
  */
-export function seedReviewScript(params: { baseBranch: string; planJson: string; planMarkdown: string; summary: string }): string {
+export function reviewFactsScript(params: { baseBranch: string }): string {
   const base = `origin/${assertGitBranch(params.baseBranch, 'base branch')}`;
   const range = shellQuote(`${base}...HEAD`);
   const rules = shellQuote(`${base}:${SENSITIVE_PATHS_FILE}`);
   return [
     'set -euo pipefail',
     HARDENED_GIT_ENV,
-    `printf '%s' ${encode(params.planJson)} | base64 -d > /workspace/plan.json`,
-    `printf '%s' ${encode(params.planMarkdown)} | base64 -d > /workspace/plan.md`,
-    `printf '%s' ${encode(params.summary)} | base64 -d > /workspace/summary.md`,
     'cd /workspace/repo',
-    `git diff --no-color --no-ext-diff --no-textconv --text ${range} > /workspace/diff.patch`,
     `git diff -z --name-only --no-renames --no-ext-diff ${range} | base64 -w0`,
     `printf '%s' ${shellQuote(SECTION)}`,
     `if git cat-file -e ${rules} 2>/dev/null; then printf 'ok:'; git show ${rules} | head -c ${MAX_RULES_FILE_BYTES + 1} | base64 -w0; else printf 'missing:'; fi`,

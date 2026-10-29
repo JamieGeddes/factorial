@@ -1,9 +1,9 @@
 /**
  * PrepareReview: after the tests pass, set up a fresh reviewer session. It
  * clones the work branch, checks that its head is the tested commit, and
- * writes the validated plan (read back from the artefact store, the only copy
+ * seeds it with the validated plan (read back from the artefact store, the only copy
  * no agent has touched), the builder's summary and the diff against the base
- * branch. The session is new, so the changed paths computed here are trusted;
+ * branch (`REVIEW_PROVIDERS`). The session is new, so the changed paths computed here are trusted;
  * the sensitive ones (by built-in rules and the rules on the base branch's
  * .factorial/sensitive-paths.json) go to the reviewer's prompt and to CollectReview.
  *
@@ -20,9 +20,8 @@ import {
   contentPatterns,
   parseContentMatches,
   parseReviewSeed,
-  seedReviewScript,
+  reviewFactsScript,
   sensitiveChanges,
-  sensitivePathsJson,
   sensitiveRules,
   type SensitiveChange,
 } from '../lib/review-files.ts';
@@ -37,11 +36,14 @@ import {
   testFileChanges,
   type PrFacts,
 } from '../lib/pr-facts.ts';
-import { handOverWorkspace, mustRun, sessionTarget } from '../lib/session.ts';
+import { handOverWorkspace, mustRun } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
-import { seedSession } from './prepare.ts';
+import { SENSITIVE_PATHS_SECTION, diffProvider, instructionsProvider, notesProvider, planProvider, requestProvider, sensitivePathsProvider, summaryProvider, reworkProvider } from '../lib/seed-providers.ts';
+import { sectionText, type SeedProvider } from '../lib/seed.ts';
+
+import { cloneSession, placeSeed } from './prepare.ts';
 
 interface PrepareReviewInput {
   ctx: WorkContext;
@@ -57,6 +59,18 @@ export interface PrepareReviewResult {
   prFacts: PrFacts;
 }
 
+/** What the reviewer's session is seeded with, in this order: the numbering of a rework's points depends on it. */
+export const REVIEW_PROVIDERS: readonly SeedProvider[] = [
+  requestProvider,
+  notesProvider,
+  reworkProvider,
+  planProvider,
+  summaryProvider,
+  diffProvider,
+  sensitivePathsProvider,
+  instructionsProvider,
+];
+
 async function planArtefact(ctx: WorkContext, path: string): Promise<string> {
   const read = await getTextArtefact(ctx.artefactPrefix, path, MAX_PLAN_ARTEFACT_BYTES);
   if (!read) throw new Error(`${path} is not in the artefact store`);
@@ -69,27 +83,24 @@ export const handler = logged('prepare-review', (input: PrepareReviewInput) => r
   const [planJson, planMarkdown] = await Promise.all([planArtefact(ctx, 'plan/plan.json'), planArtefact(ctx, 'plan/plan.md')]);
 
   // Fails unless the remote branch is still at the tested commit.
-  await seedSession({
+  const session = {
     role: 'reviewer',
     workItem: ctx.workItem,
     branch: ctx.branch,
     at: headSha,
     existing: true,
     ...(ctx.rework ? { rework: ctx.rework } : {}),
-  });
-  const seeded = await mustRun(
-    sessionTarget(ctx.sessionId, 'reviewer'),
-    seedReviewScript({ baseBranch: ctx.baseBranch, planJson, planMarkdown, summary: input.collect.summary }),
-    300,
-  );
-  const seed = parseReviewSeed(seeded.stdout);
-  const { rules, problems } = sensitiveRules(seed.rulesText);
+  } as const;
+  const cloned = await cloneSession(session);
+  // Everything the session is asked here is read before the seed is placed, from the clone.
+  const facts = parseReviewSeed((await mustRun(cloned.target, reviewFactsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
+  const { rules, problems } = sensitiveRules(facts.rulesText);
   if (problems.length > 0) log.error("ignoring the repository's sensitive-path rules", { problems });
   const patterns = contentPatterns(rules);
   const contentMatches = patterns.length === 0
     ? []
-    : parseContentMatches((await mustRun(sessionTarget(ctx.sessionId, 'reviewer'), contentMatchScript({ baseBranch: ctx.baseBranch, patterns }), 300)).stdout, patterns.length);
-  const sensitive = sensitiveChanges(seed.changedPaths, rules, contentMatches);
+    : parseContentMatches((await mustRun(cloned.target, contentMatchScript({ baseBranch: ctx.baseBranch, patterns }), 300)).stdout, patterns.length);
+  const sensitive = sensitiveChanges(facts.changedPaths, rules, contentMatches);
 
   // Package files and the target's PR settings, both read from git in this fresh session. A failure
   // here must not lose the review: the facts say the dependencies are unknown instead.
@@ -97,35 +108,36 @@ export const handler = logged('prepare-review', (input: PrepareReviewInput) => r
   let dependenciesUnknown = false;
   let settingsText: string | undefined;
   try {
-    const deps = parseDeps((await mustRun(sessionTarget(ctx.sessionId, 'reviewer'), depsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
+    const deps = parseDeps((await mustRun(cloned.target, depsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
     dependencies = dependencyChanges(deps.files, deps.lockText);
     settingsText = deps.settingsText;
   } catch (error) {
     dependenciesUnknown = true;
     log.error('could not read the package files for the pull request', { error });
   }
-  // The last root command in the session: from here the workspace is the model's.
-  await handOverWorkspace(sessionTarget(ctx.sessionId, 'reviewer'));
+  // The seed: the last writes into the session, then the workspace is the model's.
+  const seed = await placeSeed(cloned, session, REVIEW_PROVIDERS, { plan: { json: planJson, markdown: planMarkdown }, summary: input.collect.summary, sensitive });
+  await handOverWorkspace(cloned.target);
   const deploySettings = parseDeploySettings(settingsText);
   if (deploySettings.problems.length > 0) log.error("ignoring the repository's pull request settings", { problems: deploySettings.problems });
   const prFacts = prFactsDigest({
     sensitive,
-    contracts: contractChanges(seed.changedPaths),
-    testFiles: testFileChanges(seed.changedPaths),
+    contracts: contractChanges(facts.changedPaths),
+    testFiles: testFileChanges(facts.changedPaths),
     dependencies,
     ...(dependenciesUnknown ? { dependenciesUnknown } : {}),
-    deploy: deployImpact(deploySettings.settings, seed.changedPaths),
+    deploy: deployImpact(deploySettings.settings, facts.changedPaths),
   });
 
   await putJsonArtefact(ctx.artefactPrefix, 'review/prepared.json', {
     headSha,
-    changedPaths: seed.changedPaths,
+    changedPaths: facts.changedPaths,
     rules,
     ...(problems.length > 0 ? { rulesProblems: problems } : {}),
     sensitive,
     prFacts,
   });
   await recordProgress(ctx.workItem.id, 'review-prepared', { reviewHeadSha: headSha });
-  log.info('review session prepared', { changedPaths: seed.changedPaths.length, sensitive: sensitive.length });
-  return { changedPaths: seed.changedPaths.length, sensitive, sensitivePathsJson: sensitivePathsJson(sensitive), prFacts };
+  log.info('review session prepared', { changedPaths: facts.changedPaths.length, sensitive: sensitive.length });
+  return { changedPaths: facts.changedPaths.length, sensitive, sensitivePathsJson: sectionText(seed, SENSITIVE_PATHS_SECTION) ?? '[]', prFacts };
 });

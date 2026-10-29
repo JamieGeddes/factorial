@@ -4,7 +4,9 @@ import { describe, it } from 'node:test';
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 import { type CheckJob, GitHubClient } from '@factorial/github-app';
 
-import { buildReworkFile, cloneScript, detailsFor, initialNotes, logSection } from './prepare.ts';
+import { buildReworkFile, detailsFor, initialNotes, logSection } from '../lib/seed-providers.ts';
+
+import { cloneScript } from './prepare.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
@@ -28,8 +30,6 @@ describe('cloneScript', () => {
     name: 'factorial',
     branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
     token: TOKEN,
-    workItemJson: '{"id":"x"}',
-    notes: '# Task\n',
     mode: 'create' as const,
   };
 
@@ -58,16 +58,9 @@ describe('cloneScript', () => {
     assert.match(cloneScript({ ...params, mode: 'checkout' }), /rm -rf .*\/workspace\/rework\.md/);
   });
 
-  it('writes the WorkItem via base64 so no JSON reaches the shell unquoted', () => {
+  it('writes no file of the seed: that is the seed writer\'s', () => {
     const script = cloneScript(params);
-    const encoded = Buffer.from(params.workItemJson).toString('base64');
-    assert.match(script, new RegExp(`printf '%s' '${encoded}' \\| base64 -d > /workspace/workitem.json`));
-    assert.doesNotMatch(script, /\{"id"/);
-  });
-
-  it('writes the initial notes via base64', () => {
-    const encoded = Buffer.from(params.notes).toString('base64');
-    assert.match(cloneScript(params), new RegExp(`printf '%s' '${encoded}' \\| base64 -d > /workspace/notes\\.md`));
+    assert.doesNotMatch(script, /base64|> \/workspace\/(workitem|notes)/);
   });
 
   it('rejects owner or repository names that are not plain GitHub names', () => {
@@ -86,8 +79,6 @@ describe('cloneScript pinned to a commit', () => {
     name: 'factorial',
     branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
     token: TOKEN,
-    workItemJson: '{"id":"x"}',
-    notes: '# Task\n',
     mode: 'create' as const,
     at: 'a'.repeat(40),
   };

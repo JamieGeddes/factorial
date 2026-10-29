@@ -16,15 +16,17 @@ import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
 import { parsePlanJson } from '@factorial/plan';
 
 import type { WorkContext } from '../lib/context.ts';
-import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId, continuingSection, seedRoundScript } from '../lib/continue-files.ts';
+import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId } from '../lib/continue-files.ts';
 import { logged, runKey } from '../lib/log.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
-import { handOverWorkspace, mustRun, sessionTarget } from '../lib/session.ts';
+import { instructionsProvider, planProvider, requestProvider, reworkProvider, roundNotesProvider } from '../lib/seed-providers.ts';
+import type { SeedProvider } from '../lib/seed.ts';
+import { handOverWorkspace, sessionTarget } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
 import type { RoundStart } from './collect.ts';
-import { initialNotes, seedSession } from './prepare.ts';
+import { seedSession } from './prepare.ts';
 
 interface ContinueBuildInput {
   ctx: WorkContext;
@@ -40,6 +42,9 @@ export interface ContinueBuildResult {
   /** Where the round starts, for Collect to bundle and push from. */
   roundStart: RoundStart;
 }
+
+/** What a continuing round is seeded with, in this order: the numbering of a rework's points depends on it. */
+export const CONTINUE_PROVIDERS: readonly SeedProvider[] = [requestProvider, roundNotesProvider, planProvider, reworkProvider, instructionsProvider];
 
 async function artefact(ctx: WorkContext, path: string, maxBytes: number): Promise<string | undefined> {
   const read = await getTextArtefact(ctx.artefactPrefix, path, maxBytes);
@@ -67,6 +72,7 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
   const pushed = collect.pushed === true;
   const at = assertCommitSha(pushed ? collect.headSha : ctx.baseCommit, 'round start commit');
   await seedSession({
+    providers: CONTINUE_PROVIDERS,
     role: 'builder',
     workItem: ctx.workItem,
     branch: ctx.branch,
@@ -75,14 +81,14 @@ export const handler = logged('continue-build', (input: ContinueBuildInput) => r
     existing: pushed || ctx.resumedFrom !== undefined,
     ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}),
     ...(ctx.rework ? { rework: ctx.rework } : {}),
+    extras: {
+      round,
+      continuing: { baseCommit: ctx.baseCommit, pushed, commitCount: collect.commitCount ?? 0 },
+      ...(previousNotes !== undefined ? { previousNotes } : {}),
+      ...(plan ? { plan } : {}),
+    },
   });
-
-  const notes =
-    (previousNotes ?? initialNotes(ctx.workItem, { role: 'builder', ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}) })) +
-    continuingSection({ round, baseCommit: ctx.baseCommit, pushed, commitCount: collect.commitCount ?? 0, planned: plan !== undefined });
-  const builder = sessionTarget(sessionId, 'builder');
-  await mustRun(builder, seedRoundScript({ plan, notes }), 60);
-  await handOverWorkspace(builder);
+  await handOverWorkspace(sessionTarget(sessionId, 'builder'));
 
   await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0, planned: plan !== undefined });
   await recordProgress(ctx.workItem.id, 'build-continuing', { buildRounds: round, buildSessionId: sessionId });

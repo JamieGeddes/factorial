@@ -16,7 +16,7 @@ import {
   parseReviewSeed,
   readReviewScript,
   reviewDigest,
-  seedReviewScript,
+  reviewFactsScript,
   sensitiveChanges,
   sensitivePathsJson,
   sensitiveRules,
@@ -38,31 +38,23 @@ const review: Review = {
   summary: 'Works, with two gaps.',
 };
 
-describe('seedReviewScript', () => {
-  it('writes the files and diffs three-dot against the base branch', () => {
-    const script = seedReviewScript({ baseBranch: 'main', planJson: '{}', planMarkdown: '# Plan', summary: 'Done' });
-    assert.match(script, /> \/workspace\/plan\.json/);
-    assert.match(script, /> \/workspace\/plan\.md/);
-    assert.match(script, /> \/workspace\/summary\.md/);
-    assert.match(script, /git diff --no-color --no-ext-diff --no-textconv --text 'origin\/main\.\.\.HEAD' > \/workspace\/diff\.patch/);
-    assert.match(script, /--name-only --no-renames/);
+describe('reviewFactsScript', () => {
+  it('lists the changed paths three-dot against the base branch and writes nothing', () => {
+    const script = reviewFactsScript({ baseBranch: 'main' });
+    assert.match(script, /git diff -z --name-only --no-renames --no-ext-diff 'origin\/main\.\.\.HEAD'/);
     assert.match(script, /GIT_CONFIG_GLOBAL=\/dev\/null/);
+    assert.doesNotMatch(script, />\s*\/workspace/);
   });
 
   it('reads the rules from the base branch, not the branch under review', () => {
-    const script = seedReviewScript({ baseBranch: 'main', planJson: '{}', planMarkdown: '', summary: '' });
+    const script = reviewFactsScript({ baseBranch: 'main' });
     assert.match(script, /git cat-file -e 'origin\/main:\.factorial\/sensitive-paths\.json'/);
     assert.match(script, /git show 'origin\/main:\.factorial\/sensitive-paths\.json' \| head -c 65537/);
     assert.doesNotMatch(script, /HEAD:\.factorial|cat [^|]*\.factorial/);
   });
 
   it('refuses a base branch that is not a branch name', () => {
-    assert.throws(() => seedReviewScript({ baseBranch: 'main; rm -rf /', planJson: '{}', planMarkdown: '', summary: '' }));
-  });
-
-  it('never puts file content into the script unencoded', () => {
-    const script = seedReviewScript({ baseBranch: 'main', planJson: "'; touch /x; '", planMarkdown: '$(id)', summary: '`id`' });
-    assert.doesNotMatch(script, /touch \/x|\$\(id\)|`id`/);
+    assert.throws(() => reviewFactsScript({ baseBranch: 'main; rm -rf /' }));
   });
 });
 

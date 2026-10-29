@@ -3,7 +3,7 @@
  * in /workspace and the sections added to the first message, for a new item,
  * a resumed item, a rework item, a later build round and the reviewer. The
  * fixtures under __snapshots__/seed were taken from the code before the
- * seed was assembled from providers and must not change with a refactor: a
+ * seed was assembled from providers, and must not change with a refactor: a
  * change here is a change in what a session is given. Regenerate on purpose
  * with UPDATE_SNAPSHOTS=1.
  */
@@ -14,10 +14,12 @@ import { describe, it } from 'node:test';
 import { GitHubClient } from '@factorial/github-app';
 import type { WorkItem } from '@factorial/workitem';
 
-import { buildReworkFile, detailsFor, initialNotes } from '../functions/prepare.ts';
 import type { ReworkTurn } from './context.ts';
-import { continuingSection } from './continue-files.ts';
-import { sensitivePathsJson, type SensitiveChange } from './review-files.ts';
+import { CONTINUE_PROVIDERS } from '../functions/continue-build.ts';
+import { PREPARE_PROVIDERS } from '../functions/prepare.ts';
+import { REVIEW_PROVIDERS } from '../functions/prepare-review.ts';
+import { assembleSeed, type Seed, type SeedContext } from './seed.ts';
+import type { SensitiveChange } from './review-files.ts';
 import type { Attempt } from './resume.ts';
 
 export interface SeedSnapshot {
@@ -90,52 +92,53 @@ export function fakeClient(): GitHubClient {
   });
 }
 
-/** The command that makes /workspace/diff.patch, as it is shown in a snapshot. */
-export const DIFF_COMMAND = "$ cd /workspace/repo && git diff --no-color --no-ext-diff --no-textconv --text 'origin/main...HEAD'";
+/** A context as the stages build it, over a clone with no repository instructions. */
+export function contextFor(workItem: WorkItem, extra: Partial<SeedContext> = {}): SeedContext {
+  return {
+    role: 'builder',
+    workItem,
+    baseCommit: HEAD,
+    baseBranch: 'main',
+    round: 1,
+    read: async () => 'missing:',
+    github: async () => fakeClient(),
+    ...extra,
+  };
+}
 
-const reworkFile = async (): Promise<string> =>
-  (await buildReworkFile(fakeClient(), repo, HEAD, reworkTurn, await detailsFor(fakeClient(), repo, reworkItem), { sourceUrl: reworkItem.source.url })).text;
+/** A seed as a snapshot: the content of each file, or for a file made in the session its command. */
+export function snapshotOf(seed: Seed): SeedSnapshot {
+  return {
+    files: Object.fromEntries(seed.files.map((f) => [f.path, 'content' in f ? f.content : `$ cd /workspace/repo && ${f.command}`])),
+    sections: Object.fromEntries(seed.sections.map((s) => [s.id, s.text])),
+  };
+}
 
-/** What the code did before the seed was assembled from providers. */
+/** The lists the stages seed with, over the same inputs the sessions were seeded from before. */
 export const SCENARIOS: Record<string, () => Promise<SeedSnapshot>> = {
-  'new-item': async () => ({
-    files: { 'workitem.json': JSON.stringify(newItem, null, 2), 'notes.md': initialNotes(newItem, { role: 'builder' }) },
-    sections: {},
-  }),
-  'resumed-item': async () => ({
-    files: { 'workitem.json': JSON.stringify(newItem, null, 2), 'notes.md': initialNotes(newItem, { role: 'builder', resumedFrom: attempt }) },
-    sections: {},
-  }),
-  'rework-item': async () => ({
-    files: {
-      'workitem.json': JSON.stringify(reworkItem, null, 2),
-      'notes.md': initialNotes(reworkItem, { rework: true, role: 'builder' }),
-      'rework.md': await reworkFile(),
-    },
-    sections: {},
-  }),
-  'later-round': async () => ({
-    files: {
-      'workitem.json': JSON.stringify(reworkItem, null, 2),
-      'rework.md': await reworkFile(),
-      'plan.json': planJson,
-      'plan.md': planMarkdown,
-      'notes.md': previousNotes + continuingSection({ round: 2, baseCommit: HEAD, pushed: true, commitCount: 2, planned: true }),
-    },
-    sections: {},
-  }),
-  reviewer: async () => ({
-    files: {
-      'workitem.json': JSON.stringify(reworkItem, null, 2),
-      'notes.md': initialNotes(reworkItem, { rework: true, role: 'reviewer' }),
-      'rework.md': await reworkFile(),
-      'plan.json': planJson,
-      'plan.md': planMarkdown,
-      'summary.md': summary,
-      'diff.patch': DIFF_COMMAND,
-    },
-    sections: { 'sensitive-paths': sensitivePathsJson(sensitive) },
-  }),
+  'new-item': async () => snapshotOf(await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem))),
+  'resumed-item': async () => snapshotOf(await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem, { resumedFrom: attempt }))),
+  'rework-item': async () => snapshotOf(await assembleSeed(PREPARE_PROVIDERS, contextFor(reworkItem, { rework: reworkTurn }))),
+  'later-round': async () =>
+    snapshotOf(
+      await assembleSeed(
+        CONTINUE_PROVIDERS,
+        contextFor(reworkItem, {
+          rework: reworkTurn,
+          round: 2,
+          continuing: { baseCommit: HEAD, pushed: true, commitCount: 2 },
+          previousNotes,
+          plan: { json: planJson, markdown: planMarkdown },
+        }),
+      ),
+    ),
+  reviewer: async () =>
+    snapshotOf(
+      await assembleSeed(
+        REVIEW_PROVIDERS,
+        contextFor(reworkItem, { role: 'reviewer', rework: reworkTurn, plan: { json: planJson, markdown: planMarkdown }, summary, sensitive }),
+      ),
+    ),
 };
 
 const fixture = (name: string): string => new URL(`./__snapshots__/seed/${name}.json`, import.meta.url).pathname;
