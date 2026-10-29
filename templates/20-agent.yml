@@ -309,7 +309,9 @@ Resources:
         # A run that reaches a limit ends incomplete and the next round
         # continues it. Set from the spike (docs/harness-vs-runtime.md,
         # Spike results): the largest run took 42 turns and $1.05.
-        FACTORIAL_MAX_TURNS: '150'
+        # SPIKE: 10 for #181's forced-rounds run (b) on pi; back to 150
+        # straight after it.
+        FACTORIAL_MAX_TURNS: '10'
         FACTORIAL_MAX_BUDGET_USD: '5'
         # Below the orchestration stack's BuildTimeoutSeconds (7200), so the
         # host ends the run itself and Collect still runs; a Step Functions
