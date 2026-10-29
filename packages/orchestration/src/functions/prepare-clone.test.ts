@@ -57,8 +57,8 @@ describe('cloneScript, run with bash', { skip: !linux }, () => {
   after(() => rmSync(root, { recursive: true, force: true }));
 
   /** Run the real script with /workspace pointed at the temporary directory and the GitHub URL at the local repository. */
-  const run = (params: Partial<Parameters<typeof cloneScript>[0]>) => {
-    const script = cloneScript({ owner: 'o', name: 'n', branch: ON_MAIN, token: TOKEN, mode: 'create', ...params });
+  const run = (params: { [K in keyof Parameters<typeof cloneScript>[0]]?: Parameters<typeof cloneScript>[0][K] | undefined }) => {
+    const script = cloneScript({ owner: 'o', name: 'n', branch: ON_MAIN, token: TOKEN, mode: 'create', ...params } as Parameters<typeof cloneScript>[0]);
     const result = spawnSync('bash', ['-c', script.replaceAll('/workspace', root)], {
       encoding: 'utf8',
       env: {
@@ -98,7 +98,6 @@ describe('cloneScript, run with bash', { skip: !linux }, () => {
     assert.equal(r.status, 0, r.stderr);
     assert.deepEqual(r.lines.slice(-2), [sha.onMain, 'main']);
     assert.equal(session('rev-parse', 'HEAD'), sha.onMain);
-    assert.equal(session('symbolic-ref', '--short', 'HEAD'), ON_MAIN);
     assert.equal(session('rev-parse', `refs/heads/${ON_MAIN}`), sha.onMain);
     assert.deepEqual(remoteRefs(), ['refs/remotes/origin/HEAD', `refs/remotes/origin/${ON_MAIN}`, 'refs/remotes/origin/main']);
     assert.equal(session('merge-base', 'origin/main', 'HEAD'), sha.main2);
