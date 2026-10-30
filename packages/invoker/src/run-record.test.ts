@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { runtimeInfoOf, usageRecord } from './run-record.ts';
+import { progressEventErrors, progressEvent } from '@factorial/progress';
+
+import { runEntryOf, runtimeInfoOf, usageRecord } from './run-record.ts';
 import { addCallUsage, emptyRunUsage } from './usage.ts';
 
 describe('usageRecord', () => {
@@ -49,6 +51,7 @@ it("reads a runtime version's model and limits from its environment", () => {
       FACTORIAL_ROLE: 'builder',
       FACTORIAL_MODEL: 'eu.anthropic.claude-sonnet-5-5',
       FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
+      FACTORIAL_EFFORT: 'high',
       FACTORIAL_MAX_TURNS: '150',
       FACTORIAL_MAX_BUDGET_USD: '10',
       FACTORIAL_MAX_DURATION_SECONDS: '6600',
@@ -57,6 +60,7 @@ it("reads a runtime version's model and limits from its environment", () => {
     {
       modelId: 'eu.anthropic.claude-sonnet-5-5',
       exploreModelId: 'eu.anthropic.claude-haiku-5-5',
+      effort: 'high',
       maxTurns: 150,
       maxBudgetUsd: 10,
       maxDurationSeconds: 6600,
@@ -64,4 +68,61 @@ it("reads a runtime version's model and limits from its environment", () => {
     },
   );
   assert.deepEqual(runtimeInfoOf(undefined), {});
+});
+
+describe('runEntryOf', () => {
+  const usage = [{ inputTokens: 1000, outputTokens: 50, cacheReadInputTokens: 800 }].reduce(addCallUsage, emptyRunUsage());
+  const id = '84c2d660-d3ec-11f1-92c7-34ac6b750765';
+  const full = runEntryOf({
+    role: 'builder',
+    sessionId: `${id}-r2`,
+    version: { runtimeName: 'factorial_builder', runtimeVersion: '37', runContract: 1, modelId: 'global.anthropic.claude-sonnet-5-5', effort: 'high', maxTurns: 150 },
+    harness: { name: 'pi', version: '1.4.0', turns: 12, costUsd: 0.31, configuredModels: [{ id: 'x', purpose: 'main' }], deniedToolCalls: 1 },
+    stopReason: 'completed',
+    outcome: 'complete',
+    toolCalls: 9,
+    durationSeconds: 495,
+    usage,
+    record: { transcriptKey: `${id}/2/build/round-2/transcript.jsonl`, usageKey: `${id}/2/build/round-2/usage.json`, transcriptBytes: 144461 },
+  });
+
+  it('keeps the metadata and leaves out the limits, calls and what the harness said', () => {
+    assert.deepEqual(full, {
+      role: 'builder',
+      runtimeName: 'factorial_builder',
+      runtimeVersion: '37',
+      runContract: 1,
+      harness: { name: 'pi', version: '1.4.0' },
+      modelId: 'global.anthropic.claude-sonnet-5-5',
+      effort: 'high',
+      sessionId: `${id}-r2`,
+      toolCalls: 9,
+      turns: 12,
+      durationSeconds: 495,
+      stopReason: 'completed',
+      outcome: 'complete',
+      usage,
+      costUsd: 0.31,
+      transcriptKey: `${id}/2/build/round-2/transcript.jsonl`,
+      usageKey: `${id}/2/build/round-2/usage.json`,
+    });
+  });
+
+  it('fits the progress contract', () => {
+    const row = {
+      workItemId: id,
+      workItem: {
+        source: { type: 'github-issue', url: 'https://github.com/JamieGeddes/factorial/issues/15' },
+        repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
+      },
+    };
+    assert.deepEqual(progressEventErrors(progressEvent(row, 'Build#2', 'succeeded', '2026-10-30T22:00:00.000Z', { run: full })), []);
+  });
+
+  it('holds what there is for a run that never started', () => {
+    assert.deepEqual(
+      runEntryOf({ role: 'reviewer', sessionId: id, version: {}, stopReason: 'interrupted', toolCalls: 0, durationSeconds: 3, usage: emptyRunUsage() }),
+      { role: 'reviewer', sessionId: id, toolCalls: 0, durationSeconds: 3, stopReason: 'interrupted', usage: emptyRunUsage() },
+    );
+  });
 });

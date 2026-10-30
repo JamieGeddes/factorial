@@ -40,6 +40,8 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
           attempt,
           artefactPrefix: artefactPrefix(workItem.id, attempt),
           executionArn,
+          // Each stage's record (@factorial/progress); Intake's is the first.
+          stages: {},
           ...lineageAttributes(workItem),
           createdAt: now,
           updatedAt: now,

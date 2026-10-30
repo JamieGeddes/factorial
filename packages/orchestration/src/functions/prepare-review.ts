@@ -13,7 +13,8 @@
 import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
 
 import type { WorkContext } from '../lib/context.ts';
-import { logged, runKey } from '../lib/log.ts';
+import { runKey } from '../lib/log.ts';
+import { staged, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import {
   MAX_PLAN_ARTEFACT_BYTES,
   contentMatchScript,
@@ -45,7 +46,7 @@ import { sectionText, type SeedProvider } from '../lib/seed.ts';
 
 import { cloneSession, placeSeed } from './prepare.ts';
 
-interface PrepareReviewInput {
+interface PrepareReviewInput extends ProgressInput {
   ctx: WorkContext;
   collect: { headSha: string; summary: string };
 }
@@ -76,7 +77,10 @@ async function planArtefact(ctx: WorkContext, path: string): Promise<string> {
   return read.text;
 }
 
-export const handler = logged('prepare-review', (input: PrepareReviewInput) => runKey(input.ctx), async (input, log): Promise<PrepareReviewResult> => {
+// The state machine reaches PrepareReview only when the tests passed, so it ends the Test stage.
+const prepareReviewStage: StagePolicy<PrepareReviewInput, PrepareReviewResult> = { closes: () => [{ stage: 'Test', outcome: 'succeeded' }] };
+
+export const handler = staged('prepare-review', (input: PrepareReviewInput) => runKey(input.ctx), prepareReviewStage, async (input, log): Promise<PrepareReviewResult> => {
   const { ctx } = input;
   const headSha = assertCommitSha(input.collect.headSha, 'tested head');
   const [planJson, planMarkdown] = await Promise.all([planArtefact(ctx, 'plan/plan.json'), planArtefact(ctx, 'plan/plan.md')]);

@@ -21,7 +21,8 @@ import type { GitHubClient } from '@factorial/github-app';
 import { assertWorkItem, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
 import type { ReworkTurn, WorkContext } from '../lib/context.ts';
-import { logged, unvalidatedId, type RunKey } from '../lib/log.ts';
+import { unvalidatedId, type RunKey } from '../lib/log.ts';
+import { staged, type ProgressInput } from '../lib/progress.ts';
 import type { Attempt } from '../lib/resume.ts';
 import { repositoryClient, repositoryToken } from '../lib/github.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
@@ -41,7 +42,7 @@ import { recordProgress } from '../lib/table.ts';
 
 import type { IntakeResult } from './intake.ts';
 
-interface PrepareInput {
+interface PrepareInput extends ProgressInput {
   workItem: unknown;
   factorialVersion: string;
   /** Intake's result; the state machine reaches Prepare only for the change route. */
@@ -212,7 +213,7 @@ export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, note
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
-export const handler = logged('prepare', prepareKey, async (input, stageLog): Promise<WorkContext> => {
+export const handler = staged('prepare', prepareKey, {}, async (input, stageLog): Promise<WorkContext> => {
   assertWorkItem(input.workItem);
   const workItem = input.workItem;
   assertUuid(workItem.id, 'WorkItem id');

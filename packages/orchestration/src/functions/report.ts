@@ -8,12 +8,13 @@ import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 import { issueNumber, type WorkContext } from '../lib/context.ts';
 import { builderIncomplete } from '../lib/incomplete.ts';
 import { repositoryClient } from '../lib/github.ts';
-import { logged, runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
+import { runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
+import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { attemptRecord, recordProgress } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 import { continuedPullRequest } from '../lib/turn.ts';
 
-interface ReportInput {
+interface ReportInput extends ProgressInput {
   status: 'no-changes' | 'tests-failed' | 'failed' | 'invalid-plan';
   /** Present once Prepare has run. */
   ctx?: WorkContext;
@@ -195,7 +196,18 @@ function reportKey(input: ReportInput): RunKey {
   return input.ctx ? runKey(input.ctx) : { workItemId: unvalidatedId(input.workItem) };
 }
 
-export const handler = logged('report', reportKey, async (input: ReportInput, log): Promise<void> => {
+/**
+ * Every Report state ends the work item. Failed tests end the Test stage,
+ * which only the workflow's result decides; any other stage still open ends
+ * with the failure that brought the item here.
+ */
+const reportStage: StagePolicy<ReportInput, void> = {
+  closes: (input) => (input.status === 'tests-failed' ? [{ stage: 'Test', outcome: 'failed', error: stepError(input.error) ?? stageError('TestsFailed') }] : []),
+  ends: () => true,
+  failure: (input) => stepError(input.error),
+};
+
+export const handler = staged('report', reportKey, reportStage, async (input: ReportInput, log): Promise<void> => {
   const workItem = resolveWorkItem(input);
   const message = reportMessage({ ...input, sessionIdHint: workItem?.id });
   const error = input.error

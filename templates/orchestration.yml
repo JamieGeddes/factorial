@@ -67,6 +67,7 @@ Globals:
         NODE_OPTIONS: --enable-source-maps
         TABLE_NAME: !Ref WorkItemsTable
         THREADS_TABLE_NAME: !Ref ThreadsTable
+        EVENT_BUS_NAME: !ImportValue Factorial-WorkBusName
         ARTEFACT_BUCKET: !Ref WorkArtefactsBucket
         RUNTIME_QUALIFIER: live
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
@@ -284,6 +285,23 @@ Resources:
             Action: s3:PutObject
             Resource: !Sub ${WorkArtefactsBucket.Arn}/*
 
+  # The progress record (#15): every orchestrator Lambda and the invoker put
+  # WorkItemProgress events, and only those, on the work bus.
+  ProgressEventsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-progress-events
+      Description: Put WorkItemProgress events on the work bus. No other source.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: events:PutEvents
+            Resource: !ImportValue Factorial-WorkBusArn
+            Condition:
+              StringEquals:
+                events:source: factorial.progress
+
   # ---------------------------------------------------------------------------
   # Network for the Fargate invoker: public subnets, no NAT, egress only.
   # ---------------------------------------------------------------------------
@@ -452,6 +470,7 @@ Resources:
       PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
       ManagedPolicyArns:
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -544,6 +563,8 @@ Resources:
           Environment:
             - Name: TABLE_NAME
               Value: !Ref WorkItemsTable
+            - Name: EVENT_BUS_NAME
+              Value: !ImportValue Factorial-WorkBusName
             - Name: ARTEFACT_BUCKET
               Value: !Ref WorkArtefactsBucket
           LogConfiguration:
@@ -646,6 +667,7 @@ Resources:
                 - !Sub ${ThreadsTable.Arn}/index/sourceKey-createdAt-index
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   PrepareFunction:
     Type: AWS::Serverless::Function
@@ -666,6 +688,7 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   CollectFunction:
     Type: AWS::Serverless::Function
@@ -687,6 +710,7 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   DispatchTestsFunction:
     Type: AWS::Serverless::Function
@@ -705,6 +729,7 @@ Resources:
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref GitHubAppPolicy
+        - !Ref ProgressEventsPolicy
 
   # Reads back the validated plan files, the one exception to the artefact
   # store being write-only: the builder's copy is in a session treated as
@@ -735,6 +760,7 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   ContinueBuildFunction:
     Type: AWS::Serverless::Function
@@ -764,6 +790,7 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   CollectReviewFunction:
     Type: AWS::Serverless::Function
@@ -783,6 +810,7 @@ Resources:
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref SessionCommandPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   OpenPullRequestFunction:
     Type: AWS::Serverless::Function
@@ -812,6 +840,7 @@ Resources:
               Resource: !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   ReportFunction:
     Type: AWS::Serverless::Function
@@ -833,6 +862,7 @@ Resources:
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref ProgressEventsPolicy
 
   # Covers the reviewer's sessions as well as the builder's. The description
   # still names only the builder: changing a managed policy's description
@@ -1093,7 +1123,8 @@ Resources:
                 "Payload": {
                   "workItem": "{% $workItemInput %}",
                   "factorialVersion": "${FactorialVersion}",
-                  "executionArn": "{% $states.context.Execution.Id %}"
+                  "executionArn": "{% $states.context.Execution.Id %}",
+                  "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" }
                 }
               },
               "Assign": { "intake": "{% $states.result.Payload %}" },
@@ -1131,7 +1162,8 @@ Resources:
                 "Payload": {
                   "workItem": "{% $workItemInput %}",
                   "factorialVersion": "${FactorialVersion}",
-                  "intake": "{% $intake %}"
+                  "intake": "{% $intake %}",
+                  "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" }
                 }
               },
               "Assign": { "ctx": "{% $states.result.Payload %}", "buildSession": "{% $states.result.Payload.sessionId %}" },
@@ -1176,6 +1208,7 @@ Resources:
                       "Name": "invoker",
                       "Environment": [
                         { "Name": "ROLE", "Value": "builder" },
+                        { "Name": "STAGE", "Value": "{% $states.context.State.Name %}" },
                         { "Name": "RUNTIME_ARN", "Value": "${BuilderRuntimeArn}" },
                         { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "BUILD_ROUND", "Value": "{% $string($buildRound) %}" },
@@ -1200,7 +1233,7 @@ Resources:
               "Type": "Task",
               "Comment": "The build stopped. Push whatever the agent committed, and anything it left uncommitted, so the work is not lost. If the builder merely ran out of steps or time, the build continues in a fresh session; otherwise the failure is reported, with no tests and no pull request.",
               "Resource": "arn:aws:states:::lambda:invoke",
-              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true, 'builderSessionId': $buildSession, 'roundStart': $buildStart, 'failure': $failure }]) %}" },
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'salvage': true, 'builderSessionId': $buildSession, 'roundStart': $buildStart, 'failure': $failure, 'progress': { 'stage': $states.context.State.Name, 'round': $buildRound } }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
@@ -1220,7 +1253,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ContinueBuildFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "round": "{% $buildRound + 1 %}", "collect": "{% $collect %}" }
+                "Payload": { "ctx": "{% $ctx %}", "round": "{% $buildRound + 1 %}", "collect": "{% $collect %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Assign": {
                 "buildSession": "{% $states.result.Payload.sessionId %}",
@@ -1247,7 +1280,7 @@ Resources:
               "Type": "Task",
               "Comment": "Read and validate the builder's plan, then push its work. A build that ends without a valid plan pushes nothing and is reported as invalid-plan.",
               "Resource": "arn:aws:states:::lambda:invoke",
-              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'builderSessionId': $buildSession, 'roundStart': $buildStart }]) %}" },
+              "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'builderSessionId': $buildSession, 'roundStart': $buildStart, 'progress': { 'stage': $states.context.State.Name, 'round': $buildRound } }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}", "plan": "{% $exists($states.result.Payload.plan) ? $states.result.Payload.plan : null %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
@@ -1266,7 +1299,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
               "Arguments": {
                 "FunctionName": "${DispatchTestsFunctionAlias}",
-                "Payload": { "taskToken": "{% $states.context.Task.Token %}", "ctx": "{% $ctx %}", "collect": "{% $collect %}" }
+                "Payload": { "taskToken": "{% $states.context.Task.Token %}", "ctx": "{% $ctx %}", "collect": "{% $collect %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "TimeoutSeconds": ${TestTimeoutSeconds},
               "Assign": { "test": "{% $states.result %}" },
@@ -1283,7 +1316,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${PrepareReviewFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}" }
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Assign": { "reviewPrep": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "sensitive": "{% $states.result.Payload.sensitivePathsJson %}" },
@@ -1322,6 +1355,7 @@ Resources:
                       "Name": "invoker",
                       "Environment": [
                         { "Name": "ROLE", "Value": "reviewer" },
+                        { "Name": "STAGE", "Value": "{% $states.context.State.Name %}" },
                         { "Name": "RUNTIME_ARN", "Value": "${ReviewerRuntimeArn}" },
                         { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                         { "Name": "SENSITIVE_PATHS", "Value": "{% $reviewPrep.sensitivePathsJson %}" },
@@ -1348,7 +1382,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${CollectReviewFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "sensitive": "{% $reviewPrep.sensitive %}", "reviewError": "{% $reviewError %}" }
+                "Payload": { "ctx": "{% $ctx %}", "sensitive": "{% $reviewPrep.sensitive %}", "reviewError": "{% $reviewError %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Assign": { "review": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "reviewed": "{% $states.result.Payload.ok %}" },
@@ -1371,7 +1405,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}", "plan": "{% $plan %}", "review": "{% $review %}", "prFacts": "{% $exists($reviewPrep.prFacts) ? $reviewPrep.prFacts : null %}" }
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}", "plan": "{% $plan %}", "review": "{% $review %}", "prFacts": "{% $exists($reviewPrep.prFacts) ? $reviewPrep.prFacts : null %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "prNumber": "{% $states.result.Payload.prNumber %}", "prUrl": "{% $states.result.Payload.prUrl %}" },
               "Catch": [
@@ -1385,7 +1419,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ReportFunctionAlias}",
-                "Payload": { "status": "no-changes", "ctx": "{% $ctx %}", "summary": "{% $collect.summary %}" }
+                "Payload": { "status": "no-changes", "ctx": "{% $ctx %}", "summary": "{% $collect.summary %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "no-changes" },
               "Next": "NoChanges"
@@ -1396,7 +1430,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ReportFunctionAlias}",
-                "Payload": { "status": "tests-failed", "ctx": "{% $ctx %}", "error": "{% $failure %}" }
+                "Payload": { "status": "tests-failed", "ctx": "{% $ctx %}", "error": "{% $failure %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "tests-failed" },
               "Next": "TestsFailed"
@@ -1407,7 +1441,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ReportFunctionAlias}",
-                "Payload": { "status": "invalid-plan", "ctx": "{% $ctx %}", "error": "{% $failure %}" }
+                "Payload": { "status": "invalid-plan", "ctx": "{% $ctx %}", "error": "{% $failure %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "invalid-plan" },
               "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "invalid-plan", "error": "{% $states.errorOutput %}" }, "Next": "InvalidPlan" } ],
@@ -1419,7 +1453,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${ReportFunctionAlias}",
-                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}", "saved": "{% $collect %}", "buildRound": "{% $buildRound %}" }
+                "Payload": { "status": "failed", "ctx": "{% $ctx %}", "workItem": "{% $workItemInput %}", "error": "{% $failure %}", "saved": "{% $collect %}", "buildRound": "{% $buildRound %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Output": { "workItemId": "{% $workItemInput.id %}", "attempt": "{% $exists($ctx.attempt) ? $ctx.attempt : null %}", "status": "failed" },
               "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $workItemInput.id %}", "attempt": "{% $exists($ctx.attempt) ? $ctx.attempt : null %}", "status": "failed", "error": "{% $states.errorOutput %}" }, "Next": "Failed" } ],

@@ -8,7 +8,9 @@
 import { putArtefact, putJsonArtefact } from '@factorial/artefacts';
 
 import type { WorkContext } from '../lib/context.ts';
-import { logged, runKey } from '../lib/log.ts';
+import type { StepFailure } from '../lib/incomplete.ts';
+import { runKey } from '../lib/log.ts';
+import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import {
   checkReviewFile,
   parseReviewRead,
@@ -21,7 +23,7 @@ import {
 import { asAgent, mustRun, sessionTarget } from '../lib/session.ts';
 import { recordProgress } from '../lib/table.ts';
 
-interface CollectReviewInput {
+interface CollectReviewInput extends ProgressInput {
   ctx: WorkContext;
   /** From PrepareReview. */
   sensitive: SensitiveChange[];
@@ -31,7 +33,12 @@ interface CollectReviewInput {
 
 export type CollectReviewResult = { ok: true; review: ReviewDigest } | { ok: false; errors: string[] };
 
-export const handler = logged('collect-review', (input: CollectReviewInput) => runKey(input.ctx), async (input, log): Promise<CollectReviewResult> => {
+/** A failed Review task reaches CollectReview: it ends the Review stage, in case the invoker could not. */
+const collectReviewStage: StagePolicy<CollectReviewInput, CollectReviewResult> = {
+  closes: (input) => (input.reviewError ? [{ stage: 'Review', outcome: 'failed', error: stepError(input.reviewError as StepFailure) ?? stageError('ReviewFailed') }] : []),
+};
+
+export const handler = staged('collect-review', (input: CollectReviewInput) => runKey(input.ctx), collectReviewStage, async (input, log): Promise<CollectReviewResult> => {
   const { ctx } = input;
   // The model has had the workspace, so the file is read as the user it ran as.
   const target = sessionTarget(ctx.sessionId, 'reviewer');

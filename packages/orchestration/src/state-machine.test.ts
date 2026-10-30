@@ -11,7 +11,11 @@ interface State {
   Type: string;
   Output?: Record<string, unknown> | string;
   Catch?: Array<{ ErrorEquals: string[]; Output?: Record<string, unknown> }>;
-  Arguments?: { Payload?: Record<string, unknown> };
+  Resource?: string;
+  Arguments?: {
+    Payload?: Record<string, unknown> | string;
+    Overrides?: { ContainerOverrides?: Array<{ Environment?: Array<{ Name: string; Value: string }> }> };
+  };
 }
 
 /** The DefinitionString block, with CloudFormation substitutions replaced so it parses as JSON. */
@@ -53,5 +57,29 @@ test('every catcher outputs the work item id with the error', () => {
 
 test('Intake receives the execution ARN, so the ledger row leads to the execution (#203)', () => {
   const intake = definition().States.Intake;
-  assert.equal(intake?.Arguments?.Payload?.executionArn, '{% $states.context.Execution.Id %}');
+  const payload = intake?.Arguments?.Payload;
+  assert.ok(typeof payload === 'object');
+  assert.equal(payload.executionArn, '{% $states.context.Execution.Id %}');
+});
+
+
+test('every task tells its Lambda or invoker the state it runs in, for the progress record (#15)', () => {
+  const tasks = states.filter(([, s]) => s.Type === 'Task');
+  assert.ok(tasks.length > 0);
+  for (const [name, state] of tasks) {
+    if (state.Resource?.startsWith('arn:aws:states:::lambda:invoke')) {
+      const payload = state.Arguments?.Payload;
+      if (typeof payload === 'string') {
+        assert.match(payload, /'progress': \{ 'stage': \$states\.context\.State\.Name, 'round': \$buildRound \}/, `${name} payload lacks progress`);
+      } else {
+        assert.deepEqual(payload?.progress, { stage: '{% $states.context.State.Name %}', round: '{% $buildRound %}' }, `${name} payload lacks progress`);
+      }
+    } else {
+      const environment = state.Arguments?.Overrides?.ContainerOverrides?.[0]?.Environment ?? [];
+      assert.ok(
+        environment.some((variable) => variable.Name === 'STAGE' && variable.Value === '{% $states.context.State.Name %}'),
+        `${name} does not pass STAGE`,
+      );
+    }
+  }
 });

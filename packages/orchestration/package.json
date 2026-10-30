@@ -19,6 +19,7 @@
     "@factorial/github-app": "^0.1.0",
     "@factorial/log": "^0.1.0",
     "@factorial/plan": "^0.1.0",
+    "@factorial/progress": "^0.1.0",
     "@factorial/review": "^0.1.0",
     "@factorial/roles": "^0.1.0",
     "@factorial/workitem": "^0.1.0",
