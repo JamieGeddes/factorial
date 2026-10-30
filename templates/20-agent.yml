@@ -287,14 +287,15 @@ Resources:
       # existing stack. AWS_REGION is reserved and set by the service.
       EnvironmentVariables:
         FACTORIAL_ROLE: builder
-        # What runs the agent loop: claude-agent-sdk, or pi for spike #181
-        # (packages/agent-runtime/src/pi/). The models, limits and policy are
-        # the same on both. Switching is a new Runtime version. pi for the
-        # spike's runs (#181, docs/harness-vs-runtime.md); set back to
-        # claude-agent-sdk when they are done.
+        # What runs the agent loop: pi (packages/agent-runtime/src/pi/), the
+        # target for every role since spike #181 (docs/pi-plan.md, #198).
+        # claude-agent-sdk is the rollback until phase 4 removes it; the
+        # models, limits and policy are the same on both. Switching is a new
+        # Runtime version.
         FACTORIAL_HARNESS: pi
-        # Reasoning effort, fixed so the spike compares harnesses at the same
-        # effort. Unset, each harness keeps its own default.
+        # Reasoning effort: high since the spike, which compared harnesses at
+        # the same effort; reviewed with phase 2's figures. Unset, each
+        # harness keeps its own default.
         FACTORIAL_EFFORT: high
         # The run contract the host speaks (contracts/run/v1/). The invoker
         # reads it from the version serving `live` before it invokes, so a
