@@ -55,6 +55,15 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
+  it('reacts to an issue', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { id: 1 }, seen) });
+    await client.addIssueReaction(repo, 7, 'eyes');
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/7/reactions');
+    assert.equal(seen[0]?.method, 'POST');
+    assert.deepEqual(seen[0]?.body, { content: 'eyes' });
+  });
+
   it('requests reviewers on a pull request', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { number: 26 }, seen) });

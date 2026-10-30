@@ -126,7 +126,17 @@ Every transition is also a `WorkItemProgress` event (source `factorial.progress`
 - The invoker records Build and Review: started once it has read the row, ended in the same place it records its outcome, whichever way the run ends.
 - Only the orchestrator emits: the Lambdas and the invoker task role hold `events:PutEvents` on the bus for source `factorial.progress` alone (`factorial-progress-events`). No agent role can: the agent permissions boundary allows no EventBridge action.
 - An execution started before #15 passes no stage, so its remaining stages are not recorded. A row accepted before #15 gets `stages` on its first stage write.
-- Nothing reads `stages` or the events yet; the live feed's forwarder (#194) and the notifier (#205) will. Moving the readers of the interim fields (`build`, `review`, the builder's top-level `stopReason`, `toolCalls`, `usage` and the rest) to `stages`, and no longer writing those fields, is the second part of #15.
+- The notifier (#205, below) reads the events; the live feed's forwarder (#194) does not exist yet. Moving the readers of the interim fields (`build`, `review`, the builder's top-level `stopReason`, `toolCalls`, `usage` and the rest) to `stages`, and no longer writing those fields, is the second part of #15.
+
+### The notifier (#205)
+
+A labelled issue gets no word between the label and the pull request, often 10 to 20 minutes. The notifier fills that gap and nothing else: Report, OpenPullRequest and Intake already speak on every other path, and moving Report's comments behind the notifier waits for a second source type that needs them.
+
+- The rule `factorial-progress-notify` on `factorial-work` routes every `WorkItemProgress` event (source `factorial.progress`) to `factorial-notify` (`AutoPublishAlias: live`). The function dispatches on `source.type` to one module per type in `packages/orchestration/src/notifiers/`, registered in `index.ts`; an unknown type is logged and ignored, an event that fails the progress schema likewise. A Jira notifier is a new module and a line in that registry.
+- The `github-issue` notifier acts only on `Build` `started` with no `round` (round 1; later rounds carry one). It reacts to the issue with eyes and posts one comment: work has started (with the work item id) and a pull request or a comment will follow. Rework sources (`github-pull-request-*`) get nothing, because Intake already reacts to them; a refused item never reaches Build; nothing is posted at the end of an item.
+- The event carries the source's `url` but not its id, so the issue number is read from `https://github.com/<owner>/<name>/issues/<number>`, which must name the event's repository (case aside). An event whose number cannot be read is logged (`issue number not readable`) and ignored, before anything is written.
+- The comment goes through the App token path (`packages/github-app`) with `issues: write`, scoped to the one repository. The reaction is best effort: a failure is logged and the comment still goes.
+- Idempotent: before commenting, the notifier sets `startedNotifiedAt` on the ledger row with a condition (the row exists and the attribute does not). A replayed event, or a work item with no row, posts nothing. If the comment fails, the claim is removed and the error rethrown so Lambda's retry can post it; a function that dies between the claim and the comment posts no notice, which is the price of at most once. The function's role holds `dynamodb:UpdateItem` on the ledger and the GitHub App policy, and no artefact or event access.
 
 ## Logging and correlation
 

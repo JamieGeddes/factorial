@@ -625,6 +625,11 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-report
       RetentionInDays: !Ref LogRetentionDays
+  NotifyLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-notify
+      RetentionInDays: !Ref LogRetentionDays
 
   # Reads GitHub with read-only tokens, and answers a refusal on the pull
   # request when a person asked. Touches no session.
@@ -863,6 +868,28 @@ Resources:
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
+
+  # The notifier seam (#205): reached by ProgressNotifyRule, it dispatches on
+  # the event's source type to one notifier per type. It records that a notice
+  # was sent on the ledger row and speaks through the App token (issues: write,
+  # one repository). It reads no artefact and puts no event.
+  NotifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-notify
+      Description: Tell the requester that their work has started.
+      CodeUri: ../packages/orchestration/dist/notify/
+      Handler: index.handler
+      Timeout: 60
+      LoggingConfig:
+        LogGroup: !Ref NotifyLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref GitHubAppPolicy
 
   # Covers the reviewer's sessions as well as the builder's. The description
   # still names only the builder: changing a managed policy's description
@@ -1535,6 +1562,32 @@ Resources:
           Arn: !Ref WorkStateMachineLiveAlias
           RoleArn: !GetAtt WorkStarterRole.Arn
           InputPath: $.detail
+
+  # Every progress event goes to the notifier, which ignores all but the few
+  # a notifier for the event's source type acts on.
+  ProgressNotifyRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-progress-notify
+      Description: Route WorkItemProgress events to the notifier.
+      EventBusName: !ImportValue Factorial-WorkBusName
+      State: ENABLED
+      EventPattern:
+        source:
+          - factorial.progress
+        detail-type:
+          - WorkItemProgress
+      Targets:
+        - Id: notify
+          Arn: !Ref NotifyFunction.Alias
+
+  NotifyFunctionRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref NotifyFunction.Alias
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ProgressNotifyRule.Arn
 
 Outputs:
   WorkStateMachineArn:

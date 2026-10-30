@@ -7,7 +7,7 @@
  */
 import { build } from 'esbuild';
 
-const functions = ['intake', 'prepare', 'collect', 'continue-build', 'dispatch-tests', 'prepare-review', 'collect-review', 'open-pr', 'report'];
+const functions = ['intake', 'prepare', 'collect', 'continue-build', 'dispatch-tests', 'prepare-review', 'collect-review', 'open-pr', 'report', 'notify'];
 
 await Promise.all(
   functions.map((name) =>
