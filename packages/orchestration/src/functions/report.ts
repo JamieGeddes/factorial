@@ -23,7 +23,7 @@ interface ReportInput {
   error?: { Error?: string | undefined; Cause?: string };
   sessionIdHint?: string | undefined;
   /** What Collect pushed, if it ran: after a failed build, the saved work in progress. */
-  saved?: { pushed?: boolean; commitCount?: number } | null;
+  saved?: { pushed?: boolean; commitCount?: number; itemCommitCount?: number } | null;
   /** The build round that failed, when the build ran in rounds. */
   buildRound?: number | null;
 }
@@ -39,21 +39,23 @@ function isRework(input: Pick<ReportInput, 'ctx' | 'workItem'>): boolean {
   return workItem !== undefined && continuedPullRequest(workItem) !== undefined;
 }
 
+/** The work item's commits over every round, when Collect gave them: a round's own count says nothing about what the branch holds. */
+function commitsNote(saved: { itemCommitCount?: number }): string {
+  const count = saved.itemCommitCount;
+  return count === 1 ? ' (1 commit)' : count ? ` (${count} commits)` : '';
+}
+
 /** A sentence pointing at the pushed branch, when there is one. */
 export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved' | 'workItem'>): string {
   if (!input.saved?.pushed || !input.ctx) return '';
   if (isRework(input)) {
-    const count = input.saved.commitCount;
-    const commits = count === 1 ? ' (1 commit)' : count ? ` (${count} commits)` : '';
+    const commits = commitsNote(input.saved);
     return ` Work in progress${commits} was saved to this pull request's branch, so the pull request now includes it untested. Do not merge until it is finished and its checks pass.`;
   }
   const { owner, name } = input.ctx.workItem.repository;
   const branch = input.ctx.branch;
   const url = `https://github.com/${owner}/${name}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
-  // A later round with no new commits keeps the earlier rounds' head, so its
-  // own count of 0 says nothing about what the branch holds.
-  const count = input.saved.commitCount;
-  const commits = count === 1 ? ' (1 commit)' : count ? ` (${count} commits)` : '';
+  const commits = commitsNote(input.saved);
   return ` Work in progress${commits} was saved to [\`${branch}\`](${url}); it is untested and no pull request was opened. Adding the label again resumes from that branch.`;
 }
 

@@ -30,7 +30,7 @@ describe('continuingSection', () => {
     const text = continuingSection({ round: 2, baseCommit: base, pushed: true, commitCount: 3, planned: true });
     assert.match(text, /^\n# Continuing \(round 2\)\n/);
     assert.match(text, /Its 3 commits are on this branch\./);
-    assert.match(text, /Save work in progress after the build failed/);
+    assert.match(text, /Save work in progress when the builder reached its limit/);
     assert.match(text, new RegExp(`git log --oneline ${base}\\.\\.HEAD`));
     assert.match(text, /Carry on from the first step not done\. Do not redo committed work\./);
   });

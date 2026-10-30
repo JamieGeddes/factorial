@@ -7,6 +7,7 @@ import {
   bundleScript,
   cleanRoomPushScript,
   inspectScript,
+  leftoverMessage,
   parseInspection,
   roundStartFor,
   touchesWorkflows,
@@ -20,10 +21,11 @@ const sha = 'a'.repeat(40);
 const base = 'b'.repeat(40);
 
 describe('parseInspection', () => {
-  it('extracts the commit count, head sha, changed paths and summary', () => {
-    const out = `3\n${SECTION}${sha}\n${SECTION}README.md\n.github/workflows/ci.yml\n${SECTION}# Summary\n\nDid the thing.\n`;
+  it("extracts the round's and the item's commit counts, head sha, changed paths and summary", () => {
+    const out = `3\n${SECTION}${sha}\n${SECTION}README.md\n.github/workflows/ci.yml\n${SECTION}5\n${SECTION}# Summary\n\nDid the thing.\n`;
     assert.deepEqual(parseInspection(out), {
       commitCount: 3,
+      itemCommitCount: 5,
       headSha: sha,
       changedPaths: ['README.md', '.github/workflows/ci.yml'],
       summary: '# Summary\n\nDid the thing.',
@@ -31,8 +33,9 @@ describe('parseInspection', () => {
   });
 
   it('tolerates no changed paths and a missing summary', () => {
-    assert.deepEqual(parseInspection(`0\n${SECTION}${sha}\n${SECTION}\n${SECTION}`), {
+    assert.deepEqual(parseInspection(`0\n${SECTION}${sha}\n${SECTION}\n${SECTION}0\n${SECTION}`), {
       commitCount: 0,
+      itemCommitCount: 0,
       headSha: sha,
       changedPaths: [],
       summary: '',
@@ -42,6 +45,12 @@ describe('parseInspection', () => {
   it('rejects malformed output', () => {
     assert.throws(() => parseInspection('garbage'), /Could not parse/);
     assert.throws(() => parseInspection(`x${SECTION}${sha}${SECTION}`), /Could not parse/);
+    assert.throws(() => parseInspection(`3\n${SECTION}${sha}\n${SECTION}\n${SECTION}`), /Could not parse/);
+  });
+
+  it('keeps a summary that contains the section marker whole', () => {
+    const summary = `before${SECTION}after`;
+    assert.equal(parseInspection(`1\n${SECTION}${sha}\n${SECTION}\n${SECTION}1\n${SECTION}${summary}`).summary, summary.trim());
   });
 });
 
@@ -76,6 +85,20 @@ describe('agent-session scripts carry no credentials', () => {
   it('labels leftovers as saved work in progress after a failed build', () => {
     const script = inspectScript(base, SALVAGE_COMMIT_MESSAGE);
     assert.ok(script.includes(`commit --quiet -m 'Save work in progress after the build failed'`));
+  });
+
+  it('names leftovers for how the build ended: failed, at its limit, or finished', () => {
+    assert.equal(leftoverMessage(true, false), SALVAGE_COMMIT_MESSAGE);
+    assert.equal(leftoverMessage(true, true), 'Save work in progress when the builder reached its limit');
+    assert.equal(leftoverMessage(false, false), LEFTOVER_COMMIT_MESSAGE);
+  });
+
+  it("counts the round's commits from its start and the item's from the item's base", () => {
+    const itemBase = 'c'.repeat(40);
+    const script = inspectScript(base, LEFTOVER_COMMIT_MESSAGE, itemBase);
+    assert.match(script, new RegExp(`git rev-list --count '${base}'\\.\\.HEAD`));
+    assert.match(script, new RegExp(`git rev-list --count '${itemBase}'\\.\\.HEAD`));
+    assert.throws(() => inspectScript(base, LEFTOVER_COMMIT_MESSAGE, 'nope'), /work item base commit/);
   });
 
   it('bundles only the new commits, pins the head and caps the size', () => {

@@ -30,7 +30,7 @@ import { accessSync, constants, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { Type, type AssistantMessage, type Model, type Api } from '@earendil-works/pi-ai';
+import { Type, type AssistantMessage, type Model, type Api, type Provider } from '@earendil-works/pi-ai';
 import {
   createAgentSession,
   defineTool,
@@ -61,7 +61,6 @@ import { Slots } from './slots.ts';
 import { taskDescription, taskResult } from './task.ts';
 import { PI_TOOLS, toolCallOf, toolsFor, type AnyTool } from './tools.ts';
 
-const PROVIDER_ID = 'amazon-bedrock';
 /** Where the host's message to the model is filed in pi's session. */
 const HOST_MESSAGE = 'factorial-host';
 
@@ -120,6 +119,8 @@ export interface PiParts {
   /** Where pi keeps its auth and settings files: root-owned, never the workspace or a home directory. */
   agentDir: string;
   webSearch: GatewayCall | undefined;
+  /** The models' provider: Bedrock on the Runtime (bedrock.ts). */
+  provider: Provider<Api>;
 }
 
 /** The image's ripgrep wrapper, which runs ripgrep as the agent user (agent-runtime/rg-as-agent). */
@@ -152,6 +153,7 @@ export function runtimeParts(config: Config): PiParts {
     helper: { runner, command: ['node', '--no-warnings', fileURLToPath(new URL('./agent-ops.mjs', import.meta.url))], cwd: config.workspace },
     agentDir,
     webSearch: config.webSearchGatewayUrl ? signedGatewayCall(config.webSearchGatewayUrl, config.region) : undefined,
+    provider: bedrockProvider(),
   };
 }
 
@@ -192,11 +194,11 @@ async function* runPi(
   const startedAt = Date.now();
   const policy: RolePolicy = role.session(config.workspace, note, PI_TOOLS);
   const runtime = await ModelRuntime.create({ authPath: path.join(parts.agentDir, 'auth.json'), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
-  // pi's own Bedrock auth finds no credentials on the Runtime; the execution role is the SDK chain's (bedrock.ts).
-  runtime.registerNativeProvider(bedrockProvider());
+  // On the Runtime, Bedrock with the execution role's credentials (bedrock.ts).
+  runtime.registerNativeProvider(parts.provider);
   const modelOf = (id: string): Model<Api> => {
-    const model = runtime.getModel(PROVIDER_ID, id);
-    if (!model) throw new Error(`pi's catalogue has no ${PROVIDER_ID} model ${id}`);
+    const model = runtime.getModel(parts.provider.id, id);
+    if (!model) throw new Error(`pi's catalogue has no ${parts.provider.id} model ${id}`);
     return model;
   };
   const mainModel = modelOf(config.model);
@@ -376,6 +378,8 @@ async function* runPi(
           model: mainModel,
           beforeStop: policy.beforeStop,
           onTurn: () => {
+            // The call cut off by the stop ends a turn too; it is not one the run was allowed.
+            if (stopped) return;
             turns += 1;
             if (turns >= config.maxTurns) stop('max_turns');
           },
@@ -385,7 +389,8 @@ async function* runPi(
       await main.prompt(policy.prompt(request.prompt));
       const last = [...main.messages].reverse().find((message) => message.role === 'assistant') as AssistantMessage | undefined;
       const figures = { turns, durationMs: Date.now() - startedAt };
-      if (stopped) return events.ended({ outcome: 'incomplete', reason: stopped, ...(last?.stopReason ? { detail: last.stopReason } : {}), ...figures });
+      // No detail: the last message is the call the stop aborted, not how pi ended the run.
+      if (stopped) return events.ended({ outcome: 'incomplete', reason: stopped, ...figures });
       if (abortController.signal.aborted) return events.ended({ outcome: 'failed', reason: 'harness_error', detail: 'aborted', ...figures });
       if (last?.stopReason === 'error') return events.ended({ outcome: 'failed', reason: 'model_error', detail: 'error', errors: [last.errorMessage ?? 'model error'], ...figures });
       return events.ended({ outcome: 'complete', reason: 'completed', ...(last?.stopReason ? { detail: last.stopReason } : {}), ...figures });
