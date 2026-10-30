@@ -120,16 +120,16 @@ describe('content patterns', () => {
 describe('sensitiveChanges', () => {
   const rules = [
     ...BUILT_IN_RULES,
-    { path: 'templates/00-foundation.yml', reason: 'changes the foundation stack' },
+    { path: 'templates/foundation.yml', reason: 'changes the foundation stack' },
     { prefix: 'infra/', reason: 'changes infrastructure' },
     { contentPattern: '[Pp]ermissions-?[Bb]oundary', reason: 'changes a permissions boundary or what carries one' },
   ];
 
   it('flags what the built-in and repository rules match, and nothing else', () => {
     const changes = sensitiveChanges(
-      ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify/action.yml', '.github/CODEOWNERS', 'src/.gitattributes', '.factorial/sensitive-paths.json', 'templates/00-foundation.yml', 'infra/db.yml', 'templates/20-agent.yml', 'docs/a.md'],
+      ['src/a.ts', '.github/workflows/ci.yml', '.github/actions/classify/action.yml', '.github/CODEOWNERS', 'src/.gitattributes', '.factorial/sensitive-paths.json', 'templates/foundation.yml', 'infra/db.yml', 'templates/agent.yml', 'docs/a.md'],
       rules,
-      [['templates/20-agent.yml']],
+      [['templates/agent.yml']],
     );
     assert.deepEqual(changes.map((c) => c.path), [
       '.github/workflows/ci.yml',
@@ -137,9 +137,9 @@ describe('sensitiveChanges', () => {
       '.github/CODEOWNERS',
       'src/.gitattributes',
       '.factorial/sensitive-paths.json',
-      'templates/00-foundation.yml',
+      'templates/foundation.yml',
       'infra/db.yml',
-      'templates/20-agent.yml',
+      'templates/agent.yml',
     ]);
     assert.match(changes[0]!.reason, /GitHub Actions/);
     assert.match(changes[2]!.reason, /approve/);
@@ -149,7 +149,7 @@ describe('sensitiveChanges', () => {
   });
 
   it('flags only Actions, ownership and Factorial configuration by default, whatever the repository', () => {
-    assert.deepEqual(sensitiveChanges(['templates/00-foundation.yml', 'src/a.ts', 'src/my.gitattributes'], BUILT_IN_RULES), []);
+    assert.deepEqual(sensitiveChanges(['templates/foundation.yml', 'src/a.ts', 'src/my.gitattributes'], BUILT_IN_RULES), []);
     assert.deepEqual(sensitiveChanges(['.gitattributes'], BUILT_IN_RULES).map((c) => c.path), ['.gitattributes']);
   });
 
@@ -236,7 +236,7 @@ describe('checkReviewFile', () => {
 describe('withGuardFindings', () => {
   const changes = [
     { path: '.github/workflows/ci.yml', reason: 'changes a GitHub Actions workflow' },
-    { path: 'templates/00-foundation.yml', reason: 'changes the foundation stack' },
+    { path: 'templates/foundation.yml', reason: 'changes the foundation stack' },
   ];
 
   it('adds a high-severity finding for each sensitive change, first, and leaves the verdict alone', () => {
@@ -245,7 +245,7 @@ describe('withGuardFindings', () => {
     assert.equal(guarded.verdict, 'comment');
     assert.deepEqual(guarded.findings.slice(0, 2).map((f) => [f.path, f.severity]), [
       ['.github/workflows/ci.yml', 'high'],
-      ['templates/00-foundation.yml', 'high'],
+      ['templates/foundation.yml', 'high'],
     ]);
     assert.match(guarded.findings[0]!.body, /^Added by the orchestrator: this changes a GitHub Actions workflow\./);
     assert.equal(guarded.findings.length, 4);
@@ -255,7 +255,7 @@ describe('withGuardFindings', () => {
     const flagged = { ...review, findings: [{ path: '.github/workflows/ci.yml', severity: 'high' as const, body: 'Reviewed: nothing to worry about.' }] };
     const { review: guarded, added } = withGuardFindings(flagged, changes);
     assert.equal(added, 2);
-    assert.deepEqual(guarded.findings.map((f) => f.path), ['.github/workflows/ci.yml', 'templates/00-foundation.yml', '.github/workflows/ci.yml']);
+    assert.deepEqual(guarded.findings.map((f) => f.path), ['.github/workflows/ci.yml', 'templates/foundation.yml', '.github/workflows/ci.yml']);
     assert.match(guarded.findings[0]!.body, /^Added by the orchestrator/);
   });
 

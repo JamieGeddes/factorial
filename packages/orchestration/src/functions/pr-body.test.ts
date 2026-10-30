@@ -182,10 +182,10 @@ describe('pullRequestBody: a workflow or foundation change', () => {
     ...noFacts,
     sensitive: [
       { path: '.github/workflows/ci.yml', reason: 'changes GitHub Actions, which run with the repository secrets' },
-      { path: 'templates/00-foundation.yml', reason: 'changes the foundation stack' },
+      { path: 'templates/foundation.yml', reason: 'changes the foundation stack' },
     ],
     contracts: ['contracts/a.json'],
-    deploy: { configured: true, notes: ['CloudFormation templates change: `templates/00-foundation.yml`'], humanSteps: ['Deploy the foundation stack by hand: `templates/00-foundation.yml`'] },
+    deploy: { configured: true, notes: ['CloudFormation templates change: `templates/foundation.yml`'], humanSteps: ['Deploy the foundation stack by hand: `templates/foundation.yml`'] },
   };
   const review = {
     ok: true as const,
@@ -206,7 +206,7 @@ describe('pullRequestBody: a workflow or foundation change', () => {
     assertOrder(body);
     const focus = section(body, '## Review focus');
     assert.match(focus, /^## Review focus\n\n1\. `\.github\/workflows\/ci\.yml`: changes GitHub Actions/);
-    assert.match(focus, /2\. `templates\/00-foundation\.yml`: changes the foundation stack\./);
+    assert.match(focus, /2\. `templates\/foundation\.yml`: changes the foundation stack\./);
     assert.match(focus, /3\. `contracts\/a\.json`: changes a contract/);
     assert.match(focus, /4\. `src\/a\.ts:3`: Unchecked input\./);
     assert.equal(focus.split('\n').filter((l) => /^\d\./.test(l)).length, 5);
@@ -215,7 +215,7 @@ describe('pullRequestBody: a workflow or foundation change', () => {
 
   it('states the deploy impact and the human step, and lists the contract', () => {
     const impact = section(body, '## Impact');
-    assert.match(impact, /- \*\*Deploy:\*\* CloudFormation templates change: `templates\/00-foundation\.yml`\. \*\*Human step needed:\*\* Deploy the foundation stack by hand/);
+    assert.match(impact, /- \*\*Deploy:\*\* CloudFormation templates change: `templates\/foundation\.yml`\. \*\*Human step needed:\*\* Deploy the foundation stack by hand/);
     assert.match(impact, /- \*\*Contracts:\*\* `contracts\/a\.json`/);
   });
 

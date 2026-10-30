@@ -180,7 +180,7 @@ The vocabulary, used consistently in code, documents and prompts:
 
 ### 4.15 Conventions
 
-- TypeScript for everything Factorial owns, including the agent host; CloudFormation YAML with the `.yml` extension, numbered templates, the Serverless transform with `AutoPublishAlias: live`; every Lambda dependency bundled, the AWS SDK included.
+- TypeScript for everything Factorial owns, including the agent host; CloudFormation YAML with the `.yml` extension, one template per stack named for it, the Serverless transform with `AutoPublishAlias: live`; every Lambda dependency bundled, the AWS SDK included.
 - Every role is named `factorial-*` and carries a boundary: agent roles `factorial-agent-*` with the agent boundary, all others with the runtime boundary; AgentCore resources `factorial_*`, everything else `factorial-*`. The CloudFormation execution role is scoped to those names.
 - Serverless first; Fargate where a container is unavoidable; never EC2. One region.
 - Workflows: every remote action pinned to a commit SHA, no Actions cache, every job that assumes the deploy role declares the environment and the full trust gate, and a script enforces those rules in CI.

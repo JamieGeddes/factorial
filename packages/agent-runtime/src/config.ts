@@ -1,6 +1,6 @@
 /**
  * The host's configuration, read once from the process environment. Every value
- * here is set on the immutable Runtime version (templates/20-agent.yml), never
+ * here is set on the immutable Runtime version (templates/agent.yml), never
  * taken from a request, so the model, limits and tools are fixed by the version.
  */
 import { ROLES, isRoleName, modelVariable, type RoleName } from '@factorial/roles';

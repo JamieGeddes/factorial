@@ -1,5 +1,5 @@
 /**
- * Deploy the foundation stack (`templates/00-foundation.yml`). Run by a human with
+ * Deploy the foundation stack (`templates/foundation.yml`). Run by a human with
  * administrator credentials, never by the deploy workflow (`docs/bootstrap.md`).
  *
  * The template is uploaded to a bootstrap bucket the human creates by hand and is
@@ -16,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 
 const region = 'eu-west-1';
 const stackName = 'factorial-foundation';
-const template = 'templates/00-foundation.yml';
+const template = 'templates/foundation.yml';
 const bucketKey = 'FACTORIAL_BOOTSTRAP_BUCKET';
 
 /**

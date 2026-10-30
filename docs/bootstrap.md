@@ -2,7 +2,7 @@
 
 All Factorial deployments run through GitHub Actions, with one exception: the foundation stack creates the role that GitHub Actions assumes, so it cannot deploy itself. A human deploys it once per account, and redeploys it only when the guardrails themselves change.
 
-The foundation stack (`templates/00-foundation.yml`) creates:
+The foundation stack (`templates/foundation.yml`) creates:
 
 | Resource | Purpose |
 |---|---|
