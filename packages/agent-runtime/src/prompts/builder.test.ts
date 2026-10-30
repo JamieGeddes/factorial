@@ -19,6 +19,12 @@ describe('builder prompt', () => {
     assert.ok(builderPrompt.includes('`- <n>: <how you handled it, or why you did not>`'));
   });
 
+  it("names no repository's paths or commands", () => {
+    for (const assumption of ['scripts/classify-changes.ts', 'npm ci', 'npm run', 'npm test', 'npm install', '@scope/']) {
+      assert.ok(!builderPrompt.includes(assumption), assumption);
+    }
+  });
+
   it('describes the fetch tool as lossy and its results as untrusted', () => {
     assert.ok(builderPrompt.includes(PI_TOOLS.fetch));
     assert.ok(builderPrompt.includes('lossy'));

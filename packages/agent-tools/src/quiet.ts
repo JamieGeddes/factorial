@@ -2,8 +2,8 @@
  * quiet: run a shell command, keep its full output in a log file and print
  * only a short report (see digest.ts).
  *
- *   quiet npm run ci
- *   quiet 'npm test -w @factorial/workitem && npm run typecheck'
+ *   quiet make test
+ *   quiet 'pip install -r requirements.txt && pytest -x'
  *
  * The arguments are joined and run with `bash -o pipefail -c`, and quiet exits
  * with the command's exit code. Logs go to $QUIET_LOG_DIR (default
