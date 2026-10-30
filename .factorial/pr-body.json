@@ -25,7 +25,7 @@
     ],
     "humanSteps": [
       {
-        "prefix": "templates/00-",
+        "prefix": "templates/foundation.yml",
         "note": "The foundation stack is deployed by a human, not by the pipeline (docs/bootstrap.md)"
       }
     ]

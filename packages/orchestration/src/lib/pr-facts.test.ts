@@ -74,7 +74,7 @@ describe('deployImpact', () => {
   });
 
   it('assumes nothing without settings', () => {
-    assert.deepEqual(deployImpact(undefined, ['templates/00-foundation.yml']), { configured: false, notes: [], humanSteps: [] });
+    assert.deepEqual(deployImpact(undefined, ['templates/foundation.yml']), { configured: false, notes: [], humanSteps: [] });
   });
 });
 

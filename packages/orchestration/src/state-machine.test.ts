@@ -1,5 +1,5 @@
 /**
- * Checks on the state machine definition in templates/30-orchestration.yml:
+ * Checks on the state machine definition in templates/orchestration.yml:
  * every state that produces output carries the run's key, so the execution
  * history reads consistently whichever path a run takes.
  */
@@ -20,7 +20,7 @@ interface State {
 
 /** The DefinitionString block, with CloudFormation substitutions replaced so it parses as JSON. */
 function definition(): { StartAt: string; States: Record<string, State> } {
-  const template = readFileSync(new URL('../../../templates/30-orchestration.yml', import.meta.url), 'utf8');
+  const template = readFileSync(new URL('../../../templates/orchestration.yml', import.meta.url), 'utf8');
   const lines = template.split('\n');
   const start = lines.findIndex((line) => line.trim() === 'DefinitionString: |');
   assert.ok(start !== -1, 'DefinitionString not found');

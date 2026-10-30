@@ -1,6 +1,6 @@
 /**
  * The builder's system prompt, ported from its former harness block in
- * templates/20-agent.yml (tag stage-0-harness) and adjusted for Claude: the
+ * templates/agent.yml (tag stage-0-harness) and adjusted for Claude: the
  * GLM-era output cap, fixed exploration budgets and "chain everything"
  * advice are gone. Part of the Runtime version: the host passes it, never a
  * request. Tool names are the harness's (tools.ts).

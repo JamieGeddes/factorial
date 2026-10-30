@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "rules": [
     {
-      "path": "templates/00-foundation.yml",
+      "path": "templates/foundation.yml",
       "reason": "changes the foundation stack, which holds the deploy role, the CloudFormation execution role and the permissions boundaries"
     },
     {
-      "path": "templates/20-agent.yml",
+      "path": "templates/agent.yml",
       "reason": "changes an agent's execution role, models, image or limits"
     },
     {

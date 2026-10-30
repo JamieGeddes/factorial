@@ -1,6 +1,6 @@
 /**
  * The plan subagent's prompt, ported from the planner's harness block in
- * templates/20-agent.yml (tag stage-0-harness for the original) and adjusted
+ * templates/agent.yml (tag stage-0-harness for the original) and adjusted
  * for a subagent: it has no shell, may write only the two plan files, and
  * hears from the host, not the orchestrator, when plan.json is invalid.
  * Tool names are the harness's (tools.ts).
