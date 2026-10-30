@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factorial Command Centre</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Single-theme operations console: a cool slate surface, one blue accent for interaction,
+     the dataviz palette for series, status colours reserved for state. Layout: a fixed rail,
+     a thin status bar, and a scrolling work surface laid out as a 12-column grid. */
+  color-scheme: dark;
+  --page: #0f1216;
+  --surface: #161b22;
+  --raised: #1c232c;
+  --well: #11151a;
+  --hair: #2a323d;
+  --hair-strong: #3a4552;
+  --ink: #e6e9ee;
+  --ink-2: #a2abb8;
+  --ink-3: #6f7987;
+  --accent: #3987e5;
+  --accent-soft: rgba(57,135,229,0.16);
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+  --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --font: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --rail: 208px;
+  --radius: 6px;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--page); color: var(--ink); font-family: var(--font);
+  font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+button { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+h1, h2, h3 { margin: 0; font-weight: 700; text-wrap: balance; }
+h1 { font-size: 20px; }
+h2 { font-size: 15px; }
+h3 { font-size: 13px; color: var(--ink-2); font-weight: 400; }
+.num { font-variant-numeric: tabular-nums; }
+code, .mono { font-family: var(--mono); font-size: 12px; }
+
+/* Shell */
+.shell { display: grid; grid-template-columns: var(--rail) 1fr; grid-template-rows: 44px 1fr; height: 100%; }
+.rail { grid-row: 1 / 3; background: var(--well); border-right: 1px solid var(--hair); display: flex; flex-direction: column; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 14px 16px; border-bottom: 1px solid var(--hair); height: 44px; }
+.brand .mark { width: 18px; height: 18px; border-radius: 4px; background: linear-gradient(135deg, var(--accent), #1c5cab); position: relative; }
+.brand .mark::after { content: ""; position: absolute; inset: 5px; border-radius: 2px; background: var(--well); }
+.brand b { font-size: 14px; letter-spacing: 0.01em; }
+.brand small { color: var(--ink-3); font-size: 11px; }
+nav { padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; }
+nav a { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: var(--radius); color: var(--ink-2); font-weight: 400; }
+nav a:hover { background: var(--raised); text-decoration: none; color: var(--ink); }
+nav a[aria-current="page"] { background: var(--accent-soft); color: var(--ink); font-weight: 700; }
+nav a .count { margin-left: auto; font-size: 11px; color: var(--ink-3); background: var(--raised); padding: 1px 7px; border-radius: 10px; }
+nav a[aria-current="page"] .count { background: rgba(57,135,229,0.25); color: var(--ink); }
+nav svg { width: 16px; height: 16px; flex: none; }
+.rail-foot { margin-top: auto; padding: 12px 16px; border-top: 1px solid var(--hair); font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+.rail-foot b { color: var(--ink-2); font-weight: 400; }
+
+.topbar { grid-column: 2; display: flex; align-items: center; gap: 18px; padding: 0 20px; border-bottom: 1px solid var(--hair); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.topbar .live { display: flex; align-items: center; gap: 7px; color: var(--ink); font-weight: 700; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; }
+.dot.pulse { box-shadow: 0 0 0 0 rgba(12,163,12,0.6); animation: pulse 2s infinite; }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(12,163,12,0.5); } 70% { box-shadow: 0 0 0 7px rgba(12,163,12,0); } 100% { box-shadow: 0 0 0 0 rgba(12,163,12,0); } }
+.topbar .sep { width: 1px; height: 18px; background: var(--hair); }
+.topbar .clock { margin-left: auto; font-family: var(--mono); color: var(--ink-2); }
+.topbar .demo { border: 1px solid var(--hair-strong); border-radius: 10px; padding: 1px 8px; color: var(--ink-3); }
+
+main { grid-column: 2; overflow: auto; padding: 20px; }
+.view { display: none; }
+.view.active { display: block; }
+.view-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 16px; }
+.view-head p { margin: 0; color: var(--ink-2); font-size: 13px; }
+.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 14px; }
+.card { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius); padding: 14px 16px; min-width: 0; }
+.card.flush { padding: 0; overflow: hidden; }
+.card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.card-head h2 { font-size: 14px; }
+.card-head .sub { color: var(--ink-3); font-size: 12px; }
+.span-3 { grid-column: span 3; } .span-4 { grid-column: span 4; } .span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; } .span-7 { grid-column: span 7; } .span-8 { grid-column: span 8; } .span-9 { grid-column: span 9; } .span-12 { grid-column: span 12; }
+
+/* Stat tiles */
+.tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px; margin-bottom: 14px; }
+.tile { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius); padding: 12px 14px; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: end; }
+.tile .label { grid-column: 1 / 3; color: var(--ink-2); font-size: 12px; }
+.tile .value { font-size: 26px; font-weight: 700; line-height: 1.1; }
+.tile .value small { font-size: 13px; font-weight: 400; color: var(--ink-3); margin-left: 3px; }
+.tile .delta { font-size: 12px; color: var(--ink-2); grid-column: 1 / 3; }
+.tile .delta .up { color: var(--good); } .tile .delta .down { color: var(--serious); }
+.tile svg { width: 72px; height: 28px; }
+
+/* Pills and status */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; border: 1px solid var(--hair-strong); color: var(--ink-2); white-space: nowrap; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.pill.running { color: #6fb0f4; border-color: rgba(57,135,229,0.5); }
+.pill.waiting { color: var(--warn); border-color: rgba(250,178,25,0.45); }
+.pill.done { color: #4fd34f; border-color: rgba(12,163,12,0.45); }
+.pill.failed { color: #f08a8a; border-color: rgba(208,59,59,0.5); }
+.pill.refused { color: var(--ink-3); }
+.pill.role { color: var(--ink-2); }
+.pill.role::before { display: none; }
+.tag { font-family: var(--mono); font-size: 11px; color: var(--ink-2); background: var(--well); border: 1px solid var(--hair); padding: 1px 6px; border-radius: 4px; }
+
+/* Stage map (the hero) */
+.stagemap { position: relative; padding: 18px 16px 8px; }
+.stagemap-track { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; position: relative; }
+.stagemap-track::before { content: ""; position: absolute; left: 6%; right: 6%; top: 25px; height: 2px; background: var(--hair-strong); }
+.stage { position: relative; text-align: center; min-height: 118px; }
+.stage .node { width: 14px; height: 14px; border-radius: 50%; background: var(--surface); border: 2px solid var(--hair-strong); margin: 18px auto 10px; position: relative; z-index: 1; }
+.stage.busy .node { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+.stage .name { font-size: 12px; color: var(--ink-2); }
+.stage .meta { font-size: 11px; color: var(--ink-3); margin-top: 2px; }
+.stage .pucks { display: flex; flex-direction: column; gap: 4px; align-items: center; margin-top: 8px; }
+.puck { display: inline-flex; align-items: center; gap: 6px; background: var(--raised); border: 1px solid var(--hair-strong); border-left: 3px solid var(--s1); border-radius: 4px; padding: 3px 8px; font-size: 11px; cursor: pointer; transition: transform .2s; white-space: nowrap; }
+.puck:hover { transform: translateY(-1px); border-color: var(--accent); }
+.puck.waiting { border-left-color: var(--warn); }
+.puck.reviewer { border-left-color: var(--s7); }
+.puck.rework { border-left-color: var(--s3); }
+.puck .id { font-family: var(--mono); color: var(--ink-2); }
+.puck .t { color: var(--ink-3); }
+.stagemap-key { display: flex; gap: 16px; font-size: 11px; color: var(--ink-3); padding: 8px 4px 0; border-top: 1px solid var(--hair); margin-top: 6px; }
+.stagemap-key span::before { content: ""; display: inline-block; width: 10px; height: 3px; margin-right: 6px; vertical-align: middle; border-radius: 1px; background: var(--s1); }
+.stagemap-key .k2::before { background: var(--s7); } .stagemap-key .k3::before { background: var(--s3); } .stagemap-key .k4::before { background: var(--warn); }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { text-align: left; font-weight: 400; color: var(--ink-3); font-size: 11px; padding: 8px 10px; border-bottom: 1px solid var(--hair); white-space: nowrap; }
+td { padding: 8px 10px; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+tr:last-child td { border-bottom: 0; }
+tbody tr.row-link { cursor: pointer; }
+tbody tr.row-link:hover td { background: var(--raised); }
+td .sub { display: block; color: var(--ink-3); font-size: 11px; margin-top: 1px; }
+.right { text-align: right; }
+
+/* Meters */
+.meter { height: 6px; border-radius: 3px; background: rgba(57,135,229,0.18); overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; transition: width .6s; }
+.meter.warn > i { background: var(--warn); }
+.meter.crit > i { background: var(--critical); }
+.meter-row { display: grid; grid-template-columns: 70px 1fr 110px; gap: 10px; align-items: center; font-size: 12px; color: var(--ink-2); }
+.meter-row .v { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* Alerts */
+.alerts { display: grid; gap: 6px; }
+.alert { display: grid; grid-template-columns: 4px 1fr auto; gap: 10px; background: var(--raised); border-radius: 4px; overflow: hidden; align-items: center; font-size: 12px; }
+.alert > i { height: 100%; background: var(--warn); }
+.alert.crit > i { background: var(--critical); } .alert.ok > i { background: var(--good); } .alert.info > i { background: var(--accent); }
+.alert .body { padding: 7px 0; }
+.alert .when { padding-right: 10px; color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+
+/* Charts */
+.chart { width: 100%; height: auto; display: block; overflow: visible; }
+.chart text { font-family: var(--font); font-size: 11px; fill: var(--ink-3); }
+.chart .grid line { stroke: var(--hair); stroke-width: 1; }
+.chart .axis { stroke: var(--hair-strong); stroke-width: 1; }
+.chart .bar { rx: 0; }
+.chart .hit { fill: transparent; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 11px; color: var(--ink-2); margin-top: 6px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; background: var(--c); }
+.tooltip { position: fixed; pointer-events: none; background: var(--raised); border: 1px solid var(--hair-strong); border-radius: 4px; padding: 6px 9px; font-size: 12px; color: var(--ink); z-index: 50; display: none; box-shadow: 0 6px 20px rgba(0,0,0,0.4); max-width: 260px; }
+.tooltip b { display: block; color: var(--ink-2); font-weight: 400; font-size: 11px; margin-bottom: 2px; }
+
+/* Filters */
+.filters { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 12px; }
+.chip { border: 1px solid var(--hair-strong); background: var(--surface); border-radius: 14px; padding: 3px 11px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.chip:hover { border-color: var(--accent); color: var(--ink); }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-weight: 700; }
+.search { background: var(--well); border: 1px solid var(--hair-strong); border-radius: var(--radius); color: var(--ink); padding: 5px 10px; font: inherit; font-size: 12px; min-width: 200px; }
+select.search { appearance: none; }
+.btn { border: 1px solid var(--hair-strong); background: var(--raised); border-radius: var(--radius); padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--ink-2); }
+.btn:hover { color: var(--ink); border-color: var(--accent); }
+.btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+
+/* Run view */
+.run-head { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: start; margin-bottom: 14px; }
+.run-head .ids { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+.run-layout { display: grid; grid-template-columns: 340px 1fr; gap: 14px; align-items: start; }
+.run-side { display: grid; gap: 14px; }
+.timeline { display: grid; gap: 7px; }
+.tl-row { display: grid; grid-template-columns: 96px 1fr 64px; gap: 10px; align-items: center; font-size: 12px; }
+.tl-row .n { color: var(--ink-2); }
+.tl-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.tl-bar { height: 10px; display: flex; gap: 2px; align-items: stretch; }
+.tl-bar i { display: block; border-radius: 2px; min-width: 2px; }
+.tl-bar .wait { background: var(--s4); opacity: .55; }
+.tl-bar .work { background: var(--accent); }
+.tl-bar .work.live { background: linear-gradient(90deg, var(--accent), #6fb0f4); animation: grow 2s ease-in-out infinite alternate; }
+.tl-bar .done-ok { background: var(--s3); }
+.tl-bar .todo { background: var(--hair); }
+@keyframes grow { from { opacity: .75 } to { opacity: 1 } }
+.plan { display: grid; gap: 6px; font-size: 12px; }
+.plan-step { display: grid; grid-template-columns: 18px 1fr auto; gap: 8px; align-items: start; }
+.plan-step .st { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--hair-strong); margin-top: 2px; }
+.plan-step.done .st { background: var(--s3); border-color: var(--s3); }
+.plan-step.now .st { border-color: var(--accent); background: var(--accent-soft); animation: pulse 2s infinite; }
+.plan-step .f { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+.kv { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; font-size: 12px; }
+.kv div { display: grid; gap: 1px; }
+.kv .k { color: var(--ink-3); font-size: 11px; }
+.kv .v { font-variant-numeric: tabular-nums; }
+
+/* Transcript */
+.transcript { display: grid; grid-template-rows: auto 1fr auto; height: calc(100vh - 230px); min-height: 520px; }
+.tr-bar { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--hair); flex-wrap: wrap; }
+.tr-bar .status { margin-left: auto; display: flex; gap: 10px; align-items: center; font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
+.tr-body { overflow: auto; padding: 8px 0; background: var(--well); font-family: var(--mono); font-size: 12px; }
+.ev { display: grid; grid-template-columns: 52px 64px 1fr; gap: 10px; padding: 4px 12px; align-items: start; border-left: 2px solid transparent; }
+.ev:hover { background: rgba(255,255,255,0.025); }
+.ev .seq { color: var(--ink-3); text-align: right; font-size: 11px; }
+.ev .at { color: var(--ink-3); font-size: 11px; }
+.ev .c { min-width: 0; white-space: pre-wrap; word-break: break-word; color: var(--ink-2); line-height: 1.5; }
+.ev .kind { display: inline-block; font-size: 10px; font-weight: 600; padding: 0 6px; border-radius: 3px; margin-right: 8px; vertical-align: 1px; background: var(--raised); color: var(--ink-2); font-family: var(--font); letter-spacing: 0.02em; }
+.ev.text .c { color: var(--ink); font-family: var(--font); font-size: 13px; }
+.ev.text { border-left-color: var(--s1); }
+.ev.reasoning .c { color: var(--ink-3); font-style: italic; font-family: var(--font); font-size: 12px; }
+.ev.tool { border-left-color: var(--s3); }
+.ev.tool .kind { background: rgba(25,158,112,0.18); color: #6fd8ad; }
+.ev.result .kind { background: var(--raised); }
+.ev.result.err .kind { background: rgba(208,59,59,0.2); color: #f08a8a; }
+.ev.model .c { color: var(--ink-3); }
+.ev.model .kind { background: rgba(57,135,229,0.18); color: #8fc0f5; }
+.ev.sub { border-left-color: var(--s7); }
+.ev.sub .kind { background: rgba(144,133,233,0.2); color: #b9b2f1; }
+.ev.warn .kind { background: rgba(250,178,25,0.2); color: var(--warn); }
+.ev.sys .kind { background: rgba(255,255,255,0.08); }
+.ev .c details { display: inline; }
+.ev .c summary { cursor: pointer; color: var(--ink-2); list-style: none; display: inline; }
+.ev .c summary::-webkit-details-marker { display: none; }
+.ev .c summary:hover { color: var(--ink); }
+.ev .c summary .more { color: var(--accent); font-size: 11px; margin-left: 8px; font-family: var(--font); }
+.ev .c pre { margin: 6px 0 0; padding: 8px 10px; background: var(--surface); border: 1px solid var(--hair); border-radius: 4px; overflow: auto; max-height: 260px; color: var(--ink-2); font-size: 11.5px; }
+.ev .usage { display: inline-flex; gap: 12px; }
+.ev .usage b { color: var(--ink-2); font-weight: 400; }
+.ev.agent-plan .seq::after, .ev.agent-explore .seq::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--s7); margin-left: 5px; vertical-align: 1px; }
+.ev.new { animation: arrive .5s ease-out; }
+@keyframes arrive { from { background: rgba(57,135,229,0.18); } to { background: transparent; } }
+.tr-foot { display: flex; gap: 14px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--hair); font-size: 11px; color: var(--ink-3); font-family: var(--mono); }
+.tr-foot .jump { margin-left: auto; }
+.chunk-note { margin: 0 12px 6px; padding: 6px 10px; background: var(--raised); border-radius: 4px; color: var(--ink-3); font-size: 11px; font-family: var(--font); }
+
+/* Health */
+.components { display: grid; gap: 8px; }
+.component { display: grid; grid-template-columns: 10px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; background: var(--raised); border-radius: 4px; font-size: 12px; }
+.component .dot { width: 8px; height: 8px; }
+.component .dot.warn { background: var(--warn); } .component .dot.crit { background: var(--critical); } .component .dot.off { background: var(--ink-3); }
+.component .d { color: var(--ink-3); font-size: 11px; }
+.component .r { color: var(--ink-2); font-family: var(--mono); font-size: 11px; text-align: right; }
+
+.empty { color: var(--ink-3); font-size: 12px; padding: 20px; text-align: center; }
+.note { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+
+@media (max-width: 1100px) {
+  .tiles { grid-template-columns: repeat(3, 1fr); }
+  .span-3, .span-4, .span-5, .span-6, .span-7, .span-8, .span-9 { grid-column: span 12; }
+  .run-layout { grid-template-columns: 1fr; }
+  .stagemap-track { grid-template-columns: repeat(3, 1fr); } .stagemap-track::before { display: none; }
+}
+@media (max-width: 720px) {
+  .shell { grid-template-columns: 1fr; grid-template-rows: auto 44px 1fr; }
+  .rail { grid-row: 1; grid-column: 1; border-right: 0; border-bottom: 1px solid var(--hair); }
+  nav { flex-direction: row; overflow-x: auto; } .rail-foot { display: none; }
+  .topbar, main { grid-column: 1; }
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  main { padding: 14px; }
+  .ev { grid-template-columns: 40px 1fr; } .ev .at { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .dot.pulse, .plan-step.now .st, .tl-bar .work.live, .ev.new { animation: none; } .puck { transition: none; } }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand"><span class="mark"></span><div><b>Factorial</b><br><small>Command centre</small></div></div>
+    <nav id="nav">
+      <a href="#overview" data-view="overview"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1.5" y="1.5" width="5" height="5" rx="1"/><rect x="9.5" y="1.5" width="5" height="5" rx="1"/><rect x="1.5" y="9.5" width="5" height="5" rx="1"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/></svg>Overview</a>
+      <a href="#work-items" data-view="work-items"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12M2 8h12M2 12h8"/></svg>Work items<span class="count" id="nav-count">4</span></a>
+      <a href="#run" data-view="run"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3h10v10H3z"/><path d="M6 6l2 2-2 2M9 10h2"/></svg>Run &amp; transcript</a>
+      <a href="#metrics" data-view="metrics"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 13l4-5 3 3 5-7"/></svg>Metrics &amp; cost</a>
+      <a href="#health" data-view="health"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 8h3l2-4 2 8 2-4h3"/></svg>Health</a>
+    </nav>
+    <div class="rail-foot">
+      <span>Live version <b class="mono">cbb8a4d</b></span>
+      <span>Builder <b class="mono">factorial_builder v47</b></span>
+      <span>Reviewer <b class="mono">factorial_reviewer v31</b></span>
+      <span>Region <b>eu-west-1</b></span>
+    </div>
+  </aside>
+  <header class="topbar">
+    <span class="live"><span class="dot pulse"></span>Live feed connected</span>
+    <span class="sep"></span>
+    <span>factorial-work bus: <b id="bus-rate" class="num">2.1</b> events/min</span>
+    <span class="sep"></span>
+    <span>Alarms: <b style="color:var(--warn)">1 warning</b></span>
+    <span class="demo">Simulated data</span>
+    <span class="clock num" id="clock">—</span>
+  </header>
+  <main id="main">
+
+    <!-- ============ OVERVIEW ============ -->
+    <section class="view" id="view-overview">
+      <div class="view-head"><h1>Overview</h1><p>Everything in flight across the factory, refreshed from the live channel.</p></div>
+      <div class="tiles" id="tiles"></div>
+      <div class="grid">
+        <div class="card span-8 flush">
+          <div class="stagemap">
+            <div class="card-head" style="padding:0 0 4px"><h2>Stage graph</h2><span class="sub">One work item per puck. Click a puck to open its run.</span></div>
+            <div class="stagemap-track" id="stagemap"></div>
+            <div class="stagemap-key"><span>Builder session</span><span class="k2">Reviewer session</span><span class="k3">Rework turn</span><span class="k4">Waiting on an external system</span></div>
+          </div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Attention</h2><span class="sub">Alarms and admissions in the last hour</span></div>
+          <div class="alerts" id="alerts"></div>
+        </div>
+        <div class="card span-7 flush">
+          <div class="card-head" style="padding:14px 16px 0"><h2>Agent sessions running</h2><span class="sub">Burn against the Runtime version's limits</span></div>
+          <table id="sessions"><thead><tr><th>Work item</th><th>Role</th><th>Elapsed</th><th>Turns</th><th>Budget</th><th>Tokens</th><th>Last event</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card span-5">
+          <div class="card-head"><h2>Throughput, 14 days</h2><span class="sub">Work items finished per day by outcome</span></div>
+          <div id="chart-throughput"></div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Stage duration</h2><span class="sub">Median and 90th percentile, last 30 runs</span></div>
+          <div id="chart-stages"></div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Model spend per day</h2><span class="sub">Harness estimate at list price</span></div>
+          <div id="chart-spend"></div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Recently finished</h2><span class="sub">Today</span></div>
+          <table id="recent"><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ WORK ITEMS ============ -->
+    <section class="view" id="view-work-items">
+      <div class="view-head"><h1>Work items</h1><p>Every turn the ledger holds, newest first. Running items stay at the top.</p></div>
+      <div class="filters">
+        <input class="search" id="wi-search" type="search" placeholder="Search id, title, branch or PR" aria-label="Search work items">
+        <button class="chip" data-f="all" aria-pressed="true">All</button>
+        <button class="chip" data-f="running" aria-pressed="false">Running</button>
+        <button class="chip" data-f="waiting" aria-pressed="false">Waiting</button>
+        <button class="chip" data-f="done" aria-pressed="false">Finished</button>
+        <button class="chip" data-f="failed" aria-pressed="false">Needs attention</button>
+        <button class="chip" data-f="refused" aria-pressed="false">Refused</button>
+        <span style="margin-left:auto" class="note">Source: <select class="search" id="wi-source" aria-label="Filter by source"><option value="">any</option><option>GitHub issue</option><option>PR review</option><option>PR comment</option><option>Checks failed</option><option>Jira</option></select></span>
+      </div>
+      <div class="card flush">
+        <table id="wi-table"><thead><tr><th>Work item</th><th>Source</th><th>Repository and thread</th><th>Status</th><th>Stage</th><th>Attempt</th><th class="right">Duration</th><th class="right">Cost</th><th>Review</th></tr></thead><tbody></tbody></table>
+      </div>
+      <p class="note">Refused turns are the system's only queue: a busy thread drops the turn, so the person must ask again once the holder finishes.</p>
+    </section>
+
+    <!-- ============ RUN ============ -->
+    <section class="view" id="view-run">
+      <div class="run-head">
+        <div>
+          <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><h1 id="run-title">Run</h1><span class="pill running" id="run-status">building</span></div>
+          <div class="ids" id="run-ids"></div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="note" for="run-select">Session</label>
+          <select class="search" id="run-select" aria-label="Choose a session"></select>
+        </div>
+      </div>
+      <div class="run-layout">
+        <div class="run-side">
+          <div class="card">
+            <div class="card-head"><h2>Stages</h2><span class="sub">work <i style="display:inline-block;width:10px;height:6px;background:var(--accent);border-radius:2px"></i> wait <i style="display:inline-block;width:10px;height:6px;background:var(--s4);opacity:.55;border-radius:2px"></i></span></div>
+            <div class="timeline" id="run-timeline"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Limits</h2><span class="sub" id="run-version"></span></div>
+            <div style="display:grid;gap:10px" id="run-limits"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Usage this session</h2><span class="sub" id="run-models"></span></div>
+            <div class="kv" id="run-usage"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><h2>Plan</h2><span class="sub" id="run-plan-sub"></span></div>
+            <div class="plan" id="run-plan"></div>
+          </div>
+        </div>
+        <div class="card flush transcript" id="transcript">
+          <div class="tr-bar">
+            <button class="chip" data-tf="all" aria-pressed="true">All</button>
+            <button class="chip" data-tf="text" aria-pressed="false">Model text</button>
+            <button class="chip" data-tf="tool" aria-pressed="false">Tools</button>
+            <button class="chip" data-tf="model" aria-pressed="false">Model calls</button>
+            <button class="chip" data-tf="sub" aria-pressed="false">Subagents</button>
+            <input class="search" id="tr-search" type="search" placeholder="Find in transcript" aria-label="Find in transcript" style="min-width:160px">
+            <div class="status">
+              <button class="btn" id="tr-follow" aria-pressed="true">Follow</button>
+              <button class="btn" id="tr-pause" aria-pressed="false">Pause</button>
+            </div>
+          </div>
+          <div class="tr-body" id="tr-body"></div>
+          <div class="tr-foot"><span id="tr-conn">channel /factorial/runs/… connected</span><span id="tr-count">0 events</span><span id="tr-chunks">catch-up: 0 chunks</span><button class="btn jump" id="tr-jump">Jump to latest</button></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ METRICS ============ -->
+    <section class="view" id="view-metrics">
+      <div class="view-head"><h1>Metrics and cost</h1><p>Per role, per model and per stage, from the progress record and the invoker's run records.</p></div>
+      <div class="filters">
+        <button class="chip" aria-pressed="false">7 days</button><button class="chip" aria-pressed="true">30 days</button><button class="chip" aria-pressed="false">90 days</button>
+        <span class="note" style="margin-left:auto">Repository: <select class="search" aria-label="Repository"><option>all</option><option>JamieGeddes/factorial</option><option>acme/billing-service</option></select></span>
+      </div>
+      <div class="tiles" id="m-tiles"></div>
+      <div class="grid">
+        <div class="card span-6">
+          <div class="card-head"><h2>Tokens per day by model</h2><span class="sub">Input and output, cache reads included</span></div>
+          <div id="chart-tokens"></div>
+        </div>
+        <div class="card span-6">
+          <div class="card-head"><h2>Cost per work item by role</h2><span class="sub">Last 20 finished items</span></div>
+          <div id="chart-cost-role"></div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Outcomes, 30 days</h2><span class="sub">Where items ended</span></div>
+          <div id="chart-outcomes"></div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Review scores</h2><span class="sub">Weekly mean, automated reviewer</span></div>
+          <div id="chart-scores"></div>
+        </div>
+        <div class="card span-4">
+          <div class="card-head"><h2>Bedrock latency and retries</h2><span class="sub">Model call p50 latency; retries per day</span></div>
+          <div id="chart-latency"></div>
+        </div>
+        <div class="card span-12 flush">
+          <div class="card-head" style="padding:14px 16px 0"><h2>Runtime versions compared</h2><span class="sub">Each promoted version's record, builder role</span></div>
+          <table id="versions"><thead><tr><th>Version</th><th>Promoted</th><th>Harness</th><th>Model</th><th class="right">Runs</th><th class="right">PR rate</th><th class="right">Median build</th><th class="right">Rounds per build</th><th class="right">Cost per PR</th><th class="right">Review score</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ HEALTH ============ -->
+    <section class="view" id="view-health">
+      <div class="view-head"><h1>Health</h1><p>Every component the pipeline depends on, with what it reported last.</p></div>
+      <div class="grid">
+        <div class="card span-5">
+          <div class="card-head"><h2>Components</h2><span class="sub">Checked every minute</span></div>
+          <div class="components" id="components"></div>
+        </div>
+        <div class="card span-7">
+          <div class="card-head"><h2>Alarms</h2><span class="sub">CloudWatch, factorial-alerts topic</span></div>
+          <div class="alerts" id="alarms"></div>
+          <div class="card-head" style="margin-top:18px"><h2>Quotas</h2><span class="sub">Consumption against account limits</span></div>
+          <div style="display:grid;gap:10px" id="quotas"></div>
+        </div>
+        <div class="card span-7 flush">
+          <div class="card-head" style="padding:14px 16px 0"><h2>Deploys and promotions</h2><span class="sub">GitHub Actions on main</span></div>
+          <table id="deploys"><thead><tr><th>Commit</th><th>When</th><th>Changed</th><th>Stacks</th><th>Promoted</th><th>Outcome</th></tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card span-5">
+          <div class="card-head"><h2>Webhook deliveries, 24 hours</h2><span class="sub">GitHub App, per hour</span></div>
+          <div id="chart-webhooks"></div>
+          <div class="kv" style="margin-top:10px">
+            <div><span class="k">Delivered</span><span class="v">188</span></div>
+            <div><span class="k">Became work items</span><span class="v">11</span></div>
+            <div><span class="k">Ignored, with reason</span><span class="v">175</span></div>
+            <div><span class="k">Failed deliveries</span><span class="v">2 <span class="note" style="margin:0">redelivered</span></span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+'use strict';
+// ---------- helpers ----------
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+const fmtK = n => n >= 1e6 ? (n / 1e6).toFixed(2) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e5 ? 0 : 1) + 'K' : String(Math.round(n));
+const fmtUsd = n => '$' + n.toFixed(2);
+const fmtDur = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60; return h ? `${h}h ${String(m).padStart(2, '0')}m` : m ? `${m}m ${String(sec).padStart(2, '0')}s` : `${sec}s`; };
+const pad = n => String(n).padStart(2, '0');
+const fmtTime = d => `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const NOW0 = Date.now();
+const since = (ms) => (Date.now() - ms) / 1000;
+const tip = $('#tooltip');
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = 'block'; moveTip(e); }
+function moveTip(e) { const w = tip.offsetWidth, h = tip.offsetHeight; let x = e.clientX + 14, y = e.clientY + 14; if (x + w > innerWidth - 8) x = e.clientX - w - 10; if (y + h > innerHeight - 8) y = e.clientY - h - 10; tip.style.left = x + 'px'; tip.style.top = y + 'px'; }
+function hideTip() { tip.style.display = 'none'; }
+document.addEventListener('mousemove', e => { if (tip.style.display === 'block') moveTip(e); });
+
+// ---------- simulated data ----------
+const STAGES = ['Intake', 'Prepare', 'Build', 'Collect', 'Test', 'PrepareReview', 'Review', 'CollectReview', 'OpenPullRequest'];
+const STAGE_P50 = { Intake: 2, Prepare: 48, Build: 1460, Collect: 95, Test: 380, PrepareReview: 62, Review: 310, CollectReview: 6, OpenPullRequest: 9 };
+const STAGE_P90 = { Intake: 4, Prepare: 71, Build: 3900, Collect: 160, Test: 720, PrepareReview: 90, Review: 540, CollectReview: 11, OpenPullRequest: 20 };
+
+const items = [
+  { id: 'b7e1a4c2-d3a1-11f1-9b01-f64c5e3f8f01', title: 'Verify stage: run the verifiers a target declares in .factorial/verifiers.json', source: 'GitHub issue', ref: '#198', repo: 'JamieGeddes/factorial', branch: 'factorial/b7e1a4c2', status: 'running', stage: 'Build', role: 'builder', round: 1, started: NOW0 - 23 * 60e3 - 14e3, attempt: 1, cost: 1.84, turns: 63, tokensIn: 2_412_000, tokensOut: 41_200, cached: 2_190_000, calls: 71, tools: 58, requester: 'jamie', kind: 'builder' },
+  { id: '3fa2c9d0-d3a1-11f1-9b01-f64c5e3f8f01', title: 'Lower the orchestrator Lambda log retention to 30 days', source: 'GitHub issue', ref: '#196', repo: 'JamieGeddes/factorial', branch: 'factorial/3fa2c9d0', status: 'running', stage: 'Review', role: 'reviewer', round: 1, started: NOW0 - 31 * 60e3, attempt: 1, cost: 0.92, turns: 14, tokensIn: 410_000, tokensOut: 9_800, cached: 362_000, calls: 15, tools: 12, requester: 'jamie', kind: 'reviewer', buildCost: 0.74, reviewStarted: NOW0 - 4 * 60e3 - 20e3 },
+  { id: '9c04e7b8-d3a0-11f1-9b01-f64c5e3f8f01', title: 'Rework after failed checks on PR #189 (Lint CloudFormation)', source: 'Checks failed', ref: 'PR #189', repo: 'JamieGeddes/factorial', branch: 'factorial/d9f622d0', status: 'waiting', stage: 'Test', role: null, round: 1, started: NOW0 - 19 * 60e3, attempt: 1, cost: 0.61, turns: 0, tokensIn: 0, tokensOut: 0, cached: 0, calls: 0, tools: 0, requester: 'factorial[bot]', kind: 'rework', wait: 'GitHub Actions run 19204411 queued 2m 40s' },
+  { id: 'd2b8f1e6-d3a2-11f1-9b01-f64c5e3f8f01', title: 'BILL-4821: Retry Stripe webhook deliveries with exponential backoff', source: 'Jira', ref: 'BILL-4821', repo: 'acme/billing-service', branch: 'factorial/d2b8f1e6', status: 'running', stage: 'Prepare', role: null, round: 1, started: NOW0 - 41e3, attempt: 1, cost: 0, turns: 0, tokensIn: 0, tokensOut: 0, cached: 0, calls: 0, tools: 0, requester: 'priya', kind: 'builder' },
+  { id: 'e4a17d3c-d3a2-11f1-9b01-f64c5e3f8f01', title: '@factorial please also bump the cfn-lint pin', source: 'PR comment', ref: 'PR #189', repo: 'JamieGeddes/factorial', branch: 'factorial/d9f622d0', status: 'refused', refusedReason: 'busy', stage: 'Intake', started: NOW0 - 7 * 60e3, attempt: 1, cost: 0, requester: 'jamie', kind: 'rework' },
+  { id: 'a91c5e20-d39f-11f1-9b01-f64c5e3f8f01', title: 'Record the Runtime version serving live in usage.json', source: 'GitHub issue', ref: '#195', repo: 'JamieGeddes/factorial', branch: 'factorial/a91c5e20', status: 'pr-opened', stage: 'OpenPullRequest', pr: '#199', started: NOW0 - 96 * 60e3, ended: NOW0 - 58 * 60e3, attempt: 1, cost: 2.31, review: { verdict: 'approve', score: 4.5 }, requester: 'jamie', kind: 'builder', rounds: 1 },
+  { id: '58d0b3f4-d39e-11f1-9b01-f64c5e3f8f01', title: 'Reply to review on PR #192: cap the seed section at 4 KiB', source: 'PR review', ref: 'PR #192', repo: 'JamieGeddes/factorial', branch: 'factorial/7c3e9a10', status: 'pr-updated', stage: 'OpenPullRequest', pr: '#192', started: NOW0 - 140 * 60e3, ended: NOW0 - 121 * 60e3, attempt: 1, cost: 1.12, review: { verdict: 'approve', score: 4.25 }, requester: 'jamie', kind: 'rework', rounds: 1 },
+  { id: '0f6a2c88-d39d-11f1-9b01-f64c5e3f8f01', title: 'Staging canary before promotion', source: 'GitHub issue', ref: '#13', repo: 'JamieGeddes/factorial', branch: 'factorial/0f6a2c88', status: 'incomplete', stage: 'Build', started: NOW0 - 260 * 60e3, ended: NOW0 - 141 * 60e3, attempt: 1, cost: 6.40, requester: 'jamie', kind: 'builder', rounds: 3, note: 'Saved to branch after 3 sessions' },
+  { id: 'c3e71b5a-d39c-11f1-9b01-f64c5e3f8f01', title: 'Make the merge-conflict command wait for #155', source: 'GitHub issue', ref: '#193', repo: 'JamieGeddes/factorial', branch: 'factorial/c3e71b5a', status: 'tests-failed', stage: 'Test', started: NOW0 - 300 * 60e3, ended: NOW0 - 266 * 60e3, attempt: 1, cost: 1.95, requester: 'jamie', kind: 'builder', rounds: 1, note: 'Typecheck, test and lint failed' },
+  { id: '7c3e9a10-d39b-11f1-9b01-f64c5e3f8f01', title: 'Seed providers: cap every first-message section', source: 'GitHub issue', ref: '#190', repo: 'JamieGeddes/factorial', branch: 'factorial/7c3e9a10', status: 'pr-opened', stage: 'OpenPullRequest', pr: '#192', started: NOW0 - 420 * 60e3, ended: NOW0 - 378 * 60e3, attempt: 1, cost: 2.74, review: { verdict: 'request-changes', score: 3.5 }, requester: 'jamie', kind: 'builder', rounds: 1, merged: true },
+  { id: '2b9d4e7c-d39a-11f1-9b01-f64c5e3f8f01', title: 'BILL-4790: Remove the legacy invoice export endpoint', source: 'Jira', ref: 'BILL-4790', repo: 'acme/billing-service', branch: 'factorial/2b9d4e7c', status: 'no-changes', stage: 'Collect', started: NOW0 - 500 * 60e3, ended: NOW0 - 489 * 60e3, attempt: 1, cost: 0.38, requester: 'priya', kind: 'builder', rounds: 1, note: 'Endpoint already removed on main' },
+  { id: '6ad3f0c1-d399-11f1-9b01-f64c5e3f8f01', title: 'Bundle every Lambda dependency, the AWS SDK too', source: 'GitHub issue', ref: '#111', repo: 'JamieGeddes/factorial', branch: 'factorial/6ad3f0c1', status: 'pr-opened', stage: 'OpenPullRequest', pr: '#188', started: NOW0 - 760 * 60e3, ended: NOW0 - 721 * 60e3, attempt: 2, cost: 2.02, review: { verdict: 'approve', score: 4.75 }, requester: 'jamie', kind: 'builder', rounds: 2, merged: true },
+];
+const short = id => id.slice(0, 8);
+
+// Live counters for the running builder
+const live = { b: items[0], r: items[1] };
+
+// ---------- transcript scripts ----------
+const T = {
+  s: (type, c) => Object.assign({ type }, c),
+};
+const builderScript = [
+  T.s('run.started', { harness: 'claude-agent-sdk 0.1.44', models: 'loop claude-sonnet-5-5 (bedrock, global) · explore claude-haiku-5-5', tools: 'Read, Edit, Write, Bash, Grep, Glob, web_search, Agent' }),
+  T.s('text', { text: 'Reading the notes and the request first. The task is the Verify stage from #167: run the verifiers a target declares in `.factorial/verifiers.json` in a session Factorial owns, and retire the dispatched test workflow.' }),
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/notes.md"}' }),
+  T.s('tool.result', { content: '# Task\nVerify stage: run the verifiers a target declares…\n\n# Plan\n(none yet: run the plan subagent first)\n\n# Notes\n', bytes: 1842 }),
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/CLAUDE.md"}' }),
+  T.s('tool.result', { content: '# Factorial\n\nFactorial is a software factory: an agentic AI system that builds and refines software codebases…', bytes: 19366 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 23140, out: 412, cr: 18210, cw: 4420, ms: 4100 }),
+  T.s('subagent.started', { agentType: 'plan', agentId: 'agent_01' }),
+  T.s('tool.call', { tool: 'Glob', input: '{"pattern":"packages/orchestration/src/functions/*.ts"}', agent: 'plan' }),
+  T.s('tool.result', { content: 'collect-review.ts\ncollect.ts\ncontinue-build.ts\ndispatch-tests.ts\nintake.ts\nopen-pr.ts\nprepare-review.ts\nprepare.ts\nreport.ts', bytes: 160, agent: 'plan' }),
+  T.s('tool.call', { tool: 'Grep', input: '{"pattern":"dispatch-tests|TestCallback|waitForTaskToken","path":"templates/30-orchestration.yml","-n":true}', agent: 'plan' }),
+  T.s('tool.result', { content: '1262:      "Test": {\n1263:        "Type": "Task",\n1264:        "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",\n1270:        "TimeoutSeconds": ${TestTimeoutSeconds},\n…', bytes: 2210, agent: 'plan' }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 31020, out: 980, cr: 28800, cw: 1900, ms: 6900, agent: 'plan' }),
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/packages/orchestration/src/functions/dispatch-tests.ts"}', agent: 'plan' }),
+  T.s('tool.result', { content: '/** Dispatches test.yml on the default branch with the work commit and the task token… */', bytes: 4120, agent: 'plan' }),
+  T.s('tool.call', { tool: 'web_search', input: '{"query":"AgentCore Runtime session command API run command as user"}', agent: 'plan' }),
+  T.s('tool.result', { content: '3 results · docs.aws.amazon.com/bedrock-agentcore/… "Execute commands in a Runtime session"…', bytes: 3380, agent: 'plan' }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 48210, out: 3120, cr: 44100, cw: 3900, ms: 21400, agent: 'plan' }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/plan.json","content":"{\\"version\\":1,\\"summary\\":\\"Add a Verify stage that runs declared verifiers…\\",\\"steps\\":[{\\"id\\":\\"contract\\",…}]}"}', agent: 'plan' }),
+  T.s('tool.result', { content: 'Wrote /workspace/plan.json (6 steps). PostToolUse: plan.json is valid against contracts/plan/v1.', bytes: 96, agent: 'plan' }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/plan.md","content":"# Verify stage\\n\\nThe test stage dispatches test.yml and waits…"}', agent: 'plan' }),
+  T.s('tool.result', { content: 'Wrote /workspace/plan.md', bytes: 24, agent: 'plan' }),
+  T.s('subagent.ended', { agentType: 'plan', agentId: 'agent_01', durationMs: 184000, toolCalls: 23, finalContextTokens: 61200 }),
+  T.s('text', { text: 'Plan written and validated: six steps. Starting with step `contract`, the verifier declaration schema under `contracts/verify/v1/`, then the `@factorial/verify` package that validates it.' }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"mkdir -p contracts/verify/v1 packages/verify/src && ls contracts/plan/v1","description":"Create the verify contract folders"}' }),
+  T.s('tool.result', { content: 'examples\nplan.schema.json', bytes: 26 }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/contracts/verify/v1/verifiers.schema.json","content":"{\\n  \\"$schema\\": \\"https://json-schema.org/draft/2020-12/schema\\",\\n  \\"$id\\": \\"https://factorial.dev/contracts/verify/v1/verifiers.schema.json\\",\\n  \\"title\\": \\"Verifiers\\",…"}' }),
+  T.s('tool.result', { content: 'Wrote /workspace/contracts/verify/v1/verifiers.schema.json', bytes: 58 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 64300, out: 2210, cr: 60100, cw: 4100, ms: 15800 }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/packages/verify/src/index.ts","content":"import { readFileSync } from \'node:fs\';\\nimport Ajv from \'ajv/dist/2020.js\';\\n…"}' }),
+  T.s('tool.result', { content: 'Wrote /workspace/packages/verify/src/index.ts', bytes: 46 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"quiet npm test -w packages/verify","description":"Run the verify package tests"}' }),
+  T.s('tool.result', { content: '> @factorial/verify@0.1.0 test\n> node --test --experimental-strip-types src/*.test.ts\n\n✔ accepts a declaration with one verifier (3.1ms)\n✔ rejects a verifier without a command (1.2ms)\n✔ rejects a timeout over the cap (0.9ms)\nℹ tests 3\nℹ pass 3\nℹ fail 0', bytes: 410 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"git add contracts/verify packages/verify && git commit -q -m \\"Add the verifiers contract and its validating package\\" && git log --oneline -1","description":"Commit step contract"}' }),
+  T.s('tool.result', { content: '4f2c91a Add the verifiers contract and its validating package', bytes: 62 }),
+  T.s('text', { text: 'Step `contract` done and committed. Step `stage`: replace the Test state with Verify in the state machine, one `Map` over the declared verifiers, each a Fargate invoker task on the verifier Runtime.' }),
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/templates/30-orchestration.yml","offset":1240,"limit":80}' }),
+  T.s('tool.result', { content: '1240\t            "Test": {\n1241\t              "Type": "Task",\n…', bytes: 4480 }),
+  T.s('model.retry', { attempt: 1, maxRetries: 10, delayMs: 2000, status: 429, error: 'ThrottlingException: Too many requests, please wait before trying again.' }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 78900, out: 4410, cr: 71200, cw: 7600, ms: 38200 }),
+  T.s('tool.call', { tool: 'Edit', input: '{"file_path":"/workspace/templates/30-orchestration.yml","old_string":"            \\"Test\\": {\\n              \\"Type\\": \\"Task\\",","new_string":"            \\"Verify\\": {\\n              \\"Type\\": \\"Map\\",\\n              \\"ItemsPath\\": \\"$.verifiers\\",\\n              \\"MaxConcurrency\\": 3,"}' }),
+  T.s('tool.result', { content: 'The file /workspace/templates/30-orchestration.yml has been updated.', bytes: 64 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"quiet npm run lint:cfn","description":"Lint the templates"}' }),
+  T.s('tool.result', { content: 'E3012 Property Resources/WorkStateMachine/Properties/DefinitionSubstitutions/VerifyTimeoutSeconds should be of type String\ntemplates/30-orchestration.yml:1049:9', bytes: 180, isError: true }),
+  T.s('text', { text: 'cfn-lint rejects the substitution type. The other timeouts are passed through `!Ref` to a `String` parameter; I will declare `VerifyTimeoutSeconds` the same way rather than as a Number.' }),
+  T.s('tool.call', { tool: 'Edit', input: '{"file_path":"/workspace/templates/30-orchestration.yml","old_string":"  VerifyTimeoutSeconds:\\n    Type: Number","new_string":"  VerifyTimeoutSeconds:\\n    Type: String"}' }),
+  T.s('tool.result', { content: 'The file /workspace/templates/30-orchestration.yml has been updated.', bytes: 64 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"quiet npm run lint:cfn","description":"Lint the templates"}' }),
+  T.s('tool.result', { content: '(no output: 4 templates linted, 0 findings)', bytes: 0 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 91400, out: 1890, cr: 88300, cw: 2900, ms: 12100 }),
+  T.s('subagent.started', { agentType: 'explore', agentId: 'agent_02' }),
+  T.s('tool.call', { tool: 'Grep', input: '{"pattern":"AWS_TEST_CALLBACK_ROLE_ARN|TestCallbackRole","output_mode":"files_with_matches"}', agent: 'explore' }),
+  T.s('tool.result', { content: '.github/workflows/test.yml\ntemplates/00-foundation.yml\ndocs/bootstrap.md\ndocs/current-stage.md', bytes: 112, agent: 'explore' }),
+  T.s('model.call', { model: 'claude-haiku-5-5', inp: 12400, out: 620, cr: 9800, cw: 1200, ms: 2200, agent: 'explore' }),
+  T.s('subagent.ended', { agentType: 'explore', agentId: 'agent_02', durationMs: 21000, toolCalls: 6, finalContextTokens: 14100 }),
+  T.s('text', { text: 'Four places reference the callback role. The foundation template is a sensitive path and belongs to a human; I will leave its removal as a follow-up in `plan.json` and note it in `summary.md`, as the plan allows.' }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"git add -A templates packages/orchestration && git commit -q -m \\"Replace the Test state with a Verify map over declared verifiers\\" && git log --oneline -1","description":"Commit step stage"}' }),
+  T.s('tool.result', { content: '8be03d7 Replace the Test state with a Verify map over declared verifiers', bytes: 70 }),
+  T.s('context.compacted', { trigger: 'auto', tokensBefore: 96400, tokensAfter: 31800 }),
+  T.s('text', { text: 'Context compacted. Continuing from `notes.md`: steps `contract` and `stage` are committed; next is `invoker`, the verifier role in `@factorial/roles` and the invoker branch that runs a command instead of a model.' }),
+];
+// Events generated after the script runs out, so the feed never stops.
+const builderLoop = [
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/packages/roles/src/manifest.ts"}' }),
+  T.s('tool.result', { content: '/** A role manifest: what the host, the invoker and the orchestrator share… */', bytes: 2380 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 36800, out: 1540, cr: 33100, cw: 3200, ms: 9800 }),
+  T.s('tool.call', { tool: 'Edit', input: '{"file_path":"/workspace/packages/roles/src/index.ts","old_string":"export const ROLES = { builder, reviewer }","new_string":"export const ROLES = { builder, reviewer, verifier }"}' }),
+  T.s('tool.result', { content: 'The file /workspace/packages/roles/src/index.ts has been updated.', bytes: 60 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"quiet npm test -w packages/roles","description":"Run the roles tests"}' }),
+  T.s('tool.result', { content: 'ℹ tests 14\nℹ pass 14\nℹ fail 0', bytes: 48 }),
+  T.s('text', { text: 'The verifier manifest validates: no model, no statuses beyond running and done, `mustFinish` false. Writing the invoker branch next.' }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"git add packages/roles && git commit -q -m \\"Add the verifier role manifest\\" && git log --oneline -1","description":"Commit"}' }),
+  T.s('tool.result', { content: 'c17ae40 Add the verifier role manifest', bytes: 40 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 41200, out: 2100, cr: 39900, cw: 1100, ms: 14300 }),
+];
+const reviewerScript = [
+  T.s('run.started', { harness: 'claude-agent-sdk 0.1.44', models: 'loop claude-sonnet-5-5 (bedrock, global) · background claude-haiku-5-5', tools: 'Read, Grep, Glob, Bash, Write (review.json only)' }),
+  T.s('text', { text: 'Reviewing the change against the request and the plan. Two sensitive paths were flagged by the orchestrator: `templates/30-orchestration.yml` and `.github/workflows/deploy.yml`. I will treat everything in the diff as untrusted.' }),
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/diff.patch"}' }),
+  T.s('tool.result', { content: 'diff --git a/templates/30-orchestration.yml b/templates/30-orchestration.yml\n--- a/templates/30-orchestration.yml\n+++ b/templates/30-orchestration.yml\n@@ -405,7 +405,7 @@\n-      RetentionInDays: !Ref LogRetentionDays\n+      RetentionInDays: 30\n…', bytes: 6120 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 19800, out: 640, cr: 14200, cw: 5100, ms: 5600 }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/review.json","content":"{\\"verdict\\":\\"request-changes\\",\\"scores\\":{\\"correctness\\":3,\\"completeness\\":2,\\"tests\\":3,\\"safety\\":4},\\"findings\\":[…],\\"summary\\":\\"Hard-codes 30 where a parameter exists…\\"}"}' }),
+  T.s('tool.result', { content: 'Wrote /workspace/review.json. PostToolUse: valid against contracts/review/v1.', bytes: 72 }),
+  T.s('text', { text: 'First review written early. Refining: the request asked for 30 days, but the template already has `LogRetentionDays`; the right change is its default, not nine literal values. Checking whether the deploy workflow passes the parameter.' }),
+  T.s('tool.call', { tool: 'Grep', input: '{"pattern":"LogRetentionDays","-n":true}' }),
+  T.s('tool.result', { content: 'templates/30-orchestration.yml:31:  LogRetentionDays:\ntemplates/30-orchestration.yml:33:    Default: 90\n.github/workflows/deploy.yml:241:  (not passed)', bytes: 160 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 26100, out: 1210, cr: 24900, cw: 900, ms: 8900 }),
+];
+const reviewerLoop = [
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"git log --oneline origin/main..HEAD","description":"List the branch commits"}' }),
+  T.s('tool.result', { content: 'e21b7a9 Lower the orchestrator log retention to 30 days', bytes: 56 }),
+  T.s('text', { text: 'One commit, nine edits, no test. The change-classification check in `scripts/classify-changes.ts` treats templates as functional, so a deploy follows a merge. Second pass over the callers of the parameter.' }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 29400, out: 880, cr: 28700, cw: 600, ms: 6200 }),
+  T.s('tool.call', { tool: 'Read', input: '{"file_path":"/workspace/plan.md"}' }),
+  T.s('tool.result', { content: '# Lower log retention\n\nChange the default of LogRetentionDays…', bytes: 940 }),
+];
+const finishedScript = [
+  T.s('run.started', { harness: 'claude-agent-sdk 0.1.44', models: 'loop claude-sonnet-5-5 (bedrock, global) · explore claude-haiku-5-5', tools: 'Read, Edit, Write, Bash, Grep, Glob, web_search, Agent' }),
+  T.s('text', { text: 'Recording the Runtime version serving `live` in `usage.json`. The invoker already reads the endpoint; the version is `liveVersion` on `GetAgentRuntimeEndpoint`.' }),
+  T.s('subagent.started', { agentType: 'plan', agentId: 'agent_01' }),
+  T.s('tool.call', { tool: 'Grep', input: '{"pattern":"liveVersion|runtimeVersion","path":"packages/invoker/src"}', agent: 'plan' }),
+  T.s('tool.result', { content: 'packages/invoker/src/index.ts:140\npackages/invoker/src/run-record.ts:18', bytes: 80, agent: 'plan' }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 21100, out: 1480, cr: 18800, cw: 2100, ms: 9100, agent: 'plan' }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/plan.json","content":"{\\"version\\":1,\\"steps\\":[{\\"id\\":\\"record\\",…},{\\"id\\":\\"test\\",…},{\\"id\\":\\"docs\\",…}]}"}', agent: 'plan' }),
+  T.s('tool.result', { content: 'Wrote /workspace/plan.json (3 steps). PostToolUse: valid.', bytes: 60, agent: 'plan' }),
+  T.s('subagent.ended', { agentType: 'plan', agentId: 'agent_01', durationMs: 96000, toolCalls: 11, finalContextTokens: 28400 }),
+  T.s('tool.call', { tool: 'Edit', input: '{"file_path":"/workspace/packages/invoker/src/run-record.ts","old_string":"  runtimeVersion?: string;","new_string":"  runtimeVersion?: string;\\n  /** The endpoint the invocation used and the version it served. */\\n  endpointName?: string;"}' }),
+  T.s('tool.result', { content: 'The file /workspace/packages/invoker/src/run-record.ts has been updated.', bytes: 68 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"quiet npm test -w packages/invoker","description":"Run the invoker tests"}' }),
+  T.s('tool.result', { content: 'ℹ tests 88\nℹ pass 88\nℹ fail 0', bytes: 48 }),
+  T.s('tool.call', { tool: 'Bash', input: '{"command":"git add -A packages/invoker docs && git commit -q -m \\"Record the endpoint and version serving live in usage.json\\"","description":"Commit"}' }),
+  T.s('tool.result', { content: '', bytes: 0 }),
+  T.s('model.call', { model: 'claude-sonnet-5-5', inp: 44800, out: 2900, cr: 41200, cw: 3100, ms: 17600 }),
+  T.s('tool.call', { tool: 'Write', input: '{"file_path":"/workspace/summary.md","content":"## Summary\\nRecords the endpoint name and the version it served…\\n\\n## Plan steps\\n- record: done\\n- test: done\\n- docs: done\\n"}' }),
+  T.s('tool.result', { content: 'Wrote /workspace/summary.md', bytes: 26 }),
+  T.s('run.ended', { outcome: 'complete', reason: 'completed', turns: 41, durationMs: 1388000, costUsd: 2.31, deniedToolCalls: 0 }),
+];
+
+const sessions = {
+  'b7e1a4c2': { item: items[0], label: 'b7e1a4c2 · builder · build/1 (live)', script: builderScript, loop: builderLoop, live: true, startedAt: NOW0 - 20 * 60e3 - 50e3, seq0: 1, initial: 44, chunks: 3, limits: { turns: 150, usd: 5, sec: 6600 }, version: 'factorial_builder v47 · claude-agent-sdk 0.1.44', models: 'Sonnet 5.5 loop · Haiku 5.5 explore', plan: [['contract', 'contracts/verify/v1, packages/verify', 'done'], ['stage', 'templates/30-orchestration.yml, state machine', 'done'], ['invoker', 'packages/invoker, packages/roles', 'now'], ['seed', 'lib/seed-providers.ts (verifier session)', 'todo'], ['retire', 'test.yml, dispatch-tests.ts, docs', 'todo'], ['docs', 'CLAUDE.md, docs/current-stage.md', 'todo']],
+    timeline: [['Intake', 2, 0, 'ok'], ['Prepare', 51, 3, 'ok'], ['Build', null, 38, 'live'], ['Collect'], ['Test'], ['PrepareReview'], ['Review'], ['CollectReview'], ['OpenPullRequest']] },
+  '3fa2c9d0': { item: items[1], label: '3fa2c9d0 · reviewer · review/1 (live)', script: reviewerScript, loop: reviewerLoop, live: true, startedAt: NOW0 - 4 * 60e3 - 20e3, seq0: 1, initial: 7, chunks: 1, limits: { turns: 60, usd: 2, sec: 900 }, version: 'factorial_reviewer v31 · claude-agent-sdk 0.1.44', models: 'Sonnet 5.5 loop · Haiku 5.5 background', plan: [['retention', 'templates/30-orchestration.yml', 'done'], ['docs', 'docs/current-stage.md', 'done']],
+    timeline: [['Intake', 1, 0, 'ok'], ['Prepare', 44, 2, 'ok'], ['Build', 1012, 41, 'ok'], ['Collect', 88, 0, 'ok'], ['Test', 141, 212, 'ok'], ['PrepareReview', 58, 4, 'ok'], ['Review', null, 12, 'live'], ['CollectReview'], ['OpenPullRequest']] },
+  'a91c5e20': { item: items[5], label: 'a91c5e20 · builder · build/1 (finished)', script: finishedScript, loop: [], live: false, startedAt: NOW0 - 94 * 60e3, seq0: 1, initial: finishedScript.length, chunks: 4, limits: { turns: 150, usd: 5, sec: 6600 }, version: 'factorial_builder v47 · claude-agent-sdk 0.1.44', models: 'Sonnet 5.5 loop · Haiku 5.5 explore', plan: [['record', 'packages/invoker/src/run-record.ts', 'done'], ['test', 'packages/invoker/src/run-record.test.ts', 'done'], ['docs', 'docs/finding-a-run.md', 'done']],
+    timeline: [['Intake', 2, 0, 'ok'], ['Prepare', 47, 2, 'ok'], ['Build', 1388, 44, 'ok'], ['Collect', 91, 0, 'ok'], ['Test', 158, 190, 'ok'], ['PrepareReview', 60, 5, 'ok'], ['Review', 286, 9, 'ok'], ['CollectReview', 5, 0, 'ok'], ['OpenPullRequest', 8, 0, 'ok']], final: { turns: 41, cost: 2.31, tokensIn: 1_980_000, tokensOut: 36_400, cached: 1_790_000, calls: 52, tools: 47, durationSec: 1388 } },
+};
+
+// ---------- charts (inline SVG) ----------
+function svgEl(tag, attrs = {}) { const el = document.createElementNS('http://www.w3.org/2000/svg', tag); for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v); return el; }
+function niceMax(v) { const p = Math.pow(10, Math.floor(Math.log10(v))); const n = v / p; const m = n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10; return m * p; }
+
+// Stacked columns. series: [{name, color, values[]}], labels[]
+function columnChart(host, { series, labels, height = 170, fmt = fmtK, unit = '' }) {
+  host.innerHTML = '';
+  const W = 520, H = height, padL = 36, padR = 8, padT = 10, padB = 22;
+  const n = labels.length;
+  const totals = labels.map((_, i) => series.reduce((a, s) => a + (s.values[i] || 0), 0));
+  const max = niceMax(Math.max(...totals) * 1.05 || 1);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Column chart' });
+  const g = svgEl('g', { class: 'grid' });
+  const ticks = [4, 5, 2].find(t => Number.isInteger(max / t) || max / t >= 1000) || 4;
+  for (let t = 0; t <= ticks; t++) { const y = padT + (H - padT - padB) * (1 - t / ticks); g.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: y, y2: y })); const tx = svgEl('text', { x: padL - 6, y: y + 4, 'text-anchor': 'end' }); tx.textContent = fmt(max * t / ticks); g.appendChild(tx); }
+  svg.appendChild(g);
+  const slot = (W - padL - padR) / n, bw = Math.min(24, slot * 0.6);
+  labels.forEach((lab, i) => {
+    let y0 = H - padB; const x = padL + slot * i + (slot - bw) / 2;
+    series.forEach((s, si) => {
+      const v = s.values[i] || 0; if (!v) return;
+      const h = (H - padT - padB) * v / max; const top = y0 - h;
+      const last = si === series.length - 1 || series.slice(si + 1).every(ss => !(ss.values[i]));
+      const r = svgEl('path', { d: last ? roundTop(x, top, bw, Math.max(h - (si ? 2 : 0), 0), 4) : `M${x},${top}h${bw}v${Math.max(h - 2, 0)}h${-bw}z`, fill: s.color });
+      svg.appendChild(r); y0 = top;
+    });
+    const hit = svgEl('rect', { x: padL + slot * i, y: padT, width: slot, height: H - padT - padB, class: 'hit' });
+    hit.addEventListener('mouseenter', e => showTip(e, `<b>${esc(lab)}</b>` + series.map(s => `<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:6px"></span>${esc(s.name)}: <span class="num">${fmt(s.values[i] || 0)}${unit}</span></div>`).join('') + (series.length > 1 ? `<div style="margin-top:3px;color:var(--ink-2)">Total <span class="num">${fmt(totals[i])}${unit}</span></div>` : '')));
+    hit.addEventListener('mouseleave', hideTip);
+    svg.appendChild(hit);
+    if (n <= 16 || i % 2 === 0) { const tx = svgEl('text', { x: padL + slot * i + slot / 2, y: H - 6, 'text-anchor': 'middle' }); tx.textContent = lab; svg.appendChild(tx); }
+  });
+  svg.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: H - padB, y2: H - padB, class: 'axis' }));
+  host.appendChild(svg);
+  if (series.length > 1) { const lg = document.createElement('div'); lg.className = 'legend'; lg.innerHTML = series.map(s => `<span style="--c:${s.color}">${esc(s.name)}</span>`).join(''); host.appendChild(lg); }
+}
+function roundTop(x, y, w, h, r) { r = Math.min(r, h / 2, w / 2); return `M${x},${y + h}v${-(h - r)}a${r},${r} 0 0 1 ${r},${-r}h${w - 2 * r}a${r},${r} 0 0 1 ${r},${r}v${h - r}z`; }
+
+// Horizontal bars with optional p90 marker
+function hbarChart(host, { rows, fmt = fmtDur, color = 'var(--s1)', height }) {
+  host.innerHTML = '';
+  const W = 520, rowH = 22, padL = 104, padR = 54, padT = 4; const H = height || padT + rows.length * rowH + 6;
+  const max = niceMax(Math.max(...rows.map(r => r.p90 ?? r.v)) * 1.05);
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Bar chart' });
+  rows.forEach((r, i) => {
+    const y = padT + i * rowH, w = (W - padL - padR) * r.v / max;
+    const lab = svgEl('text', { x: padL - 8, y: y + 14, 'text-anchor': 'end' }); lab.textContent = r.name; svg.appendChild(lab);
+    svg.appendChild(svgEl('path', { d: `M${padL},${y + 3}h${Math.max(w - 4, 0)}a4,4 0 0 1 4,4v8a4,4 0 0 1 -4,4h${-Math.max(w - 4, 0)}z`, fill: r.color || color }));
+    if (r.p90 != null) { const px = padL + (W - padL - padR) * r.p90 / max; svg.appendChild(svgEl('rect', { x: px - 1, y: y + 1, width: 2, height: 18, fill: 'var(--ink-2)' })); }
+    const val = svgEl('text', { x: padL + w + 8, y: y + 14, fill: 'var(--ink-2)' }); val.textContent = fmt(r.v); svg.appendChild(val);
+    const hit = svgEl('rect', { x: 0, y, width: W, height: rowH, class: 'hit' });
+    hit.addEventListener('mouseenter', e => showTip(e, `<b>${esc(r.name)}</b>${r.p90 != null ? `p50 <span class="num">${fmt(r.v)}</span> · p90 <span class="num">${fmt(r.p90)}</span>` : `<span class="num">${fmt(r.v)}</span>`}${r.note ? `<div style="color:var(--ink-2)">${esc(r.note)}</div>` : ''}`));
+    hit.addEventListener('mouseleave', hideTip); svg.appendChild(hit);
+  });
+  host.appendChild(svg);
+}
+
+// Multi-line chart
+function lineChart(host, { series, labels, height = 170, fmt = v => v.toFixed(1), min = 0, max }) {
+  host.innerHTML = '';
+  const W = 520, H = height, padL = 32, padR = 70, padT = 10, padB = 22;
+  const all = series.flatMap(s => s.values); const mx = max ?? niceMax(Math.max(...all) * 1.05); const mn = min;
+  const svg = svgEl('svg', { viewBox: `0 0 ${W} ${H}`, class: 'chart', role: 'img', 'aria-label': 'Line chart' });
+  const g = svgEl('g', { class: 'grid' }); const ticks = 4;
+  for (let t = 0; t <= ticks; t++) { const y = padT + (H - padT - padB) * (1 - t / ticks); g.appendChild(svgEl('line', { x1: padL, x2: W - padR, y1: y, y2: y })); const tx = svgEl('text', { x: padL - 6, y: y + 4, 'text-anchor': 'end' }); tx.textContent = fmt(mn + (mx - mn) * t / ticks); g.appendChild(tx); }
+  svg.appendChild(g);
+  const n = labels.length; const xs = i => padL + (W - padL - padR) * i / (n - 1); const ys = v => padT + (H - padT - padB) * (1 - (v - mn) / (mx - mn));
+  series.forEach(s => {
+    svg.appendChild(svgEl('path', { d: s.values.map((v, i) => `${i ? 'L' : 'M'}${xs(i)},${ys(v)}`).join(''), fill: 'none', stroke: s.color, 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    const last = s.values.length - 1;
+    svg.appendChild(svgEl('circle', { cx: xs(last), cy: ys(s.values[last]), r: 4, fill: s.color, stroke: 'var(--surface)', 'stroke-width': 2 }));
+    const t = svgEl('text', { x: xs(last) + 9, y: ys(s.values[last]) + 4, fill: 'var(--ink-2)' }); t.textContent = `${s.name} ${fmt(s.values[last])}`; svg.appendChild(t);
+  });
+  labels.forEach((lab, i) => { if (n > 10 && i % 2) return; const tx = svgEl('text', { x: xs(i), y: H - 6, 'text-anchor': 'middle' }); tx.textContent = lab; svg.appendChild(tx); });
+  labels.forEach((lab, i) => { const hit = svgEl('rect', { x: xs(i) - (W - padL - padR) / (n - 1) / 2, y: padT, width: (W - padL - padR) / (n - 1), height: H - padT - padB, class: 'hit' }); hit.addEventListener('mouseenter', e => showTip(e, `<b>${esc(lab)}</b>` + series.map(s => `<div><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:6px"></span>${esc(s.name)}: <span class="num">${fmt(s.values[i])}</span></div>`).join(''))); hit.addEventListener('mouseleave', hideTip); svg.appendChild(hit); });
+  host.appendChild(svg);
+  if (series.length > 1) { const lg = document.createElement('div'); lg.className = 'legend'; lg.innerHTML = series.map(s => `<span style="--c:${s.color}">${esc(s.name)}</span>`).join(''); host.appendChild(lg); }
+}
+function sparkline(values, color = 'var(--ink-3)', accent = 'var(--accent)') {
+  const W = 72, H = 28, mx = Math.max(...values) || 1, mn = Math.min(...values);
+  const xs = i => 2 + (W - 4) * i / (values.length - 1), ys = v => 2 + (H - 4) * (1 - (v - mn) / ((mx - mn) || 1));
+  const d = values.map((v, i) => `${i ? 'L' : 'M'}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join('');
+  const last = values.length - 1;
+  return `<svg viewBox="0 0 ${W} ${H}" aria-hidden="true"><path d="${d}V${H}H2z" fill="${accent}" opacity=".12"/><path d="${d}" fill="none" stroke="${color}" stroke-width="1.5"/><circle cx="${xs(last)}" cy="${ys(values[last])}" r="2.5" fill="${accent}"/></svg>`;
+}
+
+// ---------- overview ----------
+const days14 = Array.from({ length: 14 }, (_, i) => { const d = new Date(NOW0 - (13 - i) * 864e5); return `${d.getDate()}/${d.getMonth() + 1}`; });
+const prOpened = [3, 2, 4, 1, 0, 0, 5, 4, 3, 6, 2, 0, 4, 5];
+const prUpdated = [1, 0, 1, 0, 0, 0, 2, 1, 1, 2, 1, 0, 1, 2];
+const noPr = [1, 1, 0, 1, 0, 0, 1, 2, 0, 1, 1, 0, 2, 1];
+const spend = [8.1, 5.9, 11.2, 4.4, 0.6, 0.3, 14.8, 13.1, 9.7, 17.6, 7.9, 0.4, 12.3, 15.2];
+
+function renderTiles() {
+  const running = items.filter(i => i.status === 'running' || i.status === 'waiting').length;
+  const todayDone = items.filter(i => i.ended && i.ended > NOW0 - 864e5).length;
+  const spendToday = (spend[13] + (live.b.cost + live.r.cost) * 0.1).toFixed(2);
+  const tokensToday = live.b.tokensIn + live.r.tokensIn + 9_640_000;
+  $('#tiles').innerHTML = [
+    ['In flight', `${running}`, 'across 2 repositories', [2, 3, 1, 4, 3, 5, 4, 4]],
+    ['Finished today', `${todayDone + 4}`, '<span class="up">+2</span> vs yesterday', [3, 4, 2, 6, 5, 7, 6, 8]],
+    ['Pull requests opened', '5', '3 merged, 1 awaiting review', [2, 4, 1, 5, 4, 3, 4, 5]],
+    ['Model spend today', `$${spendToday}`, '<span class="down">+18%</span> vs 7-day mean · budget $40', [8, 6, 11, 4, 15, 13, 10, 15]],
+    ['Tokens today', fmtK(tokensToday), 'cache hit 91%', [6, 7, 5, 9, 8, 11, 9, 12]],
+    ['Median issue to PR', '38m', '<span class="up">−6m</span> vs last week', [52, 48, 44, 47, 41, 39, 40, 38]],
+  ].map(([l, v, d, s]) => `<div class="tile"><span class="label">${l}</span><span class="value num">${v}</span>${sparkline(s)}<span class="delta">${d}</span></div>`).join('');
+}
+
+function renderStageMap() {
+  const host = $('#stagemap'); host.innerHTML = '';
+  STAGES.forEach(st => {
+    const here = items.filter(i => (i.status === 'running' || i.status === 'waiting') && i.stage === st);
+    const div = document.createElement('div'); div.className = 'stage' + (here.length ? ' busy' : '');
+    div.innerHTML = `<div class="node"></div><div class="name">${st === 'OpenPullRequest' ? 'Open PR' : st === 'PrepareReview' ? 'Prepare review' : st === 'CollectReview' ? 'Collect review' : st}</div><div class="meta num">p50 ${fmtDur(STAGE_P50[st])}</div><div class="pucks">${here.map(i => `<button class="puck ${i.status === 'waiting' ? 'waiting' : ''} ${i.role === 'reviewer' ? 'reviewer' : ''} ${i.kind === 'rework' && i.status !== 'waiting' ? 'rework' : ''}" data-open="${short(i.id)}" title="${esc(i.title)}"><span class="id">${short(i.id)}</span><span class="t num" data-elapsed="${i.started}">${fmtDur(since(i.started))}</span></button>`).join('')}</div>`;
+    host.appendChild(div);
+  });
+}
+
+function renderAlerts() {
+  $('#alerts').innerHTML = [
+    ['warn', 'Test stage waiting 6m 40s on GitHub Actions for 9c04e7b8: runner queue', '19:31'],
+    ['info', 'Intake refused e4a17d3c (busy): thread factorial/d9f622d0 is held by 9c04e7b8', '19:24'],
+    ['ok', 'Bedrock throttling cleared: 1 retry in the last 15 minutes, none in the last 5', '19:19'],
+    ['info', 'Deploy of cbb8a4d promoted factorial_builder v47 and factorial_reviewer v31', '18:02'],
+  ].map(([k, t, w]) => `<div class="alert ${k}"><i></i><div class="body">${t}</div><span class="when">${w}</span></div>`).join('');
+}
+
+function renderSessions() {
+  const rows = [live.b, live.r].map(i => {
+    const s = sessions[short(i.id)]; const el = since(s.startedAt);
+    const tPct = i.turns / s.limits.turns * 100, cPct = i.cost / s.limits.usd * 100, ePct = el / s.limits.sec * 100;
+    const cls = p => p > 85 ? ' crit' : p > 65 ? ' warn' : '';
+    return `<tr class="row-link" data-open="${short(i.id)}"><td><span class="mono">${short(i.id)}</span><span class="sub">${esc(i.ref)} · ${esc(i.title.slice(0, 44))}${i.title.length > 44 ? '…' : ''}</span></td><td><span class="pill role">${i.role}${i.round > 1 ? ' r' + i.round : ''}</span></td><td><div class="num" data-elapsed="${s.startedAt}">${fmtDur(el)}</div><div class="meter${cls(ePct)}" style="width:80px;margin-top:4px"><i style="width:${Math.min(ePct, 100)}%"></i></div></td><td><div class="num">${i.turns} / ${s.limits.turns}</div><div class="meter${cls(tPct)}" style="width:80px;margin-top:4px"><i style="width:${tPct}%"></i></div></td><td><div class="num">${fmtUsd(i.cost)} / $${s.limits.usd}</div><div class="meter${cls(cPct)}" style="width:80px;margin-top:4px"><i style="width:${cPct}%"></i></div></td><td class="num">${fmtK(i.tokensIn)} in<span class="sub">${fmtK(i.tokensOut)} out · ${Math.round(i.cached / i.tokensIn * 100)}% cached</span></td><td><span class="mono" style="color:var(--ink-2)" data-last="${short(i.id)}">${esc(s.lastEvent || '')}</span></td></tr>`;
+  });
+  rows.push(`<tr class="row-link" data-open="9c04e7b8"><td><span class="mono">9c04e7b8</span><span class="sub">PR #189 · rework after failed checks</span></td><td><span class="pill waiting">Test</span></td><td class="num" data-elapsed="${items[2].started}">${fmtDur(since(items[2].started))}</td><td colspan="3" style="color:var(--ink-3)">No agent in session. Waiting on GitHub Actions run 19204411.</td><td></td></tr>`);
+  $('#sessions tbody').innerHTML = rows.join('');
+}
+
+function renderRecent() {
+  $('#recent tbody').innerHTML = items.filter(i => i.ended).slice(0, 6).map(i => `<tr class="row-link" data-open="${short(i.id)}"><td><span class="mono">${short(i.id)}</span><span class="sub">${esc(i.ref)} · ${esc(i.title.slice(0, 40))}${i.title.length > 40 ? '…' : ''}</span></td><td>${statusPill(i)}</td><td class="right num" style="color:var(--ink-2)">${fmtDur((i.ended - i.started) / 1000)}</td></tr>`).join('');
+}
+
+function statusPill(i) {
+  const map = { running: ['running', i.stage === 'Build' ? 'building' : i.stage === 'Review' ? 'reviewing' : i.stage.toLowerCase()], waiting: ['waiting', 'testing'], 'pr-opened': ['done', i.merged ? 'merged' : 'pr-opened'], 'pr-updated': ['done', 'pr-updated'], incomplete: ['failed', 'incomplete'], 'tests-failed': ['failed', 'tests-failed'], 'no-changes': ['refused', 'no-changes'], refused: ['refused', 'refused: ' + i.refusedReason] };
+  const [c, t] = map[i.status] || ['', i.status];
+  return `<span class="pill ${c}">${t}</span>`;
+}
+
+function renderOverviewCharts() {
+  columnChart($('#chart-throughput'), { labels: days14, series: [{ name: 'PR opened', color: 'var(--s1)', values: prOpened }, { name: 'PR updated (rework)', color: 'var(--s3)', values: prUpdated }, { name: 'No PR', color: 'var(--s2)', values: noPr }], fmt: v => String(Math.round(v)), height: 160 });
+  hbarChart($('#chart-stages'), { rows: STAGES.map(s => ({ name: s === 'OpenPullRequest' ? 'Open PR' : s === 'PrepareReview' ? 'Prepare review' : s === 'CollectReview' ? 'Collect review' : s, v: STAGE_P50[s], p90: STAGE_P90[s], note: s === 'Test' ? 'Mostly GitHub Actions queue time' : s === 'Build' ? 'One session; rounds add 20 to 40 min each' : undefined })) });
+  columnChart($('#chart-spend'), { labels: days14, series: [{ name: 'Spend', color: 'var(--s1)', values: spend }], fmt: v => '$' + Math.round(v), height: 160 });
+}
+
+// ---------- work items ----------
+let wiFilter = 'all';
+function renderWorkItems() {
+  const q = ($('#wi-search').value || '').toLowerCase(); const src = $('#wi-source').value;
+  const order = { running: 0, waiting: 0, refused: 1 };
+  const rows = items.filter(i => {
+    if (src && i.source !== src) return false;
+    if (q && !(i.id + i.title + i.branch + (i.pr || '') + i.ref).toLowerCase().includes(q)) return false;
+    if (wiFilter === 'running') return i.status === 'running';
+    if (wiFilter === 'waiting') return i.status === 'waiting';
+    if (wiFilter === 'done') return ['pr-opened', 'pr-updated', 'no-changes'].includes(i.status);
+    if (wiFilter === 'failed') return ['incomplete', 'tests-failed'].includes(i.status);
+    if (wiFilter === 'refused') return i.status === 'refused';
+    return true;
+  }).sort((a, b) => (order[a.status] ?? 2) - (order[b.status] ?? 2) || b.started - a.started);
+  $('#wi-table tbody').innerHTML = rows.length ? rows.map(i => {
+    const dur = i.ended ? (i.ended - i.started) / 1000 : i.status === 'refused' ? 0 : since(i.started);
+    const openable = sessions[short(i.id)] ? ` class="row-link" data-open="${short(i.id)}"` : '';
+    return `<tr${openable}><td><span class="mono">${short(i.id)}</span><span class="sub">${esc(i.title.slice(0, 60))}${i.title.length > 60 ? '…' : ''}</span></td><td>${esc(i.source)}<span class="sub">${esc(i.ref)} · by ${esc(i.requester)}</span></td><td>${esc(i.repo)}<span class="sub mono">${esc(i.branch)}${i.pr ? ' → PR ' + esc(i.pr) : ''}</span></td><td>${statusPill(i)}${i.note ? `<span class="sub">${esc(i.note)}</span>` : i.wait ? `<span class="sub">${esc(i.wait)}</span>` : i.refusedReason ? `<span class="sub">Thread held by 9c04e7b8</span>` : ''}</td><td>${i.status === 'refused' ? '<span style="color:var(--ink-3)">Intake</span>' : esc(i.stage)}${i.rounds > 1 ? `<span class="sub">${i.rounds} build rounds</span>` : ''}</td><td class="num">${i.attempt}</td><td class="right num"${i.ended ? '' : ` data-elapsed="${i.started}"`}>${i.status === 'refused' ? '' : fmtDur(dur)}</td><td class="right num">${i.cost ? fmtUsd(i.cost) : ''}</td><td>${i.review ? `<span class="pill ${i.review.verdict === 'approve' ? 'done' : 'waiting'}">${i.review.verdict}</span> <span class="num" style="color:var(--ink-2)">${i.review.score.toFixed(2)}</span>` : ''}</td></tr>`;
+  }).join('') : '<tr><td colspan="9" class="empty">No work items match. Clear a filter to see more.</td></tr>';
+  $('#nav-count').textContent = items.filter(i => i.status === 'running' || i.status === 'waiting').length;
+}
+$$('.filters .chip[data-f]').forEach(b => b.addEventListener('click', () => { $$('.filters .chip[data-f]').forEach(x => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); wiFilter = b.dataset.f; renderWorkItems(); }));
+$('#wi-search').addEventListener('input', renderWorkItems);
+$('#wi-source').addEventListener('change', renderWorkItems);
+
+// ---------- run view and transcript ----------
+let current = 'b7e1a4c2';
+let trFilter = 'all', follow = true, paused = false;
+const feeds = {};
+function feedFor(key) {
+  if (feeds[key]) return feeds[key];
+  const s = sessions[key]; const events = []; let seq = 0; let t = s.startedAt;
+  const push = ev => { seq += 1; t += 1500 + Math.random() * 9000; events.push(Object.assign({ seq, at: new Date(Math.min(t, Date.now())) }, ev)); };
+  s.script.slice(0, s.initial).forEach(push);
+  feeds[key] = { events, seq, nextIdx: s.initial, loopIdx: 0, t };
+  return feeds[key];
+}
+function nextEvent(key) {
+  const s = sessions[key], f = feedFor(key);
+  let ev;
+  if (f.nextIdx < s.script.length) ev = s.script[f.nextIdx++];
+  else if (s.loop.length) { ev = s.loop[f.loopIdx % s.loop.length]; f.loopIdx++; }
+  else return null;
+  f.seq += 1; const e = Object.assign({ seq: f.seq, at: new Date() }, ev); f.events.push(e);
+  // tick the counters
+  const it = s.item;
+  if (ev.type === 'model.call') { it.tokensIn += ev.inp; it.tokensOut += ev.out; it.cached += ev.cr; it.calls += 1; it.turns += 1; it.cost += (ev.inp - ev.cr) * 3e-6 + ev.cr * 3e-7 + ev.out * 15e-6; }
+  if (ev.type === 'tool.call') it.tools += 1;
+  s.lastEvent = describeShort(ev);
+  return e;
+}
+function describeShort(ev) {
+  switch (ev.type) {
+    case 'tool.call': return `${ev.tool} ${(JSON.parse(ev.input).file_path || JSON.parse(ev.input).command || JSON.parse(ev.input).pattern || JSON.parse(ev.input).query || '').toString().slice(0, 28)}`;
+    case 'tool.result': return ev.isError ? 'tool result (error)' : 'tool result';
+    case 'text': return 'assistant text';
+    case 'model.call': return `model call ${fmtK(ev.inp)} in`;
+    case 'subagent.started': return `subagent ${ev.agentType} started`;
+    case 'subagent.ended': return `subagent ${ev.agentType} ended`;
+    case 'context.compacted': return 'context compacted';
+    case 'model.retry': return 'model call retried';
+    default: return ev.type;
+  }
+}
+function kindOf(ev) { return { 'run.started': 'sys', 'run.ended': 'sys', text: 'text', reasoning: 'reasoning', 'tool.call': 'tool', 'tool.result': 'result', 'model.call': 'model', 'model.retry': 'warn', 'subagent.started': 'sub', 'subagent.ended': 'sub', 'context.compacted': 'warn' }[ev.type] || 'sys'; }
+function passes(ev) {
+  if (trFilter === 'all') return true;
+  if (trFilter === 'text') return ev.type === 'text' || ev.type === 'reasoning';
+  if (trFilter === 'tool') return ev.type === 'tool.call' || ev.type === 'tool.result';
+  if (trFilter === 'model') return ev.type === 'model.call' || ev.type === 'model.retry' || ev.type === 'context.compacted';
+  if (trFilter === 'sub') return ev.type.startsWith('subagent') || !!ev.agent;
+  return true;
+}
+function fmtInput(input) { try { const o = JSON.parse(input); return Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'string' ? v : JSON.stringify(v)}`).join('\n'); } catch { return input; } }
+function renderEvent(ev) {
+  const k = kindOf(ev); const agent = ev.agent ? ` agent-${ev.agent}` : '';
+  let body = '';
+  switch (ev.type) {
+    case 'run.started': body = `<span class="kind">run started</span>${esc(ev.harness)} · ${esc(ev.models)}<br><span style="color:var(--ink-3)">tools: ${esc(ev.tools)}</span>`; break;
+    case 'run.ended': body = `<span class="kind">run ended</span>outcome <b style="color:var(--ink)">${ev.outcome}</b> (${ev.reason}) · ${ev.turns} turns · ${fmtDur(ev.durationMs / 1000)} · ${fmtUsd(ev.costUsd)} · ${ev.deniedToolCalls} denied tool calls`; break;
+    case 'text': body = `<span class="kind">${ev.agent ? ev.agent + ' · ' : ''}text</span>${esc(ev.text)}`; break;
+    case 'reasoning': body = `<span class="kind">reasoning</span>${esc(ev.text)}`; break;
+    case 'tool.call': { const inp = fmtInput(ev.input); const first = inp.split('\n')[0]; body = `<span class="kind">${ev.agent ? ev.agent + ' · ' : ''}${esc(ev.tool)}</span><details><summary>${esc(first.slice(0, 110))}${first.length > 110 || inp.includes('\n') ? '<span class="more">input</span>' : ''}</summary><pre>${esc(inp)}</pre></details>`; break; }
+    case 'tool.result': { const first = (ev.content || '(empty)').split('\n')[0]; const more = ev.content.includes('\n') || ev.content.length > 110; body = `<span class="kind">${ev.isError ? 'error' : 'result'}</span><details><summary>${esc(first.slice(0, 110))}${more ? `<span class="more">${fmtK(ev.bytes)} B</span>` : ''}</summary><pre>${esc(ev.content)}</pre></details>`; break; }
+    case 'model.call': body = `<span class="kind">${ev.agent ? ev.agent + ' · ' : ''}model call</span><span class="usage"><span>${esc(ev.model)}</span><span><b>in</b> ${fmtK(ev.inp)}</span><span><b>cache read</b> ${fmtK(ev.cr)}</span><span><b>cache write</b> ${fmtK(ev.cw)}</span><span><b>out</b> ${fmtK(ev.out)}</span><span><b>latency</b> ${(ev.ms / 1000).toFixed(1)}s</span></span>`; break;
+    case 'model.retry': body = `<span class="kind">retry ${ev.attempt}/${ev.maxRetries}</span>HTTP ${ev.status} · wait ${ev.delayMs} ms · ${esc(ev.error)}`; break;
+    case 'subagent.started': body = `<span class="kind">subagent started</span>${ev.agentType} (${ev.agentId}): events below marked <span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--s7)"></span> belong to it`; break;
+    case 'subagent.ended': body = `<span class="kind">subagent ended</span>${ev.agentType} (${ev.agentId}) · ${fmtDur(ev.durationMs / 1000)} · ${ev.toolCalls} tool calls · final context ${fmtK(ev.finalContextTokens)}`; break;
+    case 'context.compacted': body = `<span class="kind">compacted</span>${ev.trigger} · ${fmtK(ev.tokensBefore)} → ${fmtK(ev.tokensAfter)} tokens`; break;
+  }
+  const el = document.createElement('div'); el.className = `ev ${k}${ev.isError ? ' err' : ''}${agent}`; el.dataset.seq = ev.seq;
+  el.innerHTML = `<span class="seq num">${ev.seq}</span><span class="at">${fmtTime(ev.at)}</span><div class="c">${body}</div>`;
+  return el;
+}
+function renderTranscript() {
+  const s = sessions[current], f = feedFor(current), body = $('#tr-body');
+  body.innerHTML = '';
+  if (s.chunks) { const n = document.createElement('div'); n.className = 'chunk-note'; n.textContent = `Caught up from ${s.chunks} stored chunk${s.chunks > 1 ? 's' : ''} (${s.stage || 'build'}/live/0001 to ${pad(s.chunks).padStart(4, '0')}), then the channel. Events are deduplicated by sequence number.`; body.appendChild(n); }
+  const q = ($('#tr-search').value || '').toLowerCase();
+  f.events.forEach(ev => { if (!passes(ev)) return; const el = renderEvent(ev); if (q && !el.textContent.toLowerCase().includes(q)) return; body.appendChild(el); });
+  $('#tr-count').textContent = `${f.seq} events`;
+  $('#tr-chunks').textContent = `catch-up: ${s.chunks} chunks`;
+  $('#tr-conn').textContent = s.live ? `/factorial/runs/${short(s.item.id)}/${s.item.role === 'reviewer' ? 'review' : 'build'}/${s.item.round} connected` : `replaying ${s.item.role === 'reviewer' ? 'review' : 'build'}/transcript.jsonl (run ended)`;
+  if (follow) body.scrollTop = body.scrollHeight;
+}
+function appendEvent(ev) {
+  const body = $('#tr-body'); const f = feedFor(current);
+  $('#tr-count').textContent = `${f.seq} events`;
+  if (!passes(ev)) return;
+  const q = ($('#tr-search').value || '').toLowerCase();
+  const el = renderEvent(ev); if (q && !el.textContent.toLowerCase().includes(q)) return;
+  el.classList.add('new'); body.appendChild(el);
+  if (follow) body.scrollTop = body.scrollHeight;
+}
+function renderRunSide() {
+  const s = sessions[current], i = s.item;
+  $('#run-title').textContent = `${i.ref} · ${i.title}`;
+  const st = $('#run-status'); st.className = 'pill ' + (s.live ? 'running' : 'done'); st.textContent = s.live ? (i.role === 'reviewer' ? 'reviewing' : 'building') : (i.merged ? 'merged' : i.status);
+  $('#run-ids').innerHTML = `<span class="tag">${i.id}</span><span class="tag">attempt ${i.attempt}</span><span class="tag">${esc(i.branch)}</span><span class="tag">session ${short(i.id)}${i.round > 1 ? '-r' + i.round : ''}</span><span class="tag">${esc(i.repo)}</span><a href="#" onclick="return false">Step Functions execution</a><a href="#" onclick="return false">Artefacts ${short(i.id)}/${i.attempt}/</a>${i.pr ? `<a href="#" onclick="return false">PR ${i.pr}</a>` : ''}`;
+  // timeline
+  const maxT = 1600;
+  $('#run-timeline').innerHTML = s.timeline.map(([name, work, wait, state]) => {
+    const liveWork = state === 'live' ? since(s.startedAt) : work;
+    if (!state) return `<div class="tl-row"><span class="n">${name === 'OpenPullRequest' ? 'Open PR' : name === 'PrepareReview' ? 'Prepare review' : name === 'CollectReview' ? 'Collect review' : name}</span><div class="tl-bar"><i class="todo" style="width:100%"></i></div><span class="v"></span></div>`;
+    const wp = Math.max(1.5, (wait || 0) / maxT * 100), kp = Math.max(1.5, (liveWork || 0) / maxT * 100);
+    return `<div class="tl-row"><span class="n">${name === 'OpenPullRequest' ? 'Open PR' : name === 'PrepareReview' ? 'Prepare review' : name === 'CollectReview' ? 'Collect review' : name}</span><div class="tl-bar">${wait ? `<i class="wait" style="width:${wp}%"></i>` : ''}<i class="work ${state === 'live' ? 'live' : 'done-ok'}" style="width:${kp}%"></i></div><span class="v"${state === 'live' ? ` data-elapsed="${s.startedAt}"` : ''}>${fmtDur((liveWork || 0) + (wait || 0))}</span></div>`;
+  }).join('');
+  $('#run-version').textContent = s.version;
+  $('#run-models').textContent = s.models;
+  const plan = $('#run-plan'); plan.innerHTML = s.plan.map(([id, files, state]) => `<div class="plan-step ${state}"><span class="st"></span><div><div>${id}</div><div class="f">${esc(files)}</div></div><span style="color:var(--ink-3);font-size:11px">${state === 'done' ? 'done' : state === 'now' ? 'in progress' : ''}</span></div>`).join('');
+  $('#run-plan-sub').textContent = `${s.plan.filter(p => p[2] === 'done').length} of ${s.plan.length} steps done`;
+  updateRunCounters();
+}
+function updateRunCounters() {
+  const s = sessions[current], i = s.item; const f = s.final;
+  const turns = f ? f.turns : i.turns, cost = f ? f.cost : i.cost, el = f ? f.durationSec : since(s.startedAt);
+  const row = (name, v, max, label) => { const p = v / max * 100; return `<div class="meter-row"><span>${name}</span><div class="meter${p > 85 ? ' crit' : p > 65 ? ' warn' : ''}"><i style="width:${Math.min(p, 100)}%"></i></div><span class="v">${label}</span></div>`; };
+  $('#run-limits').innerHTML = row('Turns', turns, s.limits.turns, `${turns} / ${s.limits.turns}`) + row('Budget', cost, s.limits.usd, `${fmtUsd(cost)} / $${s.limits.usd.toFixed(2)}`) + row('Time', el, s.limits.sec, `${fmtDur(el)} / ${fmtDur(s.limits.sec)}`);
+  const tin = f ? f.tokensIn : i.tokensIn, tout = f ? f.tokensOut : i.tokensOut, cached = f ? f.cached : i.cached, calls = f ? f.calls : i.calls, tools = f ? f.tools : i.tools;
+  $('#run-usage').innerHTML = [['Input tokens', fmtK(tin)], ['Output tokens', fmtK(tout)], ['Cache reads', `${fmtK(cached)} (${Math.round(cached / (tin || 1) * 100)}%)`], ['Uncached input', fmtK(tin - cached)], ['Model calls', calls], ['Tool calls', tools], ['Cost estimate', fmtUsd(cost)], ['Peak context', f ? '96.4K' : fmtK(Math.min(96400, 20000 + i.turns * 1200))]].map(([k, v]) => `<div><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+function openRun(key) { if (!sessions[key]) return; current = key; $('#run-select').value = key; location.hash = '#run'; renderRunSide(); renderTranscript(); }
+$('#run-select').innerHTML = Object.entries(sessions).map(([k, s]) => `<option value="${k}">${esc(s.label)}</option>`).join('');
+$('#run-select').addEventListener('change', e => openRun(e.target.value));
+$$('.tr-bar .chip[data-tf]').forEach(b => b.addEventListener('click', () => { $$('.tr-bar .chip[data-tf]').forEach(x => x.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); trFilter = b.dataset.tf; renderTranscript(); }));
+$('#tr-search').addEventListener('input', renderTranscript);
+$('#tr-follow').addEventListener('click', e => { follow = !follow; e.currentTarget.setAttribute('aria-pressed', String(follow)); if (follow) $('#tr-body').scrollTop = $('#tr-body').scrollHeight; });
+$('#tr-pause').addEventListener('click', e => { paused = !paused; e.currentTarget.setAttribute('aria-pressed', String(paused)); e.currentTarget.textContent = paused ? 'Resume' : 'Pause'; });
+$('#tr-jump').addEventListener('click', () => { follow = true; $('#tr-follow').setAttribute('aria-pressed', 'true'); $('#tr-body').scrollTop = $('#tr-body').scrollHeight; });
+$('#tr-body').addEventListener('scroll', e => { const b = e.currentTarget; const atEnd = b.scrollHeight - b.scrollTop - b.clientHeight < 24; if (!atEnd && follow) { follow = false; $('#tr-follow').setAttribute('aria-pressed', 'false'); } });
+document.addEventListener('click', e => { const t = e.target.closest('[data-open]'); if (t) openRun(t.dataset.open); });
+
+// ---------- metrics ----------
+function renderMetrics() {
+  $('#m-tiles').innerHTML = [
+    ['Cost per pull request', '$2.41', 'median, 30 days', [3.1, 2.9, 2.6, 2.8, 2.5, 2.4, 2.4, 2.4]],
+    ['Issue to PR, median', '41m', 'p90 1h 52m', [55, 52, 48, 50, 44, 43, 41, 41]],
+    ['PR merge rate', '78%', '32 of 41 opened', [60, 65, 70, 68, 74, 76, 77, 78]],
+    ['Rework turns per PR', '0.6', 'automatic 0.2, requested 0.4', [1.1, 0.9, 0.9, 0.8, 0.7, 0.7, 0.6, 0.6]],
+    ['Builds needing rounds', '14%', '3 of 21 ran out of turns', [25, 22, 20, 18, 17, 15, 14, 14]],
+    ['Bedrock retries', '9', 'this week, 0 runs failed', [20, 14, 18, 11, 9, 12, 8, 9]],
+  ].map(([l, v, d, s]) => `<div class="tile"><span class="label">${l}</span><span class="value num">${v}</span>${sparkline(s)}<span class="delta">${d}</span></div>`).join('');
+  columnChart($('#chart-tokens'), { labels: days14, series: [{ name: 'Sonnet 5.5', color: 'var(--s1)', values: [7.2, 5.1, 9.8, 3.9, 0.5, 0.2, 12.6, 11.4, 8.3, 15.1, 6.8, 0.3, 10.7, 13.2].map(v => v * 1e6) }, { name: 'Haiku 5.5', color: 'var(--s2)', values: [1.1, 0.8, 1.5, 0.6, 0.1, 0.05, 2.0, 1.7, 1.2, 2.3, 1.0, 0.05, 1.6, 2.1].map(v => v * 1e6) }] });
+  const last20 = ['#188', '#189', '#190', '#191', '#192', '#193', '#195', '#196', '#197', '#198'];
+  columnChart($('#chart-cost-role'), { labels: last20, series: [{ name: 'Builder', color: 'var(--s1)', values: [2.02, 1.61, 2.74, 0.42, 1.12, 1.95, 2.31, 0.74, 1.88, 1.84] }, { name: 'Reviewer', color: 'var(--s7)', values: [0.38, 0.41, 0.52, 0.19, 0.35, 0, 0.44, 0.31, 0.40, 0] }], fmt: v => '$' + v.toFixed(1), unit: '' });
+  hbarChart($('#chart-outcomes'), { rows: [{ name: 'PR opened', v: 29, color: 'var(--s1)' }, { name: 'PR updated', v: 12, color: 'var(--s3)' }, { name: 'Tests failed', v: 4, color: 'var(--s2)' }, { name: 'Incomplete', v: 3, color: 'var(--s2)' }, { name: 'No changes', v: 2, color: 'var(--s4)' }, { name: 'Invalid plan', v: 1, color: 'var(--s2)' }, { name: 'Refused', v: 5, color: 'var(--s8)' }], fmt: v => String(v) });
+  lineChart($('#chart-scores'), { labels: ['w36', 'w37', 'w38', 'w39', 'w40', 'w41', 'w42', 'w43', 'w44'], series: [{ name: 'Correctness', color: 'var(--s1)', values: [3.6, 3.8, 3.9, 4.1, 4.0, 4.2, 4.3, 4.4, 4.4] }, { name: 'Completeness', color: 'var(--s2)', values: [3.2, 3.4, 3.5, 3.7, 3.8, 3.9, 4.0, 4.1, 4.2] }, { name: 'Tests', color: 'var(--s3)', values: [3.0, 3.1, 3.4, 3.5, 3.7, 3.7, 3.9, 4.0, 4.0] }, { name: 'Safety', color: 'var(--s4)', values: [4.2, 4.3, 4.3, 4.5, 4.5, 4.6, 4.6, 4.7, 4.7] }], min: 1, max: 5, fmt: v => v.toFixed(1) });
+  lineChart($('#chart-latency'), { labels: days14, series: [{ name: 'Sonnet p50 s', color: 'var(--s1)', values: [9.1, 8.8, 10.2, 9.4, 8.9, 9.0, 11.8, 12.4, 10.1, 9.7, 9.3, 9.0, 9.6, 10.4] }, { name: 'Retries', color: 'var(--s2)', values: [1, 0, 2, 1, 0, 0, 4, 3, 1, 2, 1, 0, 2, 1] }], fmt: v => v.toFixed(0), max: 16 });
+  $('#versions tbody').innerHTML = [
+    ['v47', 'today 18:02', 'claude-agent-sdk 0.1.44', 'Sonnet 5.5', 6, '83%', '24m 20s', '1.0', '$2.19', '4.38'],
+    ['v46', '2 days ago', 'pi 0.9.2 (spike #181)', 'Sonnet 5.5, effort high', 9, '67%', '31m 05s', '1.4', '$2.86', '4.10'],
+    ['v45', '4 days ago', 'claude-agent-sdk 0.1.44', 'Sonnet 5.5', 14, '79%', '26m 48s', '1.1', '$2.41', '4.21'],
+    ['v41', '8 days ago', 'claude-agent-sdk 0.1.41', 'Sonnet 5.5 (EU profiles)', 11, '73%', '29m 10s', '1.2', '$2.55', '4.05'],
+  ].map(r => `<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td>${r.slice(4).map(v => `<td class="right num">${v}</td>`).join('')}</tr>`).join('');
+}
+
+// ---------- health ----------
+function renderHealth() {
+  $('#components').innerHTML = [
+    ['ok', 'GitHub issue adapter', 'factorial-github-issues, live alias', '188 deliveries / 24h'],
+    ['ok', 'Event bus factorial-work', '0 failed invocations', '2.1 events/min'],
+    ['ok', 'State machine factorial-work', '3 running, 0 failed today', 'alias live → v128'],
+    ['ok', 'Fargate invoker', '2 tasks running', 'start latency p50 41s'],
+    ['ok', 'Runtime factorial_builder', 'live → v47, READY', '1 session, cold start 9s'],
+    ['ok', 'Runtime factorial_reviewer', 'live → v31, READY', '1 session'],
+    ['warn', 'Bedrock, Sonnet 5.5 global profile', '1 throttle in 15 min', 'TPM 61% of quota'],
+    ['ok', 'Bedrock, Haiku 5.5 global profile', 'no throttles', 'TPM 12% of quota'],
+    ['ok', 'GitHub App installation token', 'minted 14 times today', 'rate limit 4,860 / 5,000'],
+    ['ok', 'Artefact store', '1.9 GB, 412 objects today', 'writes 1,208 / 24h'],
+    ['ok', 'Ledger factorial-work-items', '0 throttled requests', '1,044 rows'],
+    ['off', 'Transaction Search (traces)', 'not enabled in this account', 'see #56'],
+  ].map(([s, n, d, r]) => `<div class="component"><span class="dot ${s === 'ok' ? '' : s}"></span><div>${n}<div class="d">${d}</div></div><span class="r">${r}</span></div>`).join('');
+  $('#alarms').innerHTML = [
+    ['warn', 'factorial-build-long-running: 0f6a2c88 ran over 90 minutes (resolved 2h 21m ago)', 'OK'],
+    ['ok', 'factorial-execution-failed: no failed executions in 24 hours', 'OK'],
+    ['ok', 'factorial-spend-24h: $38.90 of $60.00 threshold', 'OK'],
+    ['ok', 'factorial-lambda-errors: 0 errors across 9 functions', 'OK'],
+    ['warn', 'factorial-bedrock-throttles: 4 in the last hour, threshold 10', 'OK'],
+  ].map(([k, t, w]) => `<div class="alert ${k}"><i></i><div class="body">${t}</div><span class="when">${w}</span></div>`).join('');
+  $('#quotas').innerHTML = [['Sonnet TPM', 61], ['Sonnet RPM', 34], ['Fargate vCPU', 8], ['Runtime sessions', 4], ['AppSync publishes', 2]].map(([n, p]) => `<div class="meter-row"><span>${n}</span><div class="meter${p > 85 ? ' crit' : p > 60 ? ' warn' : ''}"><i style="width:${p}%"></i></div><span class="v">${p}%</span></div>`).join('');
+  $('#deploys tbody').innerHTML = [
+    ['cbb8a4d', 'today 18:02', 'Restore the builder turn limit to 150', 'agent', 'builder v47', 'ok'],
+    ['ab837ae', 'yesterday 21:40', 'Lower the turn limit to 10 for pi\'s rounds run', 'agent', 'builder v46', 'ok'],
+    ['f43ad29', 'yesterday 17:12', 'Merge PR #189 (seed script caps)', 'orchestration', '—', 'ok'],
+    ['7d10c2e', '2 days ago', 'docs only', 'skipped', '—', 'skipped'],
+    ['3e9b117', '3 days ago', 'Merge PR #186 (run contract v1)', 'agent, orchestration', 'builder v45, reviewer v31', 'ok'],
+  ].map(r => `<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td><td>${r[3]}</td><td>${r[4]}</td><td><span class="pill ${r[5] === 'ok' ? 'done' : 'refused'}">${r[5] === 'ok' ? 'deployed' : 'skipped'}</span></td></tr>`).join('');
+  columnChart($('#chart-webhooks'), { labels: Array.from({ length: 24 }, (_, i) => `${pad((new Date(NOW0).getHours() - 23 + i + 24) % 24)}`), series: [{ name: 'Work items', color: 'var(--s1)', values: [0, 0, 0, 0, 0, 0, 0, 1, 2, 1, 0, 1, 1, 0, 2, 0, 0, 1, 0, 0, 1, 0, 1, 0] }, { name: 'Ignored', color: 'var(--hair-strong)', values: [2, 1, 0, 1, 0, 0, 3, 9, 14, 12, 8, 11, 10, 7, 13, 9, 6, 12, 8, 5, 10, 7, 9, 8] }], fmt: v => String(Math.round(v)), height: 140 });
+}
+
+// ---------- routing ----------
+const VIEWS = ['overview', 'work-items', 'run', 'metrics', 'health'];
+function route() {
+  const h = (location.hash || '#overview').slice(1); const v = VIEWS.includes(h) ? h : 'overview';
+  $$('.view').forEach(s => s.classList.toggle('active', s.id === 'view-' + v));
+  $$('#nav a').forEach(a => { if (a.dataset.view === v) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current'); });
+  if (v === 'run') { renderRunSide(); renderTranscript(); }
+  if (v === 'work-items') renderWorkItems();
+  $('#main').scrollTop = 0;
+}
+addEventListener('hashchange', route);
+
+// ---------- simulation loop ----------
+function tickClock() {
+  $('#clock').textContent = fmtTime(new Date());
+  $$('[data-elapsed]').forEach(el => { el.textContent = fmtDur(since(Number(el.dataset.elapsed))); });
+}
+function scheduleFeed(key) {
+  const s = sessions[key]; if (!s.live) return;
+  const delay = 1800 + Math.random() * 3400;
+  setTimeout(() => {
+    if (!paused) {
+      const ev = nextEvent(key);
+      if (ev) {
+        if (current === key && $('#view-run').classList.contains('active')) { appendEvent(ev); updateRunCounters(); }
+        const lastCell = $(`[data-last="${key}"]`); if (lastCell) lastCell.textContent = s.lastEvent;
+      }
+    }
+    scheduleFeed(key);
+  }, delay);
+}
+let busTick = 0;
+setInterval(() => {
+  tickClock();
+  busTick++;
+  if (busTick % 5 === 0) { renderSessions(); $('#bus-rate').textContent = (1.6 + Math.random() * 1.2).toFixed(1); }
+  if (busTick % 20 === 0) renderTiles();
+}, 1000);
+
+// Simulated stage transitions for the stage map
+setTimeout(() => { items[3].stage = 'Build'; items[3].role = 'builder'; renderStageMap(); }, 48e3);
+setTimeout(() => { items[2].status = 'running'; items[2].stage = 'PrepareReview'; items[2].wait = undefined; renderStageMap(); renderSessions(); renderAlerts(); }, 95e3);
+setTimeout(() => { items[2].stage = 'Review'; items[2].role = 'reviewer'; renderStageMap(); }, 160e3);
+
+// ---------- init ----------
+renderTiles(); renderStageMap(); renderAlerts(); renderSessions(); renderRecent(); renderOverviewCharts(); renderWorkItems(); renderMetrics(); renderHealth();
+feedFor('b7e1a4c2'); feedFor('3fa2c9d0'); feedFor('a91c5e20');
+sessions['b7e1a4c2'].lastEvent = describeShort(feeds['b7e1a4c2'].events.at(-1)); sessions['3fa2c9d0'].lastEvent = describeShort(feeds['3fa2c9d0'].events.at(-1));
+renderSessions();
+tickClock(); route();
+scheduleFeed('b7e1a4c2'); scheduleFeed('3fa2c9d0');
+</script>
+</body>
+</html>
