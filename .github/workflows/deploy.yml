@@ -2,7 +2,8 @@ name: Deploy
 
 # Runs after CI succeeds on main, or on demand. Assumes the factorial-deploy
 # role through GitHub OIDC (no stored keys) and deploys Factorial's stacks in
-# order. The foundation stack (00-*) is excluded: it is deployed by a human.
+# the order listed in the "Deploy stacks in order" step. The foundation stack
+# is not in that list: it is deployed by a human.
 # A push that changes only non-functional paths since the last successful
 # deploy (see scripts/classify-changes.ts) is skipped without touching a stack.
 
@@ -215,16 +216,18 @@ jobs:
           AGENT_RUNTIME_IMAGE_TAG: ${{ steps.runtime_image.outputs.tag }}
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          templates=(templates/[1-9]*.yml)
-          if [ ${#templates[@]} -eq 0 ]; then
-            echo "No deployable templates yet (only the human-deployed foundation exists)."
-            exit 0
-          fi
+          # Pipeline-deployed stacks, in deploy order. Each is templates/<name>.yml
+          # and stack factorial-<name>. The foundation stack is deliberately
+          # absent: a human deploys it (docs/bootstrap.md).
+          stacks=(triggers agent orchestration)
           mkdir -p .packaged
-          for template in "${templates[@]}"; do
-            name=$(basename "$template" .yml)   # e.g. 10-triggers
-            stack="factorial-${name#*-}"        # e.g. factorial-triggers
+          for name in "${stacks[@]}"; do
+            template="templates/$name.yml"
+            stack="factorial-$name"
+            if [ ! -f "$template" ]; then
+              echo "::error::$template not found for stack $stack"
+              exit 1
+            fi
             echo "::group::Deploying $stack from $template"
             # A stack whose first creation failed sits in ROLLBACK_COMPLETE and
             # cannot be updated. It never held anything, so remove it and retry.

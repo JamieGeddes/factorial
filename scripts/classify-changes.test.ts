@@ -22,7 +22,7 @@ describe('isNonFunctionalPath', () => {
   it('treats everything else as functional', () => {
     for (const path of [
       'packages/orchestration/src/index.ts',
-      'templates/30-orchestration.yml',
+      'templates/orchestration.yml',
       'contracts/workitem/v1/workitem.schema.json',
       'scripts/classify-changes.ts',
       'agent-runtime/Dockerfile',
