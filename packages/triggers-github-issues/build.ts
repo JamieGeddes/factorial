@@ -1,6 +1,6 @@
 /**
  * Bundle the adapter into a single ESM file for Lambda, the AWS SDK included:
- * the nodejs22.x runtime's copy changes with AWS's runtime updates
+ * the nodejs24.x runtime's copy changes with AWS's runtime updates
  * (packages/orchestration/build.ts has the incident).
  */
 import { build } from 'esbuild';
@@ -10,7 +10,7 @@ await build({
   outfile: 'dist/index.mjs',
   bundle: true,
   platform: 'node',
-  target: 'node22',
+  target: 'node24',
   format: 'esm',
   sourcemap: true,
   // Bundled CommonJS dependencies may call require(); give them a working one.

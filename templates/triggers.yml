@@ -75,7 +75,7 @@ Resources:
       Description: Converts GitHub App webhooks (labelled issues, and reviews, comments and failed runs on Factorial's pull requests) into WorkItem events on the Factorial bus.
       CodeUri: ../packages/triggers-github-issues/dist/
       Handler: index.handler
-      Runtime: nodejs22.x
+      Runtime: nodejs24.x
       Architectures:
         - arm64
       MemorySize: 256
