@@ -161,6 +161,11 @@ export class GitHubClient {
     await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/${kind}/comments/${comment.id}/reactions`, { content });
   }
 
+  /** React to an issue (or pull request) itself, not to a comment on it. */
+  async addIssueReaction(repo: Repo, issueNumber: number, content: '+1' | 'eyes' | 'rocket'): Promise<void> {
+    await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}/reactions`, { content });
+  }
+
   /** The inline comments submitted with one review, at most 100. */
   async listReviewComments(repo: Repo, pullNumber: number, reviewId: number): Promise<ReviewComment[]> {
     const comments = await this.#request<
