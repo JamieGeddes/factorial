@@ -44,6 +44,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 - `/aws/lambda/factorial-collect-review`
 - `/aws/lambda/factorial-open-pr`
 - `/aws/lambda/factorial-report`
+- `/aws/lambda/factorial-notify` (the "started" comment on a labelled issue; the ledger row's `startedNotifiedAt` says it was sent)
 
 Set the time range to cover the run, then run:
 
