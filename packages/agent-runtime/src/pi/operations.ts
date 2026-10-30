@@ -25,7 +25,7 @@ async function op(helper: Helper, args: string[], input?: string | Buffer): Prom
 
 const json = async <T>(helper: Helper, args: string[]): Promise<T> => JSON.parse((await op(helper, args)).toString('utf8')) as T;
 
-/** A command's time limit when the model sets none: the SDK host's BASH_DEFAULT_TIMEOUT_MS, for installs and checks. */
+/** A command's time limit when the model sets none, long enough for installs and checks (the SDK host's BASH_DEFAULT_TIMEOUT_MS). */
 export const DEFAULT_COMMAND_TIMEOUT_SECONDS = 600;
 
 export function bashOperations(runner: AgentRunner): BashOperations {

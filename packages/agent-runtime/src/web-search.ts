@@ -1,10 +1,8 @@
 /**
- * Web search for the builder through the AgentCore web search gateway. Claude
- * Code's own WebSearch tool is not available on Bedrock, so the host offers its
- * own `web_search` tool, which signs a JSON-RPC call to the gateway with the
- * execution role. The model sees a tool, never a credential. This is the
- * harness-neutral part; each harness registers the tool its own way
- * (claude-sdk/web-search.ts).
+ * Web search for the builder through the AgentCore web search gateway. The
+ * host offers its own `web_search` tool, which signs a JSON-RPC call to the
+ * gateway with the execution role. The model sees a tool, never a credential.
+ * This is the harness-neutral part; pi registers the tool in pi/tools.ts.
  */
 import { createHash, createHmac } from 'node:crypto';
 

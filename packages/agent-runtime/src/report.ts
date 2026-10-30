@@ -22,8 +22,8 @@
  * itself: its step ids, its validation errors, and its steps in full at the
  * start of a later round (planBrief).
  *
- * The checks return what to send the model, or undefined; each harness turns
- * that into its own hook result (claude-sdk/hooks.ts).
+ * The checks return what to send the model, or undefined; the harness turns
+ * that into its own hook result (pi/harness.ts, its host extension).
  */
 import { closeSync, constants, fstatSync, openSync, readSync } from 'node:fs';
 import path from 'node:path';

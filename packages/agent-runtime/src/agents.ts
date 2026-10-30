@@ -1,8 +1,7 @@
 /**
  * Subagents the builder may start, defined once for every harness. Each
- * harness turns a spec into its own subagent (claude-sdk/options.ts passes
- * them to the SDK with its built-in agents turned off, so these are the only
- * ones that exist). Subagents share the builder's session and trust level,
+ * harness turns a spec into its own subagent (pi's `task` tool starts a child
+ * session from one), and these are the only ones that exist. Subagents share the builder's session and trust level,
  * and their reports are the model's claim, never evidence.
  */
 import { planPrompt } from './prompts/plan.ts';

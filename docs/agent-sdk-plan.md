@@ -1,6 +1,6 @@
 # Implementation plan: Claude Agent SDK on AgentCore Runtime
 
-**Date:** 2026-10-23. **Status:** proposed. **Starting point:** tag `stage-0-harness` (the last commit on `main` before this work).
+**Date:** 2026-10-23. **Status:** done 2026-10-26; superseded on 2026-10-30, when every role moved to pi and the SDK was removed (`docs/pi-plan.md`, tag `stage-1-claude-sdk-final`). **Starting point:** tag `stage-0-harness` (the last commit on `main` before this work).
 
 This plan turns the option evaluated in `docs/harness-vs-runtime.md` into a sequence of pull requests. It is deliberately conservative: the Harness stays deployed and remains the default until the Runtime has proved itself on a measured run, every phase is deployable on its own, and the builder is moved first, the planner second, and the reviewer last. The spine (triggers, the state machine, the orchestrator Lambdas, the clean-room push, the trusted test workflow, the artefact store and the ledger) is not changed by this plan except where a stage has to address a Runtime instead of a Harness.
 

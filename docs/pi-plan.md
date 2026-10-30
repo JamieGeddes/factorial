@@ -1,6 +1,6 @@
 # Implementation plan: pi for every role
 
-**Date:** 2026-10-30. **Status:** decided 2026-10-29; phases 0 to 3 done, tracked in #198. **Starting point:** `main` after #196, with the builder on pi and the reviewer on the Claude Agent SDK.
+**Date:** 2026-10-30. **Status:** decided 2026-10-29; done 2026-10-30 (#198). **Starting point:** `main` after #196, with the builder on pi and the reviewer on the Claude Agent SDK.
 
 This plan moves every role to pi (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai`, MIT, pinned at 1.4.0) and removes the Claude Agent SDK. Spike #181 justified it: see `docs/harness-vs-runtime.md`, **pi on AgentCore Runtime** and **pi spike results**. The reason is flexibility. pi's loop runs in Factorial's host process, where Factorial can read, extend and patch it, and other models on Bedrock become a configuration change.
 
@@ -10,7 +10,7 @@ The move is made one role at a time, like `docs/agent-sdk-plan.md`. Until the la
 
 ## 1. Target shape
 
-- Both Runtimes run the same image and host, with pi as the only harness. The loop, the role's policy (one host extension), subagents (child sessions behind the `task` tool) and the turn and budget limits run in the root host. Every tool that runs a command or touches a file runs as the `agent` user through `setpriv` and the file helper (`docs/security.md` §9.2b).
+- Both Runtimes run the same image and host, with pi as the only harness. The loop, the role's policy (one host extension), subagents (child sessions behind the `task` tool) and the turn and budget limits run in the root host. Every tool that runs a command or touches a file runs as the `agent` user through `setpriv` and the file helper (`docs/security.md` §9.2).
 - The roles' definitions stay in `packages/agent-runtime/src/roles.ts`, defined once. `src/pi/` is the only mapping of them.
 - The image carries no Claude Code binary, no `claude-as-agent` wrapper and no SDK package.
 - Models, limits, IAM and the run contract are unchanged. Another Bedrock model is a later item of its own.
@@ -31,7 +31,7 @@ The move is made one role at a time, like `docs/agent-sdk-plan.md`. Until the la
 ### Phase 1: record the decision (this document's pull request)
 
 - `CLAUDE.md`: **Target architecture** names pi; **Current stage** and the **Language** and **Agent roles** conventions say where each role is.
-- `docs/security.md` §9: the in-session enforcement decision is kept with pi, and §9.2b becomes the main list once the SDK host goes.
+- `docs/security.md` §9: the in-session enforcement decision is kept with pi.
 - This plan, and a tracking issue with one item per remaining phase.
 
 ### Phase 2: the builder on pi for good (done, #199)
@@ -44,9 +44,9 @@ The move is made one role at a time, like `docs/agent-sdk-plan.md`. Until the la
 - `pi/loop.test.ts` runs the reviewer's real role through pi's loop with the faux provider. An invalid `review.json` sends it back, a valid one gets the second pass, and then it ends `complete`.
 - The reviewer's Runtime block sets `FACTORIAL_HARNESS: pi` and `FACTORIAL_EFFORT: high`, as the builder's does. On the SDK it had no effort set; pi's own default would be `medium`.
 
-### Phase 4: remove the SDK
+### Phase 4: remove the SDK (done)
 
-One pull request, deployed as one new Runtime version for both roles. Phase 3 must be live first, because this removes the harness the reviewer runs on until then.
+One pull request, deployed as one new Runtime version for both roles, after phase 3. What it did, as planned below: the image went from 1.43 GB to 831 MB, and the host's tests from 130 to 99. Two rules that existed only for Claude Code went too: the `notebook` tool kind (`NotebookEdit`) and the denial of writes under `/workspace/.claude` (its config directory). `templates/00-foundation.yml` keeps an SDK mention in a comment, since that stack is deployed by a human.
 
 - **Tag first:** `main` is tagged `stage-1-claude-sdk-final` before the pull request merges, as `stage-0-harness` and `stage-1-agent-sdk` were.
 - **Delete:**
@@ -67,7 +67,7 @@ One pull request, deployed as one new Runtime version for both roles. Phase 3 mu
   - `README.md`, `docs/current-stage.md`, `docs/system-diagram.md`;
   - `docs/session-boundaries.*`, including `sdk-host.svg`;
   - `docs/target-state-architecture.md`, `docs/bootstrap.md`;
-  - `docs/security.md`: §9.2 folds into §9.2b, and the WebFetch note about Claude Code's `api.anthropic.com` check goes;
+  - `docs/security.md`: §9.2b folds into §9.2, and the WebFetch note about Claude Code's `api.anthropic.com` check goes;
   - `CLAUDE.md`'s **Current stage** and conventions lose their "until it moves" clauses.
   
   `docs/agent-sdk-plan.md` becomes history.
@@ -78,8 +78,8 @@ One pull request, deployed as one new Runtime version for both roles. Phase 3 mu
 1. #196: phase 0.
 2. #197: phase 1: `CLAUDE.md`, `docs/security.md` §9, this plan.
 3. #199: phase 2: the builder's template comment.
-4. Phase 3: the probe for the reviewer, and `FACTORIAL_HARNESS: pi` on the reviewer.
-5. Phase 4: the SDK's removal, after the tag.
+4. #200: phase 3: the probe for the reviewer, and `FACTORIAL_HARNESS: pi` on the reviewer.
+5. Phase 4: the SDK's removal, after the tag `stage-1-claude-sdk-final`.
 
 ## 4. Standing rules
 
@@ -91,7 +91,7 @@ One pull request, deployed as one new Runtime version for both roles. Phase 3 mu
 | Risk | Mitigation |
 |---|---|
 | pi is a small project; a release breaks or stalls | Exact pin; upgrades only by pull request with the checks above; the host owns the code it relies on (`src/pi/`) and can patch around pi |
-| More of the security surface is Factorial's code | §9.2b's mitigations; the probe in the image; the outer boundaries (execution role, clean room, tested-head check) do not depend on the loop |
+| More of the security surface is Factorial's code | §9.2's mitigations; the probe in the image; the outer boundaries (execution role, clean room, tested-head check) do not depend on the loop |
 | The reviewer judges differently on pi | Its policy and prompts are shared with the SDK host; the first reviews after the move are read against the change, and the tag keeps the SDK reviewer one revert away |
 | Cost per item rises | `build/usage.json` records the plan subagent's share per item; read the first items' figures after phase 4 |
 

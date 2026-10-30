@@ -152,7 +152,7 @@ describe('Run after an error result', () => {
     const run = new Run(directory(), async function* () {
       yield started;
       yield limited;
-      throw new Error('Claude Code returned an error result: Reached maximum number of turns (3)');
+      throw new Error('the harness threw after its result');
     });
     run.start({ prompt: 'go', round: 1 });
     await tick();

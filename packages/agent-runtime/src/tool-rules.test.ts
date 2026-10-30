@@ -6,7 +6,6 @@ import type { ToolCall } from './tools.ts';
 
 const write = (path?: string): ToolCall => ({ kind: 'write', path });
 const edit = (path?: string): ToolCall => ({ kind: 'edit', path });
-const notebook = (path?: string): ToolCall => ({ kind: 'notebook', path });
 const shell = (command: string): ToolCall => ({ kind: 'shell', command });
 const other = (name: string): ToolCall => ({ kind: 'other', name });
 
@@ -19,12 +18,10 @@ describe('decideToolUse', () => {
     assert.equal(allowed(write('repo/relative.ts')), true);
   });
 
-  it('denies file writes outside the workspace or into host-owned directories', () => {
+  it('denies file writes outside the workspace', () => {
     assert.equal(allowed(write('/etc/profile')), false);
     assert.equal(allowed(edit('/workspace/../opt/factorial/agent-runtime/host.mjs')), false);
     assert.equal(allowed(write('/workspace-other/x')), false);
-    assert.equal(allowed(notebook('/tmp/n.ipynb')), false);
-    assert.equal(allowed(edit('/workspace/.claude/settings.json')), false);
     assert.equal(allowed(write()), false);
   });
 
@@ -59,9 +56,9 @@ describe('decideToolUse for the plan subagent', () => {
     }
   });
 
-  it('refuses it edits and notebooks, even on the plan files', () => {
+  it('refuses it edits, even on the plan files', () => {
     assert.equal(plan(edit('/workspace/plan.json')).allow, false);
-    assert.equal(plan(notebook('/workspace/plan.md')).allow, false);
+    assert.equal(plan(edit('/workspace/plan.md')).allow, false);
   });
 
   it('leaves the builder and the explore subagent to the general rules', () => {
@@ -80,7 +77,6 @@ describe('decideReviewerToolUse', () => {
     for (const file of ['/workspace/repo/src/a.ts', '/workspace/notes.md', '/workspace/repo/review.json', '/tmp/review.json']) {
       assert.equal(reviewer(write(file)), false, file);
     }
-    assert.equal(reviewer(notebook('/workspace/review.json')), false);
     assert.equal(reviewer(write()), false);
   });
 

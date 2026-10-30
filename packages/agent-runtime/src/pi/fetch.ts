@@ -1,5 +1,5 @@
 /**
- * The fetch tool, as Claude Code's WebFetch behaves: it reads a URL and
+ * The fetch tool, modelled on Claude Code's WebFetch: it reads a URL and
  * returns a small model's answer to the prompt the caller gives, not the page.
  * The page is fetched with curl as the agent user, with the reach its shell
  * already has, so the host never requests a URL the model chose. The answer's

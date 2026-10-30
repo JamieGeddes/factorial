@@ -1,6 +1,6 @@
 /**
  * In-session tool rules, applied before each tool call by the harness's hook
- * in the host process (claude-sdk/hooks.ts). They constrain what a prompt
+ * in the host process (pi's host extension, pi/harness.ts). They constrain what a prompt
  * injection can drive; they are not the access gate (docs/security.md
  * section 9). The gates are outside the session: the execution role, the
  * bundle and clean room, and the trusted test workflow. They judge a ToolCall
@@ -12,9 +12,6 @@ import { PLAN_AGENT } from './agents.ts';
 import type { ToolCall } from './tools.ts';
 
 export type Decision = { allow: true } | { allow: false; reason: string };
-
-/** The harness's own files inside the workspace (the Claude Agent SDK's CLAUDE_CONFIG_DIR). */
-const HOST_DIRECTORIES = ['.claude'];
 
 /** `git`, then any global options (-C dir, -c key=value, --flag), before the subcommand. */
 const GIT = String.raw`\bgit(?:\s+(?:-[Cc]\s+\S+|--?[\w-]+(?:=\S+)?))*\s+`;
@@ -51,7 +48,7 @@ function deniedCommand(command: string): Decision | undefined {
  * plan subagent may write only the two plan files.
  */
 export function decideToolUse(workspace: string, call: ToolCall, agentType?: string): Decision {
-  if (call.kind === 'write' || call.kind === 'edit' || call.kind === 'notebook') {
+  if (call.kind === 'write' || call.kind === 'edit') {
     if (call.path === undefined || call.path.length === 0) return { allow: false, reason: 'Give the file tool the path of the file to change.' };
     const target = path.resolve(workspace, call.path);
     if (agentType === PLAN_AGENT && (call.kind !== 'write' || !PLAN_FILES.some((file) => target === path.join(workspace, file)))) {
@@ -59,11 +56,6 @@ export function decideToolUse(workspace: string, call: ToolCall, agentType?: str
     }
     if (!isInside(workspace, target)) {
       return { allow: false, reason: `Write only inside ${workspace}; ${target} is outside it.` };
-    }
-    for (const directory of HOST_DIRECTORIES) {
-      if (isInside(path.join(workspace, directory), target)) {
-        return { allow: false, reason: `${path.join(workspace, directory)} belongs to the host process; do not write there.` };
-      }
     }
   }
 
@@ -119,9 +111,9 @@ export function writesByRedirection(command: string): boolean {
  * drive; CollectReview, reading one file and validating it, is the gate.
  */
 export function decideReviewerToolUse(workspace: string, call: ToolCall, writeTool: string): Decision {
-  if (call.kind === 'write' || call.kind === 'edit' || call.kind === 'notebook') {
+  if (call.kind === 'write' || call.kind === 'edit') {
     const target = call.path ? path.resolve(workspace, call.path) : undefined;
-    if (call.kind === 'notebook' || target !== path.join(workspace, REVIEW_FILE)) return { allow: false, reason: readOnlyReason(writeTool) };
+    if (target !== path.join(workspace, REVIEW_FILE)) return { allow: false, reason: readOnlyReason(writeTool) };
   }
 
   if (call.kind === 'shell') {

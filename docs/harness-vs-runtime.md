@@ -8,7 +8,7 @@
 
 **2026-10-28:** pi evaluated as a sixth option, for model and provider flexibility; see **pi on AgentCore Runtime**. Spike: #181.
 
-**2026-10-30:** the pi spike passed its gate; see **pi spike results**. Decided 2026-10-29: pi for every role and the Claude Agent SDK removed, after the binding changes are approved.
+**2026-10-30:** the pi spike passed its gate; see **pi spike results**. Decided 2026-10-29: pi for every role and the Claude Agent SDK removed. Done the same day (`docs/pi-plan.md`); tag `stage-1-claude-sdk-final` is the last commit with the SDK.
 
 A decision record, as principle 6 in `docs/architecture-principles.md` asks for: the question, the evidence, the options, the decision and its consequences. It extends the one-paragraph decision in `docs/design-plan.md` §3.2 with the evidence from the first week of runs.
 
@@ -402,7 +402,7 @@ The two items differ and #87's build had no plan subagent, so the 1.46× is most
 |---|---|
 | Parity | Met: one session, a valid plan, a complete report, tests passed; turns 1.02× and input 1.46× (within 1.5×), cache reads 94.7% (at least 90%) |
 | The contract | Met: no change to the invoker or the orchestrator; the fixes were in the host |
-| Security | Met: `scripts/pi-security-probe.ts` in the real image, 22 of 22 checks held (`docs/security.md` §9.2b); with the privilege drop removed, 12 fail |
+| Security | Met: `scripts/pi-security-probe.ts` in the real image, 22 of 22 checks held (`docs/security.md` §9.2); with the privilege drop removed, 12 fail |
 | Limits | Met: run (b) continued in rounds with its work saved, and resumed after relabelling |
 
 **Decision (2026-10-29).** pi for every role, and the Claude Agent SDK removed: pi's loop, policy and limits are code Factorial owns and can read, and it keeps other models a configuration change. The binding changes to `CLAUDE.md` and `docs/security.md` §9 come first and need human approval; then the builder stays on pi, the reviewer moves, and the SDK code and its binary leave the image. Until then `FACTORIAL_HARNESS` on a Runtime version is the rollback.

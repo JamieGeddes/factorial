@@ -2,7 +2,7 @@
 
 A run is one agent role's session on its AgentCore Runtime: the host process in the container runs the agent loop (the harness) against the role's model, and the invoker reads what happened. This contract is everything between the two: the invocation bodies, the stream of run events and the status reply. The invoker reads nothing else, so a different harness, or a model from another provider, changes the host on the Runtime and leaves the invoker, the state machine and the records as they are.
 
-Today the only host is `packages/agent-runtime`, running the Claude Agent SDK with Claude on Amazon Bedrock; its adapter (`src/claude-sdk/events.ts`) is the one place SDK messages are read, and everything that touches the SDK is in `src/claude-sdk/`. The contract is internal to Factorial, not part of the `WorkItem` API, but the host and the invoker deploy at different moments, so it is versioned like the others. The canonical definitions are the JSON Schemas in `v1/`; `@factorial/run` validates against those files.
+Today the only host is `packages/agent-runtime`, running pi with Claude on Amazon Bedrock; its adapter (`src/pi/events.ts`) is the one place pi's events are read, and everything that touches pi is in `src/pi/`. It ran the Claude Agent SDK until 2026-10-30 (`docs/pi-plan.md`); the contract did not change. The contract is internal to Factorial, not part of the `WorkItem` API, but the host and the invoker deploy at different moments, so it is versioned like the others. The canonical definitions are the JSON Schemas in `v1/`; `@factorial/run` validates against those files.
 
 ## Protocol
 
@@ -76,4 +76,4 @@ A run that crosses the deploy of a breaking change fails cleanly and is relabell
 
 ## Change log
 
-- **2026-10: v1.** The invocation bodies, run events and status, replacing the Agent SDK's raw messages on the stream.
+- **2026-10: v1.** The invocation bodies, run events and status, replacing the Claude Agent SDK's raw messages on the stream.

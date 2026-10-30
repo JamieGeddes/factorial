@@ -2,7 +2,7 @@
  * What the host needs from a harness: its run.started event, and a run's
  * events (contracts/run/v1/) for a request. The role's definition, policy and
  * limits are the host's (roles.ts, config.ts); the harness maps them onto its
- * own API. The Claude Agent SDK's is claude-sdk/harness.ts.
+ * own API. pi's is pi/harness.ts.
  */
 import type { RunEvent, RunStarted } from '@factorial/run';
 

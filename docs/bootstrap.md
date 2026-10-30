@@ -13,7 +13,7 @@ The foundation stack (`templates/00-foundation.yml`) creates:
 | `factorial-agent-permissions-boundary` | Upper bound for every agent execution role. Allows only running a Runtime: calls to Anthropic models on Bedrock, pulling its image, web search through a `factorial-*` gateway and telemetry; no credentials of any kind. Also carried by the web search gateway's service role, which AgentCore assumes. |
 | Artefact bucket | Packaged templates and Lambda bundles. |
 | `factorial/invoker` ECR repository | The Fargate task that invokes an agent and records its run. |
-| `factorial/agent-runtime` ECR repository | The AgentCore Runtime image: Factorial's host process around the Claude Agent SDK (`docs/agent-sdk-plan.md`). |
+| `factorial/agent-runtime` ECR repository | The AgentCore Runtime image: Factorial's host process around pi (`docs/pi-plan.md`). |
 
 ## Prerequisites
 

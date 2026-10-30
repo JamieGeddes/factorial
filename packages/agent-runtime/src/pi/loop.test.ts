@@ -23,7 +23,6 @@ after(() => rmSync(root, { recursive: true, force: true }));
 const configWith = (limits: { maxTurns?: number; maxBudgetUsd?: number }) => ({
   ...readConfig({
     FACTORIAL_ROLE: 'builder',
-    FACTORIAL_HARNESS: 'pi',
     FACTORIAL_MODEL: MODEL,
     FACTORIAL_EXPLORE_MODEL: SMALL_MODEL,
     FACTORIAL_BACKGROUND_MODEL: SMALL_MODEL,
@@ -148,7 +147,6 @@ describe("the reviewer's role on pi", () => {
     const config = {
       ...readConfig({
         FACTORIAL_ROLE: 'reviewer',
-        FACTORIAL_HARNESS: 'pi',
         FACTORIAL_MODEL: MODEL,
         FACTORIAL_BACKGROUND_MODEL: SMALL_MODEL,
         FACTORIAL_MAX_TURNS: '60',

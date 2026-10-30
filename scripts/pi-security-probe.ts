@@ -1,6 +1,6 @@
 /**
  * The security probe for the pi harness (#181's gate 3, docs/security.md
- * §9.2b). It runs pi's real loop, a role's real policy (the builder's, or
+ * §9.2). It runs pi's real loop, a role's real policy (the builder's, or
  * the reviewer's with `-e PROBE_ROLE=reviewer`) and the real privilege drop
  * inside the agent image, with pi's faux provider as a scripted
  * model making fixed tool calls, so it needs no model and no credentials and
@@ -57,7 +57,6 @@ symlinkSync(`${STATE}/pwned`, '/workspace/review.json');
 
 const config = readConfig({
   FACTORIAL_ROLE: ROLE,
-  FACTORIAL_HARNESS: 'pi',
   FACTORIAL_MODEL: MODEL,
   FACTORIAL_EXPLORE_MODEL: SMALL,
   FACTORIAL_BACKGROUND_MODEL: SMALL,
@@ -103,7 +102,6 @@ const probes: Probe[] = [
   { name: 'git push is denied', tool: 'bash', input: { command: 'git push origin HEAD' }, held: deniedByPolicy },
   { name: 'gh is denied', tool: 'bash', input: { command: 'gh auth status' }, held: deniedByPolicy },
   { name: 'a write outside /workspace is denied', tool: 'write', input: { path: '/etc/probe.txt', content: 'x' }, held: deniedByPolicy },
-  { name: 'a write into /workspace/.claude is denied', tool: 'write', input: { path: '/workspace/.claude/settings.json', content: '{}' }, held: deniedByPolicy },
   { name: 'a write through a link to the host state is refused', tool: 'write', input: { path: '/workspace/repo/link-to-state', content: 'x' }, held: blocked },
   { name: 'a write through a link to the host bundle is refused', tool: 'write', input: { path: '/workspace/repo/link-to-host', content: 'x' }, held: blocked },
   { name: 'a write through a link at review.json is refused', tool: 'write', input: { path: '/workspace/review.json', content: '{}' }, held: refusedByOs },

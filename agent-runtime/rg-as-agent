@@ -2,8 +2,9 @@
 # Installed as /usr/local/bin/rg, ahead of the real /usr/bin/rg on PATH.
 # pi's grep tool (packages/agent-runtime/src/pi/) starts `rg` from the host
 # process, which is root, and the model chooses what it searches. Called by
-# root, this runs ripgrep as the agent user with the same restrictions as
-# claude-as-agent and a minimal environment, so a search reaches only what the
+# root, this runs ripgrep as the agent user with the same restrictions as the
+# host's own drop (packages/agent-runtime/src/pi/as-agent.ts) and a minimal
+# environment, so a search reaches only what the
 # agent can read: never /var/lib/factorial, and never a root-only file through
 # a link the model planted. Called by anyone else (the model's own shell), it
 # runs ripgrep as that user.

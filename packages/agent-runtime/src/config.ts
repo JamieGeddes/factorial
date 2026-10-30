@@ -8,17 +8,12 @@ import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE } from '@factorial/run';
 
 export type Role = RoleName;
 
-/** What runs the agent loop (harness.ts). The Claude Agent SDK unless the Runtime version names pi (spike #181). */
-export const HARNESSES = ['claude-agent-sdk', 'pi'] as const;
-export type HarnessName = (typeof HARNESSES)[number];
-
-/** Reasoning effort, where the harness and model take one. Unset leaves each harness's default. */
+/** Reasoning effort, where the model takes one. Unset leaves pi's default (medium). */
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
 export interface Config {
   role: Role;
-  harness: HarnessName;
   effort: Effort | undefined;
   // Bedrock inference profile ids, named by what each model does rather than
   // by size, so changing one (Sonnet to Opus for the main loop, say) is one
@@ -27,7 +22,7 @@ export interface Config {
   model: string;
   /** The explore subagent's, e.g. eu.anthropic.claude-haiku-5-5, for a role whose manifest names the purpose (the builder). */
   exploreModel: string | undefined;
-  /** The SDK's own background calls (ANTHROPIC_DEFAULT_HAIKU_MODEL). */
+  /** Background calls: the fetch tool's answers from a page. */
   backgroundModel: string;
   region: string;
   maxTurns: number;
@@ -42,8 +37,6 @@ export interface Config {
   agentHome: string;
   /** Where the host keeps the run's record: root-owned, out of the agent user's reach. */
   stateDirectory: string;
-  /** Starts Claude Code as the agent user (agent-runtime/claude-as-agent). */
-  claudeExecutable: string;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string): string {
@@ -66,13 +59,10 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   if (!isRoleName(role)) throw new Error(`FACTORIAL_ROLE must be one of ${Object.keys(ROLES).join(', ')}`);
   const maxTurns = positiveNumber(env, 'FACTORIAL_MAX_TURNS');
   if (!Number.isInteger(maxTurns)) throw new Error('FACTORIAL_MAX_TURNS must be an integer');
-  const harness = env.FACTORIAL_HARNESS || 'claude-agent-sdk';
-  if (!(HARNESSES as readonly string[]).includes(harness)) throw new Error(`FACTORIAL_HARNESS must be one of ${HARNESSES.join(', ')}`);
   const effort = env.FACTORIAL_EFFORT || undefined;
   if (effort !== undefined && !(EFFORTS as readonly string[]).includes(effort)) throw new Error(`FACTORIAL_EFFORT must be one of ${EFFORTS.join(', ')}`);
   return {
     role,
-    harness: harness as HarnessName,
     effort: effort as Effort | undefined,
     model: required(env, 'FACTORIAL_MODEL'),
     exploreModel: ROLES[role].models.includes('explore') ? required(env, modelVariable('explore')) : undefined,
@@ -86,6 +76,5 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     workspace: '/workspace',
     agentHome: '/home/agent',
     stateDirectory: '/var/lib/factorial',
-    claudeExecutable: '/opt/factorial/agent-runtime/claude-as-agent',
   };
 }
