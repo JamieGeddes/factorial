@@ -1,7 +1,8 @@
 /**
  * The security probe for the pi harness (#181's gate 3, docs/security.md
- * §9.2b). It runs pi's real loop, the builder's real policy and the real
- * privilege drop inside the agent image, with pi's faux provider as a scripted
+ * §9.2b). It runs pi's real loop, a role's real policy (the builder's, or
+ * the reviewer's with `-e PROBE_ROLE=reviewer`) and the real privilege drop
+ * inside the agent image, with pi's faux provider as a scripted
  * model making fixed tool calls, so it needs no model and no credentials and
  * gives the same answer every time. It plants what a hostile workspace or home
  * could hold first, so it refuses to run anywhere but as root in the image:
@@ -24,6 +25,11 @@ import { piHarness, type PiParts } from '../packages/agent-runtime/src/pi/harnes
 import { HOST_ROLES } from '../packages/agent-runtime/src/roles.ts';
 
 const HOST_BUNDLE = '/opt/factorial/agent-runtime/host.mjs';
+const ROLE = process.env.PROBE_ROLE ?? 'builder';
+if (ROLE !== 'builder' && ROLE !== 'reviewer') {
+  console.error(`PROBE_ROLE must be builder or reviewer, not ${ROLE}.`);
+  process.exit(2);
+}
 if (process.getuid?.() !== 0 || !existsSync(HOST_BUNDLE)) {
   console.error('Run this as root inside the agent image (see the top of the file): it plants files in /workspace and the agent home.');
   process.exit(2);
@@ -46,9 +52,11 @@ writeFileSync('/workspace/repo/root-owned.txt', 'root-owned\n');
 chmodSync('/workspace/repo/root-owned.txt', 0o644);
 symlinkSync(`${STATE}/pwned`, '/workspace/repo/link-to-state');
 symlinkSync(HOST_BUNDLE, '/workspace/repo/link-to-host');
+// The one file the reviewer may write, planted as a link out of the workspace.
+symlinkSync(`${STATE}/pwned`, '/workspace/review.json');
 
 const config = readConfig({
-  FACTORIAL_ROLE: 'builder',
+  FACTORIAL_ROLE: ROLE,
   FACTORIAL_HARNESS: 'pi',
   FACTORIAL_MODEL: MODEL,
   FACTORIAL_EXPLORE_MODEL: SMALL,
@@ -70,6 +78,9 @@ interface Probe {
 
 const deniedByPolicy = (text: string, isError: boolean) => isError && !/EACCES|permission denied/i.test(text);
 const refusedByOs = (text: string, isError: boolean) => isError && /EACCES|permission denied/i.test(text);
+/** Blocked, by the OS or, where the role's policy forbids the call (the reviewer's writes), by the policy first. */
+const blocked = (_text: string, isError: boolean) => isError;
+const orDenied = (held: Probe['held']): Probe['held'] => (text, isError) => deniedByPolicy(text, isError) || held(text, isError);
 
 const probes: Probe[] = [
   { name: 'the shell runs as agent (uid and gid 1000)', tool: 'bash', input: { command: 'id -u; id -g' }, held: (t) => t.trim() === '1000\n1000' },
@@ -88,18 +99,19 @@ const probes: Probe[] = [
   { name: "the host's state is not listable", tool: 'bash', input: { command: `ls ${STATE} 2>&1` }, held: (t) => /Permission denied/.test(t) },
   { name: 'the host cannot be signalled', tool: 'bash', input: { command: 'kill -0 1 2>&1; echo rc=$?' }, held: (t) => /Operation not permitted/.test(t) && /rc=1/.test(t) },
   { name: "the host's environment is not readable", tool: 'bash', input: { command: 'cat /proc/1/environ 2>&1 | head -c 200' }, held: (t) => /Permission denied/.test(t) },
-  { name: 'the host bundle is not writable', tool: 'bash', input: { command: `touch ${HOST_BUNDLE} 2>&1; echo rc=$?` }, held: (t) => /rc=1/.test(t) },
+  { name: 'the host bundle is not writable', tool: 'bash', input: { command: `touch ${HOST_BUNDLE} 2>&1; echo rc=$?` }, held: orDenied((t) => /rc=1/.test(t)) },
   { name: 'git push is denied', tool: 'bash', input: { command: 'git push origin HEAD' }, held: deniedByPolicy },
   { name: 'gh is denied', tool: 'bash', input: { command: 'gh auth status' }, held: deniedByPolicy },
   { name: 'a write outside /workspace is denied', tool: 'write', input: { path: '/etc/probe.txt', content: 'x' }, held: deniedByPolicy },
   { name: 'a write into /workspace/.claude is denied', tool: 'write', input: { path: '/workspace/.claude/settings.json', content: '{}' }, held: deniedByPolicy },
-  { name: 'a write through a link to the host state is refused', tool: 'write', input: { path: '/workspace/repo/link-to-state', content: 'x' }, held: refusedByOs },
-  { name: 'a write through a link to the host bundle is refused', tool: 'write', input: { path: '/workspace/repo/link-to-host', content: 'x' }, held: refusedByOs },
+  { name: 'a write through a link to the host state is refused', tool: 'write', input: { path: '/workspace/repo/link-to-state', content: 'x' }, held: blocked },
+  { name: 'a write through a link to the host bundle is refused', tool: 'write', input: { path: '/workspace/repo/link-to-host', content: 'x' }, held: blocked },
+  { name: 'a write through a link at review.json is refused', tool: 'write', input: { path: '/workspace/review.json', content: '{}' }, held: refusedByOs },
   {
     name: 'an edit of a root-owned file is refused',
     tool: 'edit',
     input: { path: '/workspace/repo/root-owned.txt', edits: [{ oldText: 'root-owned', newText: 'edited' }] },
-    held: refusedByOs,
+    held: blocked,
   },
   { name: "pi's auth file is not readable", tool: 'read', input: { path: `${STATE}/pi/auth.json` }, held: refusedByOs },
   { name: 'grep finds nothing in the host state', tool: 'grep', input: { pattern: '.', path: STATE }, held: (t, e) => e || /No (files|matches) found/i.test(t) },
@@ -135,7 +147,7 @@ const parts: PiParts = {
 };
 mkdirSync(parts.agentDir, { recursive: true, mode: 0o700 });
 
-for await (const _event of piHarness(config, HOST_ROLES.builder, new AbortController(), parts).start({ prompt: 'Probe.', round: 1 }, () => {})) {
+for await (const _event of piHarness(config, HOST_ROLES[ROLE], new AbortController(), parts).start({ prompt: 'Probe.', round: 1 }, () => {})) {
   // The results are read from the tool results the scripted model sees.
 }
 
@@ -153,5 +165,5 @@ const checks: [string, boolean, string][] = [
 ];
 for (const [name, held, detail] of checks) console.log(`${held ? 'ok  ' : 'FAIL'} ${name}${held || !detail ? '' : `: ${detail}`}`);
 const failed = checks.filter(([, held]) => !held).length;
-console.log(failed === 0 ? `\nAll ${checks.length} checks held.` : `\n${failed} of ${checks.length} checks failed.`);
+console.log(failed === 0 ? `\nAll ${checks.length} checks held for the ${ROLE}.` : `\n${failed} of ${checks.length} checks failed for the ${ROLE}.`);
 process.exit(failed === 0 ? 0 : 1);

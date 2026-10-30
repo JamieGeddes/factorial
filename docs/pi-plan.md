@@ -1,10 +1,12 @@
 # Implementation plan: pi for every role
 
-**Date:** 2026-10-30. **Status:** decided 2026-10-29; phases 0 and 1 done. **Starting point:** `main` after #196, with the builder on pi and the reviewer on the Claude Agent SDK.
+**Date:** 2026-10-30. **Status:** decided 2026-10-29; phases 0 to 3 done, tracked in #198. **Starting point:** `main` after #196, with the builder on pi and the reviewer on the Claude Agent SDK.
 
 This plan moves every role to pi (`@earendil-works/pi-coding-agent` and `@earendil-works/pi-ai`, MIT, pinned at 1.4.0) and removes the Claude Agent SDK. Spike #181 justified it: see `docs/harness-vs-runtime.md`, **pi on AgentCore Runtime** and **pi spike results**. The reason is flexibility. pi's loop runs in Factorial's host process, where Factorial can read, extend and patch it, and other models on Bedrock become a configuration change.
 
 The move is made one role at a time, like `docs/agent-sdk-plan.md`. Until the last phase, `FACTORIAL_HARNESS` on a Runtime version is the rollback. Nothing outside the agent host changes: the run contract (`contracts/run/v1/`), the invoker, the state machine and the records already treat the harness as the Runtime version's business.
+
+**Changed 2026-10-30: no watch periods.** Phases 2 and 3 first planned to watch about 10 labelled items each before moving on. Every labelled item is billed on Bedrock, while this work is not, so both phases end when their change is deployed. The checks that need no model (the tests, `pi/loop.test.ts`, and the probe in the image for each role) stand in for them. The first items labelled after phase 4 are the check on real work. A regression there is fixed forward, or rolled back by reverting phase 4 or rebuilding from its tag.
 
 ## 1. Target shape
 
@@ -32,26 +34,15 @@ The move is made one role at a time, like `docs/agent-sdk-plan.md`. Until the la
 - `docs/security.md` §9: the in-session enforcement decision is kept with pi, and §9.2b becomes the main list once the SDK host goes.
 - This plan, and a tracking issue with one item per remaining phase.
 
-### Phase 2: the builder on pi for good
+### Phase 2: the builder on pi for good (done, #199)
 
-- **`templates/20-agent.yml`:** the builder's harness comment changes from "for the spike's runs" to permanent. `FACTORIAL_EFFORT: high` stays unless the figures below argue otherwise.
-- **Watch about 10 items,** including reworks and at least one that is not a refactor. For each, from the ledger and `build/usage.json`:
-  - outcome and rounds;
-  - turns and model calls;
-  - input, cache share and cost, with the plan subagent's share;
-  - the review verdict;
-  - whether tests passed first time.
-  
-  Compare with the SDK builds of 2026-10-25 to 2026-10-28.
-- **Exit:** no regression against the SDK figures that the item mix does not explain.
+- `templates/20-agent.yml`: the builder's harness comment made permanent; `FACTORIAL_EFFORT: high` kept.
 
-### Phase 3: the reviewer on pi
+### Phase 3: the reviewer on pi (done)
 
-- **`FACTORIAL_HARNESS: pi` on the reviewer's Runtime version.** Its definition is already shared: read tools, writes only to `/workspace/review.json`, no subagents, no web search. Its policy's shell rules and the review second pass are harness-neutral (`roles.ts`).
-- **Before switching, run the security probe with the reviewer's role** (`HOST_ROLES.reviewer`). Its write rule and shell rules differ from the builder's.
-- **Effort:** the reviewer has none set today, which leaves Claude Code's default. Choose pi's explicitly.
-- **Watch about 10 reviews.** Verdicts and scores should be in line with the SDK reviewer's, and above all there should be no approval of a change that tests or a human then find wrong.
-- **Exit:** the above, and no reviewer run that fails for a harness reason.
+- `scripts/pi-security-probe.ts` takes a role (`PROBE_ROLE=reviewer`). It also checks a planted `review.json` link: the reviewer's one writable file, pointing out of the workspace. All 23 checks held for each role.
+- `pi/loop.test.ts` runs the reviewer's real role through pi's loop with the faux provider. An invalid `review.json` sends it back, a valid one gets the second pass, and then it ends `complete`.
+- The reviewer's Runtime block sets `FACTORIAL_HARNESS: pi` and `FACTORIAL_EFFORT: high`, as the builder's does. On the SDK it had no effort set; pi's own default would be `medium`.
 
 ### Phase 4: remove the SDK
 
@@ -84,10 +75,10 @@ One pull request, deployed as one new Runtime version for both roles. Phase 3 mu
 
 ## 3. Pull requests, in order
 
-1. #196: phase 0 (merged).
-2. Phase 1: `CLAUDE.md`, `docs/security.md` §9, this plan.
-3. Phase 2: the builder's template comment, then the figures after about 10 items, recorded here.
-4. Phase 3: the reviewer probe and `FACTORIAL_HARNESS: pi` on the reviewer, then its figures.
+1. #196: phase 0.
+2. #197: phase 1: `CLAUDE.md`, `docs/security.md` §9, this plan.
+3. #199: phase 2: the builder's template comment.
+4. Phase 3: the probe for the reviewer, and `FACTORIAL_HARNESS: pi` on the reviewer.
 5. Phase 4: the SDK's removal, after the tag.
 
 ## 4. Standing rules
@@ -101,10 +92,10 @@ One pull request, deployed as one new Runtime version for both roles. Phase 3 mu
 |---|---|
 | pi is a small project; a release breaks or stalls | Exact pin; upgrades only by pull request with the checks above; the host owns the code it relies on (`src/pi/`) and can patch around pi |
 | More of the security surface is Factorial's code | §9.2b's mitigations; the probe in the image; the outer boundaries (execution role, clean room, tested-head check) do not depend on the loop |
-| The reviewer judges differently on pi | Phase 3 watches verdicts against the SDK reviewer's before phase 4 removes the fallback |
-| Cost per item rises | Phase 2's figures, with the plan subagent's share shown separately |
+| The reviewer judges differently on pi | Its policy and prompts are shared with the SDK host; the first reviews after the move are read against the change, and the tag keeps the SDK reviewer one revert away |
+| Cost per item rises | `build/usage.json` records the plan subagent's share per item; read the first items' figures after phase 4 |
 
 ## 6. Rollback
 
-- **Phases 2 and 3:** set `FACTORIAL_HARNESS` back to `claude-agent-sdk` on the role's Runtime block. It is a new Runtime version, deployed and promoted as usual.
+- **Until phase 4:** set `FACTORIAL_HARNESS` back to `claude-agent-sdk` on the role's Runtime block. It is a new Runtime version, deployed and promoted as usual.
 - **After phase 4:** revert the removal pull request, or rebuild from `stage-1-claude-sdk-final`.
