@@ -64,6 +64,16 @@ describe('RunTally', () => {
     assert.equal(tally.end?.turns, 3);
   });
 
+  it('logs the run ended cost rounded, and leaves the event itself unrounded', () => {
+    const tally = new RunTally();
+    tally.add(started);
+    const event = ended('complete', 'completed', { cost: { usd: 0.25970079999999995, basis: 'harness-estimate' } });
+    const lines = tally.add(event);
+    assert.equal(lines[0]?.fields.costUsd, 0.2597);
+    assert.equal(tally.end?.cost?.usd, 0.25970079999999995);
+    assert.equal(tally.add(ended('complete', 'completed'))[0]?.fields.costUsd, undefined);
+  });
+
   it('stops reading a host whose first event is not run.started for this contract', () => {
     for (const first of [{ type: 'system', subtype: 'init' }, { ...started, contract: 2 }, null]) {
       const tally = new RunTally();

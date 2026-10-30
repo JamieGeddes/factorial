@@ -9,6 +9,7 @@
  */
 import { RUN_CONTRACT, outcomeOfReason, validateRunEvent, type RunEnded, type RunEvent, type RunOutcome, type RunStarted, type RunStatus, type TokenUsage } from '@factorial/run';
 
+import { roundUsd } from './run-record.ts';
 import { addCallUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
 
 /** One model call's usage in the shape usage.json has always had. */
@@ -142,7 +143,7 @@ export class RunTally {
         return [{ message: 'model call retried', fields: { attempt: event.attempt, status: event.status, error: event.error } }];
       case 'run.ended':
         this.end = event;
-        return [{ message: 'run ended', fields: { outcome: event.outcome, reason: event.reason, detail: event.detail, turns: event.turns, costUsd: event.cost?.usd } }];
+        return [{ message: 'run ended', fields: { outcome: event.outcome, reason: event.reason, detail: event.detail, turns: event.turns, costUsd: roundUsd(event.cost?.usd) } }];
       default:
         return [];
     }

@@ -86,6 +86,27 @@ export interface HarnessRecord {
   subagents?: { runs: SubagentRun[]; totals: SubagentTotal[] };
 }
 
+/**
+ * The harness's cost estimate as the invoker records it: rounded to 4 decimal
+ * places (a hundredth of a cent), since the host sums per-call estimates as
+ * floats and the figure is at list prices. Round only for recording; any sum
+ * over rounds or items adds the rounded figures. undefined stays undefined.
+ */
+export function roundUsd(usd: number): number;
+export function roundUsd(usd: number | undefined): number | undefined;
+export function roundUsd(usd: number | undefined): number | undefined {
+  return usd === undefined ? undefined : Math.round(usd * 10_000) / 10_000;
+}
+
+/** The harness record with every cost rounded for recording. */
+function roundedHarness(harness: HarnessRecord): HarnessRecord {
+  return {
+    ...harness,
+    ...(harness.costUsd !== undefined ? { costUsd: roundUsd(harness.costUsd) } : {}),
+    ...(harness.models ? { models: harness.models.map((m) => (m.costUsd !== undefined ? { ...m, costUsd: roundUsd(m.costUsd) } : m)) } : {}),
+  };
+}
+
 export function usageRecord(params: {
   version: VersionInfo;
   stopReason: string | undefined;
@@ -105,7 +126,7 @@ export function usageRecord(params: {
     durationSeconds: Math.round((params.endedAt - params.startedAt) / 1000),
     usage: params.usage,
     calls: params.calls,
-    ...(params.harness ? { harness: params.harness } : {}),
+    ...(params.harness ? { harness: roundedHarness(params.harness) } : {}),
     ...(params.error ? { error: params.error } : {}),
   };
 }
@@ -144,7 +165,7 @@ export function runEntryOf(params: {
     ...(params.stopReason ? { stopReason: params.stopReason } : {}),
     ...(params.outcome ? { outcome: params.outcome } : {}),
     usage: { ...params.usage },
-    ...(harness?.costUsd !== undefined ? { costUsd: harness.costUsd } : {}),
+    ...(harness?.costUsd !== undefined ? { costUsd: roundUsd(harness.costUsd) } : {}),
     ...(typeof record?.transcriptKey === 'string' ? { transcriptKey: record.transcriptKey } : {}),
     ...(typeof record?.usageKey === 'string' ? { usageKey: record.usageKey } : {}),
   };
