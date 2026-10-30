@@ -6,10 +6,12 @@ import { parse } from 'yaml';
 import {
   actionsArePinnedToFullCommitShas,
   deployRoleNeedsProductionEnvironmentAndTrustGate,
+  deployStackListCoversEveryTemplate,
   fullHistoryWhereHistoryIsDiffed,
   noActionsCache,
   requiredChecksExist,
   RULE_DEPLOY_ROLE,
+  RULE_DEPLOY_STACKS,
   RULE_FULL_HISTORY,
   RULE_NO_CACHE,
   RULE_PINNED_SHAS,
@@ -231,6 +233,84 @@ jobs:
     assert.equal(violations.length, 1);
     assert.equal(violations[0]!.rule, RULE_REQUIRED_CHECKS);
     assert.match(violations[0]!!.message, /Lint CloudFormation/);
+  });
+});
+
+describe('deployStackListCoversEveryTemplate', () => {
+  const deploy = (script: string) =>
+    workflowOf(`
+jobs:
+  deploy:
+    name: Deploy Factorial stacks
+    steps:
+      - name: Deploy stacks in order
+        run: |
+          set -euo pipefail
+${script.split('\n').map((line) => '          ' + line).join('\n')}
+`);
+  const list = (entries: string) =>
+    deploy(`stacks=(${entries})\nfor name in "\${stacks[@]}"; do echo "$name"; done`);
+  const templates = ['agent.yml', 'foundation.yml', 'orchestration.yml', 'triggers.yml'];
+  const check = (workflow: Workflow, files = templates) =>
+    deployStackListCoversEveryTemplate(workflow, files, 'deploy.yml');
+
+  it('accepts the current list', () => {
+    assert.deepEqual(check(list('triggers agent orchestration')), []);
+  });
+
+  it('does not check the order', () => {
+    assert.deepEqual(check(list('orchestration triggers agent')), []);
+  });
+
+  it('accepts a multi-line array', () => {
+    assert.deepEqual(check(deploy('stacks=(\n  triggers\n  agent\n  orchestration\n)')), []);
+  });
+
+  it('rejects a template missing from the list', () => {
+    const violations = check(list('triggers agent orchestration'), [
+      ...templates,
+      'example.yml',
+    ]);
+    assert.equal(violations.length, 1);
+    assert.equal(violations[0]!.rule, RULE_DEPLOY_STACKS);
+    assert.match(violations[0]!.message, /example/);
+  });
+
+  it('rejects a stack with no template', () => {
+    const violations = check(list('triggers agent orchestration ghost'));
+    assert.equal(violations.length, 1);
+    assert.match(violations[0]!.message, /ghost/);
+  });
+
+  it('rejects foundation in the list', () => {
+    const violations = check(list('foundation triggers agent orchestration'));
+    assert.equal(violations.length, 1);
+    assert.match(violations[0]!.message, /foundation/);
+  });
+
+  it('rejects a duplicate', () => {
+    const violations = check(list('triggers agent agent orchestration'));
+    assert.equal(violations.length, 1);
+    assert.match(violations[0]!.message, /agent.*more than once/);
+  });
+
+  it('rejects a workflow without the step', () => {
+    const violations = check(workflowOf('jobs:\n  deploy:\n    steps:\n      - run: echo hi\n'));
+    assert.equal(violations.length, 1);
+    assert.equal(violations[0]!.rule, RULE_DEPLOY_STACKS);
+    assert.match(violations[0]!.message, /Deploy stacks in order/);
+  });
+
+  it('rejects a step without a stacks=(...) line', () => {
+    const violations = check(deploy('for name in triggers agent orchestration; do echo "$name"; done'));
+    assert.equal(violations.length, 1);
+    assert.match(violations[0]!.message, /stacks=/);
+  });
+
+  it('names the job and step', () => {
+    const violations = check(list('triggers agent'));
+    assert.equal(violations[0]!.job, 'Deploy Factorial stacks');
+    assert.equal(violations[0]!.step, 'Deploy stacks in order');
   });
 });
 

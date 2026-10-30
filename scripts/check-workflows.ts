@@ -3,11 +3,13 @@
  * repository's workflow conventions.
  *
  * Parses every file in .github/workflows (YAML) and every
- * .github/actions/(dir)/action.yml, and reports any violation of the five rules listed under "Workflows" in
- * CLAUDE.md, naming the file, the job (or step) and the rule for each. The
+ * .github/actions/(dir)/action.yml, and reports any violation of the six rules
+ * listed under "Workflows" in CLAUDE.md, naming the file, the job (or step) and the rule for each. The
  * rules are exported as pure functions over the parsed YAML so they can be
  * tested with fixtures (see scripts/check-workflows.test.ts); file reading
  * and reporting stay in main().
+ *
+ * Rule 6 also reads the file names in templates/, so run from the repository root.
  *
  * Usage: node scripts/check-workflows.ts
  *
@@ -60,6 +62,7 @@ export const RULE_PINNED_SHAS = 'remote actions must be pinned to a full commit 
 export const RULE_NO_CACHE = 'no Actions cache';
 export const RULE_FULL_HISTORY = 'full history where history is diffed';
 export const RULE_REQUIRED_CHECKS = 'required checks still exist';
+export const RULE_DEPLOY_STACKS = 'deploy stack list covers every template';
 
 export interface Violation {
   rule: string;
@@ -252,6 +255,73 @@ export function requiredChecksExist(workflow: Workflow, file: string): Violation
   );
 }
 
+const DEPLOY_STEP_NAME = 'Deploy stacks in order';
+
+/**
+ * Rule 6: the stacks=(...) list in deploy.yml's "Deploy stacks in order" step
+ * names every templates/<name>.yml except foundation.yml, exactly once each.
+ * templateFiles are bare file names from templates/. Order is not checked.
+ */
+export function deployStackListCoversEveryTemplate(
+  workflow: Workflow,
+  templateFiles: string[],
+  file: string,
+): Violation[] {
+  let found: { job: string; step: Step } | undefined;
+  for (const [key, job] of Object.entries(workflow.jobs ?? {})) {
+    const step = stepsOf(job).find((candidate) => candidate.name === DEPLOY_STEP_NAME);
+    if (step) {
+      found = { job: jobLabel(key, job), step };
+      break;
+    }
+  }
+  if (!found) {
+    return [
+      {
+        rule: RULE_DEPLOY_STACKS,
+        file,
+        message: 'no step named "' + DEPLOY_STEP_NAME + '", so the stack list cannot be checked',
+      },
+    ];
+  }
+  const { job, step } = found;
+  const at = { rule: RULE_DEPLOY_STACKS, file, job, step: stepLabel(step) };
+  const match =
+    typeof step.run === 'string' ? /^\s*stacks=\(([^)]*)\)/m.exec(step.run) : null;
+  if (!match) {
+    return [
+      { ...at, message: 'no stacks=(...) line found in the step, so the stack list cannot be checked' },
+    ];
+  }
+  const entries = match[1]!
+    .split(/\s+/)
+    .map((entry) => entry.replace(/^["']|["']$/g, ''))
+    .filter((entry) => entry.length > 0);
+  const templates = templateFiles
+    .filter((name) => name.endsWith('.yml'))
+    .map((name) => name.slice(0, -'.yml'.length));
+  const violations: Violation[] = [];
+  for (const name of new Set(entries)) {
+    if (name === 'foundation') {
+      violations.push({ ...at, message: "'foundation' must not be in the list; a human deploys it" });
+    } else if (!templates.includes(name)) {
+      violations.push({ ...at, message: "'" + name + "' has no templates/" + name + '.yml' });
+    }
+    if (entries.filter((entry) => entry === name).length > 1) {
+      violations.push({ ...at, message: "'" + name + "' is listed more than once" });
+    }
+  }
+  for (const name of templates) {
+    if (name !== 'foundation' && !entries.includes(name)) {
+      violations.push({
+        ...at,
+        message: 'templates/' + name + '.yml is not in the list, so it is never deployed',
+      });
+    }
+  }
+  return violations;
+}
+
 function findWorkflowFiles(): string[] {
   const directory = '.github/workflows';
   if (!existsSync(directory)) return [];
@@ -271,7 +341,12 @@ function findActionFiles(): string[] {
     .sort();
 }
 
+function findTemplateFiles(): string[] {
+  return existsSync('templates') ? readdirSync('templates').sort() : [];
+}
+
 function main(): void {
+  const templateFiles = findTemplateFiles();
   const files = [...findWorkflowFiles(), ...findActionFiles()];
   const violations: Violation[] = [];
   for (const file of files) {
@@ -294,6 +369,9 @@ function main(): void {
         ...fullHistoryWhereHistoryIsDiffed(workflow, file),
         ...(file === '.github/workflows/ci.yml'
           ? requiredChecksExist(workflow, file)
+          : []),
+        ...(file === '.github/workflows/deploy.yml'
+          ? deployStackListCoversEveryTemplate(workflow, templateFiles, file)
           : []),
       );
     }
