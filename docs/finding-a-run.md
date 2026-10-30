@@ -1,6 +1,6 @@
 # Finding a run
 
-Everything a run produces is keyed by its work item id: the Step Functions execution name, the Runtime session id, the ledger row key, the artefact prefix and the `workItemId` field on every log line. Start from the id; it is in the pull request body, the failure comment on the issue and the ledger.
+Everything a run produces is keyed by its work item id: the Runtime session id, the ledger row key, the artefact prefix and the `workItemId` field on every log line and state output. The Step Functions execution is the exception: EventBridge starts it and names it, so its name is not the id, and the ledger row records its ARN instead (#203). Start from the id; it is in the pull request body, the failure comment on the issue and the ledger.
 
 All paths are in the AWS console, region **Europe (Ireland) eu-west-1**. Replace `<id>` with the work item id.
 
@@ -8,13 +8,22 @@ All paths are in the AWS console, region **Europe (Ireland) eu-west-1**. Replace
 
 **DynamoDB** → left nav **Tables** → **Explore items** → table **factorial-work-items** → **Query**, partition key `workItemId` = `<id>` → **Run**.
 
-Note `attempt`, `artefactPrefix`, `status`, `route`, `threadKey` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way). A build that ran in more than one session has `buildRounds` and `buildSessionId`: round 1's builder session is the work item id, round *n*'s is `<id>-r<n>`. Items accepted before #163 have no `route` or `threadKey`.
+Note `attempt`, `artefactPrefix`, `executionArn`, `status`, `route`, `threadKey` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way). A build that ran in more than one session has `buildRounds` and `buildSessionId`: round 1's builder session is the work item id, round *n*'s is `<id>-r<n>`. Items accepted before #163 have no `route` or `threadKey`, and items accepted before #203 no `executionArn`.
 
 **The thread.** Table **factorial-threads** → **Query**, partition key `threadKey` = the row's `threadKey` → **Run**: the branch, the pull request (`prNumber`, `prOpenedBy`), the turn holding it (`inFlight`) and the automatic rework count. To list every turn on the thread: table **factorial-work-items** → **Query** → **Select a table or index**: `threadKey-createdAt-index`, partition key `threadKey` = the same value → **Run**. To start from a pull request instead: table **factorial-threads** → **Query** → index `pullRequestKey-index`, partition key `<owner>/<name>#<number>` in lower case → **Run**.
 
 ## 2. The execution
 
-**Step Functions** → left nav **State machines** → **factorial-work** → **Executions** tab → search box: `<id>` → open the execution.
+Open `https://eu-west-1.console.aws.amazon.com/states/home?region=eu-west-1#/v2/executions/details/<executionArn>` with the ledger row's `executionArn`, or run `aws stepfunctions describe-execution --execution-arn <executionArn>`.
+
+For a row without `executionArn`, find it from the execution log: **CloudWatch** → left nav **Logs** → **Logs Insights** → log group `/aws/vendedlogs/states/factorial-work` → a time range covering the row's `createdAt` → query:
+
+```
+fields @timestamp, execution_arn
+| filter type = "ExecutionStarted" and details.input like "<id>"
+```
+
+The execution name (`<uuid>_<uuid>`) is EventBridge's, so searching the **Executions** tab for the id finds nothing.
 
 Every state's output carries `workItemId` and `attempt`. **Build** and **Review** output `taskArn`; its last segment is the invoker task id for that run. Runs before 2026-10-25's phase 3.1 also had **Plan** (twice when the first plan was rejected, shown by `planAttempt`) and **CollectPlan**.
 

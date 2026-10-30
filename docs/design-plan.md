@@ -204,12 +204,12 @@ A new bucket, `factorial-work-artefacts`, holds everything a run produces. It is
 - The ledger holds status, lineage, usage totals and the key prefix. It never holds content.
 - The attempt number increments on resume, so a resumed run keeps the earlier attempt's record.
 
-**One correlation key.** The `WorkItem` id is already the Step Functions execution name. It becomes, in addition, the harness session id for every stage, the key prefix in the store, and the `factorial.workItemId` attribute on every log line and trace span. Anything that needs to join logs, traces, ledger rows and artefacts does so on one value.
+**One correlation key.** The `WorkItem` id is carried in the Step Functions execution's input (EventBridge names the execution, so the ledger records its ARN; #203). It becomes, in addition, the harness session id for every stage, the key prefix in the store, and the `factorial.workItemId` attribute on every log line and trace span. Anything that needs to join logs, traces, ledger rows and artefacts does so on one value.
 
 ```mermaid
 flowchart LR
     id["WorkItem id"]
-    id --> exec["Step Functions<br/>execution name"]
+    id --> exec["Step Functions<br/>execution (ARN on the ledger)"]
     id --> sess["Harness session id<br/>(every stage)"]
     id --> prefix["Artefact store<br/>key prefix"]
     id --> attr["Log and trace attribute<br/>factorial.workItemId"]

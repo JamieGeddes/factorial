@@ -156,7 +156,7 @@ The vocabulary, used consistently in code, documents and prompts:
 - Every stage writes under `<workItemId>/<attempt>/<stage>/` through one artefact module that redacts. Uploads are idempotent, the bucket is versioned, deletes are denied to every principal, and retention is a lifecycle rule.
 - The store is write-only except for named keys the orchestrator reads back, each granted explicitly by key in the template and listed in the binding documentation. No agent role reaches the bucket.
 - The ledger holds turns (status, route, priority, usage, pointers) and threads (branch, pull request, tested head, in flight, counts). It holds pointers and counts, never content.
-- The work item id is the execution name, the session id, the ledger key, the artefact prefix and a field on every log line and state output; the thread key joins the turns on one branch. A document in the repository says how to reach every record of a run from that id, and every change that adds a record updates it.
+- The work item id is the session id, the ledger key, the artefact prefix and a field on every log line and state output, and the ledger row records the execution's ARN; the thread key joins the turns on one branch. A document in the repository says how to reach every record of a run from that id, and every change that adds a record updates it.
 
 ### 4.12 Versioning and deployment
 

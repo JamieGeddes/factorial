@@ -17,7 +17,7 @@ The orchestration stack (`factorial-orchestration`) holds the `factorial-work` s
 
 ### Intake
 
-Intake (`functions/intake.ts`, since #163) accepts the item exactly once (the ledger row is the idempotency guard; a duplicate ends in `Duplicate`), resolves the **thread** it is a turn in, and chooses its **route**; the Route choice runs Prepare for `change` and ends in `NotAdmitted` for `refuse`. It records `route` and `threadKey` on the ledger row and writes `intake/intake.json` (`contracts/intake/v1/`, validated before it is stored or returned). No session is touched. `docs/design-extension-points.md` §3 is the design.
+Intake (`functions/intake.ts`, since #163) accepts the item exactly once (the ledger row is the idempotency guard; a duplicate ends in `Duplicate`), resolves the **thread** it is a turn in, and chooses its **route**; the Route choice runs Prepare for `change` and ends in `NotAdmitted` for `refuse`. It records `executionArn`, `route` and `threadKey` on the ledger row and writes `intake/intake.json` (`contracts/intake/v1/`, validated before it is stored or returned). No session is touched. `docs/design-extension-points.md` §3 is the design.
 
 - **Threads.** The `factorial-threads` table holds one row per branch Factorial works on (`threadKey`, `<owner>/<name>#<branch>` with owner and name in lower case): the item that created it, the source it came from, the pull request once one is open (`pullRequestKey`, `prNumber`, and `prOpenedBy`, written by OpenPullRequest), which turn holds it (`inFlight`), the automatic reworks since a person last asked and whether the limit was announced, and a `version`. Pointers and counts only. Each work item row carries its `threadKey`, and `threadKey-createdAt-index` lists a thread's turns.
 - **Turns on a pull request** name it through `inReplyTo` (`lib/turn.ts`), and the cause is derived from the source type (`github-pull-request-review` and `-review-comment` are `review`, `-comment` is `comment`, `github-workflow-run` is `checks-failed`); an unknown type is refused as `not-eligible`. An item in the superseded rework `context` shape is refused as `not-eligible` too: nothing emits it since #163, and nothing reads it.
@@ -117,7 +117,7 @@ The ledger row points at the build records with `build.transcriptKey` and `build
 
 ## Logging and correlation
 
-Every orchestrator Lambda and the invoker log one JSON object per line through `@factorial/log` (`workItemId`, `attempt`, `stage`, `level`, `message`, redacted). The work item id is the execution name, the agent session id, the ledger key, the artefact prefix and the `workItemId` attribute on every log line and state output. AgentCore traces are not yet exported (CloudWatch Transaction Search is off), so finding a run's trace by its id is still unproven.
+Every orchestrator Lambda and the invoker log one JSON object per line through `@factorial/log` (`workItemId`, `attempt`, `stage`, `level`, `message`, redacted). The work item id is the agent session id, the ledger key, the artefact prefix and the `workItemId` attribute on every log line and state output. EventBridge starts the execution and names it, so the execution name is not the id; Intake records the execution's ARN on the ledger row as `executionArn` (#203). AgentCore traces are not yet exported (CloudWatch Transaction Search is off), so finding a run's trace by its id is still unproven.
 
 ## Stacks and deployment
 

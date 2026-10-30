@@ -20,8 +20,12 @@ export class DuplicateWorkItemError extends Error {
   }
 }
 
-/** Record a new WorkItem exactly once, with its attempt number, artefact prefix and any lineage. Returns the row's `createdAt`. */
-export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string, attempt: number): Promise<string> {
+/**
+ * Record a new WorkItem exactly once, with its attempt number, artefact
+ * prefix, the execution running it and any lineage. Returns the row's
+ * `createdAt`.
+ */
+export async function acceptWorkItem(workItem: WorkItem, factorialVersion: string, attempt: number, executionArn?: string): Promise<string> {
   const now = new Date().toISOString();
   try {
     await documents.send(
@@ -35,6 +39,7 @@ export async function acceptWorkItem(workItem: WorkItem, factorialVersion: strin
           factorialVersion,
           attempt,
           artefactPrefix: artefactPrefix(workItem.id, attempt),
+          executionArn,
           ...lineageAttributes(workItem),
           createdAt: now,
           updatedAt: now,
