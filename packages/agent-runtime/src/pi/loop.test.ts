@@ -1,14 +1,16 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessageEventStream, type Provider } from '@earendil-works/pi-ai';
 import type { RunEnded, RunEvent } from '@factorial/run';
 
 import { readConfig } from '../config.ts';
-import type { HostRole } from '../roles.ts';
+import { SECOND_PASS } from '../review.ts';
+import { HOST_ROLES, type HostRole } from '../roles.ts';
 import type { AgentRunner } from './as-agent.ts';
 import { piHarness, type PiParts } from './harness.ts';
 
@@ -126,5 +128,54 @@ describe("pi's loop at its limits", () => {
     assert.equal(ended.reason, 'harness_error');
     assert.equal(ended.detail, 'aborted');
     assert.ok(calls < 5, `stopped after ${calls} calls`);
+  });
+});
+
+describe("the reviewer's role on pi", () => {
+  it('sends the reviewer back until review.json is valid, then once for a second pass, then lets it end', async () => {
+    const workspace = mkdtempSync(path.join(root, 'review-'));
+    const review = JSON.stringify({
+      schemaVersion: 1,
+      verdict: 'approve',
+      scores: { correctness: 5, completeness: 5, tests: 4, safety: 5 },
+      findings: [],
+      summary: 'Does what was asked.',
+    });
+    const write = (content: string) => fauxAssistantMessage(fauxToolCall('write', { path: `${workspace}/review.json`, content }), { stopReason: 'toolUse' });
+    const done = () => fauxAssistantMessage('Done.', { stopReason: 'stop' });
+    const faux = fauxProvider({ provider: 'amazon-bedrock', models: [{ id: MODEL }, { id: SMALL_MODEL }] });
+    faux.setResponses([write('{}'), done(), write(review), done(), done()]);
+    const config = {
+      ...readConfig({
+        FACTORIAL_ROLE: 'reviewer',
+        FACTORIAL_HARNESS: 'pi',
+        FACTORIAL_MODEL: MODEL,
+        FACTORIAL_BACKGROUND_MODEL: SMALL_MODEL,
+        FACTORIAL_MAX_TURNS: '60',
+        FACTORIAL_RUN_CONTRACT: '1',
+        FACTORIAL_MAX_BUDGET_USD: '2',
+        FACTORIAL_MAX_DURATION_SECONDS: '900',
+        AWS_REGION: 'eu-west-1',
+      }),
+      workspace,
+    };
+    const parts: PiParts = {
+      runner,
+      helper: { runner, command: [process.execPath, '--no-warnings', fileURLToPath(new URL('./agent-ops.ts', import.meta.url))], cwd: workspace },
+      agentDir: mkdtempSync(path.join(root, 'agent-')),
+      webSearch: undefined,
+      provider: faux.provider,
+    };
+    const sentBack: string[] = [];
+    const events: RunEvent[] = [];
+    const note = (message: string, fields: Record<string, unknown>) => message === 'reviewer sent back' && sentBack.push(String(fields.reason));
+    for await (const event of piHarness(config, HOST_ROLES.reviewer, new AbortController(), parts).start({ prompt: 'Review.', round: 1 }, note)) events.push(event);
+    const ended = events.find((event): event is RunEnded => event.type === 'run.ended');
+    assert.equal(ended?.outcome, 'complete');
+    assert.equal(sentBack.length, 2);
+    assert.match(sentBack[0] ?? '', /review\.json/);
+    assert.equal(sentBack[1], SECOND_PASS);
+    assert.equal(readFileSync(path.join(workspace, 'review.json'), 'utf8'), review);
+    assert.equal(faux.state.callCount, 5);
   });
 });

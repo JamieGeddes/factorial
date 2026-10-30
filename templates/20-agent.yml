@@ -424,6 +424,11 @@ Resources:
       # no web search gateway.
       EnvironmentVariables:
         FACTORIAL_ROLE: reviewer
+        # pi, as the builder, since phase 3 of docs/pi-plan.md (#198);
+        # claude-agent-sdk is the rollback until phase 4 removes it.
+        FACTORIAL_HARNESS: pi
+        # As the builder's; pi's own default would be medium.
+        FACTORIAL_EFFORT: high
         # As the builder's (contracts/run/v1/).
         FACTORIAL_RUN_CONTRACT: '1'
         FACTORIAL_MODEL: global.anthropic.claude-sonnet-5-5
