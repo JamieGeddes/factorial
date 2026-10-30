@@ -23,14 +23,20 @@ export const DEFAULT_OPTIONS: DigestOptions = {
   maxLineLength: 300,
 };
 
-const FAILURE = /\b(not ok|fail(ed|ure|ing)?|errors?|exception|panic|cannot|unable)\b|✖|✗|ERR!/i;
+// Failure words in any toolchain's output, then lines that carry the detail
+// without one: pytest's assertion lines ("E   assert 1 == 2") and Go's test
+// messages ("foo_test.go:12: got 1, want 2").
+const FAILURE = /\b(not ok|fail(ed|ures?|ing)?|errors?|exception|panic(ked)?|fatal|traceback|cannot|unable)\b|✖|✗|ERR!/i;
+const DETAIL = /^E {3}|_test\.go:\d+:/;
 // Error class names such as AssertionError or TypeError.
 const ERROR_CLASS = /[a-z](Error|Exception)\b/;
-// Summary lines that mention failure but report none, such as "# fail 0".
-const NOT_A_FAILURE = /^\s*#?\s*(fail|failed|failures|errors?)\s*:?\s*0\s*$|\b0 (failed|failures|errors)\b/i;
+// Counts of none, such as "# fail 0", "0 failed" or "Failures: 0, Errors: 0",
+// removed before matching so a summary that reports no failure is not one.
+const ZERO_COUNT = /\b((fail(ed|ures?)?|errors?)\s*[:=]?\s*0|0\s+(fail(ed|ures?)?|errors?))\b/gi;
 
 export function looksLikeFailure(line: string): boolean {
-  return (FAILURE.test(line) || ERROR_CLASS.test(line)) && !NOT_A_FAILURE.test(line);
+  const counted = line.replace(ZERO_COUNT, '');
+  return FAILURE.test(counted) || ERROR_CLASS.test(counted) || DETAIL.test(line);
 }
 
 function clip(line: string, max: number): string {

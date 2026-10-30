@@ -41,10 +41,38 @@ describe('looksLikeFailure', () => {
     }
   });
 
+  it('matches failure lines from other toolchains', () => {
+    for (const line of [
+      'FAILED tests/test_api.py::test_get - assert 404 == 200',
+      'E       assert 404 == 200',
+      'Traceback (most recent call last):',
+      '--- FAIL: TestParse (0.00s)',
+      '    parse_test.go:12: got 1, want 2',
+      "thread 'tests::parse' panicked at src/lib.rs:10:5:",
+      'error[E0308]: mismatched types',
+      '[ERROR] Tests run: 4, Failures: 1, Errors: 0, Skipped: 0',
+      'fatal: not a git repository',
+    ]) {
+      assert.ok(looksLikeFailure(line), line);
+    }
+  });
+
   it('ignores summaries that report no failures', () => {
-    for (const line of ['# fail 0', 'fail: 0', '12 passed, 0 failed', 'ok 1 - handles bad input']) {
+    for (const line of [
+      '# fail 0',
+      'fail: 0',
+      '12 passed, 0 failed',
+      'ok 1 - handles bad input',
+      'Tests run: 4, Failures: 0, Errors: 0, Skipped: 0',
+      'test result: ok. 5 passed; 0 failed; 0 ignored',
+      '===== 5 passed in 0.12s =====',
+    ]) {
       assert.ok(!looksLikeFailure(line), line);
     }
+  });
+
+  it('matches a summary that reports a failure beside a count of none', () => {
+    assert.ok(looksLikeFailure('1 error, 0 failed'));
   });
 });
 

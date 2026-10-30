@@ -342,7 +342,7 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     (error: unknown) => {
       if (editsWorkflows) {
         throw new Error(
-          `The change edits GitHub Actions workflows, which needs the Factorial App's "Workflows: read and write" permission (docs/github-app.md): ${redactSecrets(String(error))}`,
+          `The change edits GitHub Actions workflows, which needs the Factorial App's "Workflows: read and write" permission (Factorial's docs/github-app.md): ${redactSecrets(String(error))}`,
         );
       }
       throw error;
