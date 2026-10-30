@@ -2,10 +2,10 @@
  * Runs a command as the agent user. pi runs its loop and tools in the host
  * process, which is root, so every tool that touches the workspace or runs a
  * command goes through here: the model's shell, and the file operations
- * (agent-ops.ts), so root never follows a link the model planted. The drop is
- * the one the Claude Agent SDK host uses (agent-runtime/claude-as-agent):
- * no_new_privs and an empty bounding set stop anything the agent runs from
- * regaining privilege.
+ * (agent-ops.ts), so root never follows a link the model planted. The image's
+ * `rg` wrapper (agent-runtime/rg-as-agent) drops the same way: no_new_privs
+ * and an empty bounding set stop anything the agent runs from regaining
+ * privilege.
  */
 import { spawn } from 'node:child_process';
 

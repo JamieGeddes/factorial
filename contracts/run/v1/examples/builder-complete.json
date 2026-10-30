@@ -2,38 +2,38 @@
   {
     "type": "run.started",
     "contract": 1,
-    "harness": { "name": "claude-agent-sdk", "version": "0.3.309" },
+    "harness": { "name": "pi", "version": "1.4.0" },
     "role": "builder",
     "models": [
-      { "purpose": "main", "provider": "bedrock", "id": "eu.anthropic.claude-sonnet-5-5" },
-      { "purpose": "explore", "provider": "bedrock", "id": "eu.anthropic.claude-haiku-5-5" },
-      { "purpose": "background", "provider": "bedrock", "id": "eu.anthropic.claude-haiku-5-5" }
+      { "purpose": "main", "provider": "bedrock", "id": "global.anthropic.claude-sonnet-5-5" },
+      { "purpose": "explore", "provider": "bedrock", "id": "global.anthropic.claude-haiku-5-5" },
+      { "purpose": "background", "provider": "bedrock", "id": "global.anthropic.claude-haiku-5-5" }
     ],
-    "tools": ["Bash", "Read", "Edit", "Write", "Grep", "Glob", "WebFetch", "Agent"]
+    "tools": ["bash", "read", "edit", "write", "grep", "find", "web_fetch", "task"]
   },
   { "type": "model.call", "model": { "provider": "bedrock", "id": "claude-sonnet-5-5" }, "usage": { "inputTokens": 9004, "outputTokens": 1, "cacheReadInputTokens": 9000, "cacheWriteInputTokens": 0 }, "exact": false },
   { "type": "text", "model": { "provider": "bedrock", "id": "claude-sonnet-5-5" }, "text": "Planning first." },
-  { "type": "tool.call", "callId": "toolu_plan", "tool": "Agent", "input": { "subagent_type": "plan", "prompt": "Plan the change." } },
+  { "type": "tool.call", "callId": "toolu_plan", "tool": "task", "input": { "subagent_type": "plan", "prompt": "Plan the change." } },
   { "type": "subagent.started", "agentId": "toolu_plan", "agentType": "plan" },
   { "type": "model.call", "agentId": "toolu_plan", "usage": { "inputTokens": 4100, "outputTokens": 12, "cacheReadInputTokens": 4000 }, "exact": false },
-  { "type": "tool.call", "agentId": "toolu_plan", "callId": "toolu_read", "tool": "Read", "input": { "file_path": "/workspace/README.md" } },
+  { "type": "tool.call", "agentId": "toolu_plan", "callId": "toolu_read", "tool": "read", "input": { "path": "/workspace/README.md" } },
   { "type": "tool.result", "agentId": "toolu_plan", "callId": "toolu_read", "content": "# Factorial" },
   { "type": "subagent.ended", "agentId": "toolu_plan", "agentType": "plan", "durationMs": 2000, "toolCalls": 4, "finalContextTokens": 900 },
   { "type": "tool.result", "callId": "toolu_plan", "content": "Wrote /workspace/plan.json and /workspace/plan.md." },
   { "type": "context.compacted", "trigger": "auto", "tokensBefore": 180000, "tokensAfter": 22000 },
   { "type": "model.retry", "attempt": 1, "maxRetries": 10, "delayMs": 500, "status": 529, "error": "overloaded" },
-  { "type": "harness", "name": "claude-agent-sdk", "message": { "type": "system", "subtype": "status", "status": "compacting" } },
+  { "type": "harness", "name": "pi", "message": { "type": "auto_compaction_start", "reason": "threshold" } },
   {
     "type": "run.ended",
     "outcome": "complete",
     "reason": "completed",
-    "detail": "success",
+    "detail": "stop",
     "turns": 41,
     "durationMs": 812000,
     "cost": { "usd": 1.05, "basis": "harness-estimate" },
     "models": [
-      { "model": { "provider": "bedrock", "id": "eu.anthropic.claude-sonnet-5-5" }, "usage": { "inputTokens": 2400000, "outputTokens": 31000, "cacheReadInputTokens": 2300000, "cacheWriteInputTokens": 90000 }, "costUsd": 1.01 },
-      { "model": { "provider": "bedrock", "id": "eu.anthropic.claude-haiku-5-5" }, "usage": { "inputTokens": 52000, "outputTokens": 900, "cacheReadInputTokens": 48000, "cacheWriteInputTokens": 0 }, "costUsd": 0.04 }
+      { "model": { "provider": "bedrock", "id": "global.anthropic.claude-sonnet-5-5" }, "usage": { "inputTokens": 2400000, "outputTokens": 31000, "cacheReadInputTokens": 2300000, "cacheWriteInputTokens": 90000 }, "costUsd": 1.01 },
+      { "model": { "provider": "bedrock", "id": "global.anthropic.claude-haiku-5-5" }, "usage": { "inputTokens": 52000, "outputTokens": 900, "cacheReadInputTokens": 48000, "cacheWriteInputTokens": 0 }, "costUsd": 0.04 }
     ],
     "deniedToolCalls": 1
   }

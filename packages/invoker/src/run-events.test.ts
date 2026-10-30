@@ -8,7 +8,7 @@ import { RunTally, callUsageOf, runUsageOf, runtimeStop, subagentsOf } from './r
 const started = {
   type: 'run.started',
   contract: 1,
-  harness: { name: 'claude-agent-sdk', version: '0.3.309' },
+  harness: { name: 'pi', version: '1.4.0' },
   role: 'builder',
   models: [{ purpose: 'main', provider: 'bedrock', id: 'eu.anthropic.claude-sonnet-5-5' }],
 };
@@ -54,7 +54,7 @@ describe('RunTally', () => {
     assert.equal(tally.toolCalls, 2);
     assert.equal(tally.calls.length, 2);
     assert.deepEqual(lines, [{ message: 'tool use', fields: { tool: 'Agent', agent: 'main', input: '{"subagent_type":"explore"}', bytes: 27 } }]);
-    assert.equal(tally.started?.harness.name, 'claude-agent-sdk');
+    assert.equal(tally.started?.harness.name, 'pi');
     assert.equal(tally.ended, false);
   });
 

@@ -1,5 +1,5 @@
 # Agent runtime for Factorial: an AgentCore Runtime container whose entrypoint
-# is Factorial's host process around the Claude Agent SDK (packages/agent-runtime).
+# is Factorial's host process around pi (packages/agent-runtime).
 # Built for linux/arm64 only (AgentCore Runtime requirement).
 #
 # The toolchain is Node 22, git, gh, jq and quiet (packages/agent-tools),
@@ -9,12 +9,12 @@
 # through Bedrock with the execution role, and the orchestrator does all
 # GitHub access.
 #
-# The host process runs as root and starts the SDK's Claude Code subprocess as
-# the agent user through claude-as-agent, so the model's loop, shell and tools
-# cannot signal or trace the host, change its hooks or limits, or edit the
-# run's record in /var/lib/factorial. The host and the SDK are root-owned and
-# read-only to the agent user (docs/security.md section 9). Commands sent
-# through InvokeAgentRuntimeCommand also run as root.
+# The host process runs as root and runs pi's loop itself; every tool that
+# runs a command or touches a file does so as the agent user through setpriv,
+# so the model's shell and tools cannot signal or trace the host, change its
+# policy or limits, or edit the run's record in /var/lib/factorial. The host
+# and pi are root-owned and read-only to the agent user (docs/security.md
+# section 9). Commands sent through InvokeAgentRuntimeCommand also run as root.
 #
 # Base image pinned by digest (node:22-bookworm-slim, linux/arm64).
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim@sha256:b20fe038d9592822dd534600a1ddf467e985178aa3fed60ec441a056c2cc45bd
@@ -71,18 +71,15 @@ RUN usermod --login agent --home /home/agent --move-home node \
  && mkdir /workspace \
  && chown agent:agent /workspace
 
-# The SDK from its own lockfile, without its peer dependencies (the host bundle
-# carries what it uses), then the bundled host and quiet. Everything under
-# /opt/factorial is root-owned with no group or other write, so the agent user
-# can read and execute it but not change it.
+# pi from its own lockfile, without peer dependencies (the host bundle carries
+# what it uses), then the bundled host, quiet and pi's file helper. Everything
+# under /opt/factorial is root-owned with no group or other write, so the agent
+# user can read and execute it but not change it.
 WORKDIR /opt/factorial/agent-runtime
 COPY package.json package-lock.json ./
-# npm installs both the glibc and musl builds of the Claude Code binary on
-# linux-arm64; Debian is glibc, so the musl one (about 270 MB) is removed.
 RUN npm ci --omit=dev --omit=peer \
- && rm -rf node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64-musl \
  && npm cache clean --force
-COPY dist/host.mjs dist/quiet.mjs dist/agent-ops.mjs claude-as-agent ./
+COPY dist/host.mjs dist/quiet.mjs dist/agent-ops.mjs ./
 # pi's grep starts `rg` as the root host; this wrapper, ahead of /usr/bin/rg on
 # PATH, runs it as the agent user instead (see the file).
 COPY rg-as-agent /usr/local/bin/rg
@@ -96,8 +93,8 @@ RUN printf '#!/bin/sh\nexec node /opt/factorial/agent-runtime/quiet.mjs "$@"\n' 
 # The host's own HOME and working directory are root-owned: as root it must
 # never read configuration the agent user can write (an ~/.aws/config with a
 # credential_process would run as root when the host signs a gateway call).
-# The subprocess gets HOME=/home/agent and CLAUDE_CONFIG_DIR=/workspace/.claude
-# from the host (packages/agent-runtime/src/environment.ts).
+# The agent's commands get HOME=/home/agent from the host
+# (packages/agent-runtime/src/pi/environment.ts).
 ENV HOME=/root \
     NODE_ENV=production
 

@@ -53,7 +53,7 @@ const AGENT_HOME = '/home/agent';
  * A script to run as the user the model runs as, so that root never runs git
  * or reads files in a workspace the model controls: whatever the model
  * planted there acts with no more than its own privileges. The same drop as
- * the host's `claude-as-agent` wrapper.
+ * the host's for the model's tools (packages/agent-runtime/src/pi/as-agent.ts).
  */
 export function asAgent(script: string): string {
   return [

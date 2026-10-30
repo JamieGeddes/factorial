@@ -1,10 +1,9 @@
 /**
- * pi (`@earendil-works/pi-coding-agent`) as the host's harness, for spike
- * #181. Chosen by FACTORIAL_HARNESS=pi on the Runtime version; the Claude
- * Agent SDK stays the default.
+ * pi (`@earendil-works/pi-coding-agent`) as the host's harness, for every
+ * role since docs/pi-plan.md.
  *
- * pi runs its loop in the host process, so the host does here what the SDK
- * host gets from Claude Code's subprocess:
+ * pi runs its loop in the host process and brings no privilege drop,
+ * subagents or limits of its own, so the host provides them:
  * - Every tool runs commands and file operations as the agent user
  *   (operations.ts). pi's grep starts `rg` from the host, so the image's `rg`
  *   is a wrapper that runs ripgrep as the agent user, and the host refuses to
@@ -21,10 +20,10 @@
  * - Subagents are a `task` tool that runs a child session with the subagent's
  *   prompt, tools, model and turn limit, under the same policy. pi runs the
  *   tool calls in one response at once, so at most MAX_CONCURRENT_SUBAGENTS
- *   child sessions run together, as on the SDK host; a call beyond it waits.
+ *   child sessions run together; a call beyond it waits.
  * The model is reached through pi's amazon-bedrock provider with the
  * execution role's credentials (bedrock.ts), in the version's region, and a
- * failed call is retried as patiently as Claude Code does (PI_SETTINGS).
+ * failed call is retried as patiently as Claude Code retried (PI_SETTINGS).
  */
 import { accessSync, constants, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -102,9 +101,9 @@ class EventQueue<T> {
 
 /**
  * pi's settings for every session. pi retries a throttled or failed model call
- * 3 times by default, waiting 2, 4 and 8 seconds, where Claude Code retries 10
+ * 3 times by default, waiting 2, 4 and 8 seconds, where Claude Code retried 10
  * times: one burst of Bedrock throttling would end a pi run as model_error
- * where the SDK run carries on. 10 retries, doubling from 2 seconds to pi's
+ * where an SDK run carried on (#187). 10 retries, doubling from 2 seconds to pi's
  * 60-second cap, wait about six minutes in all, within the run's time limit.
  */
 export const PI_SETTINGS = { retry: { enabled: true, maxRetries: 10, baseDelayMs: 2000, maxAgentDelayMs: 60_000 } } as const;

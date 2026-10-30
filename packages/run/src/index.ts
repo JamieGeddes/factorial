@@ -1,7 +1,7 @@
 /**
  * Types and validation for the run contract: what a role's Runtime host
  * streams to the invoker and answers to its status call. The host owns the
- * harness (the Claude Agent SDK today) and the model; the invoker reads only
+ * harness (pi today) and the model; the invoker reads only
  * this, so a different harness or a model from another provider changes the
  * host and nothing downstream.
  *

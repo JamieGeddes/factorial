@@ -138,12 +138,12 @@ export class Run {
 
   /**
    * How the run ended. A run stopped at its time limit is the rounds path,
-   * like a turn limit, unless it had already succeeded. After an error result
-   * (a turn or budget limit) the SDK also throws "Claude Code returned an
-   * error result"; the result already says how the run ended, so the throw is
-   * not a second ending: on #120 recording it made the stream disagree with
-   * status, and a turn limit failed the build instead of continuing it. A
-   * failure after a success, or with no result, fails the run.
+   * like a turn limit, unless it had already succeeded. A harness that throws
+   * after its result has already said how the run ended, so the throw is not a
+   * second ending: on #120 the Claude Agent SDK threw after a turn limit, and
+   * recording that made the stream disagree with status and failed the build
+   * instead of continuing it. A failure after a success, or with no result,
+   * fails the run.
    */
   private conclude(failure: string | undefined): RunEnded {
     const harness = this.harnessEnded;

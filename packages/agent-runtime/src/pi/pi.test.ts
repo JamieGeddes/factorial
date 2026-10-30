@@ -20,7 +20,6 @@ import { PI_TOOLS, toolCallOf, toolsFor } from './tools.ts';
 
 const config = readConfig({
   FACTORIAL_ROLE: 'builder',
-  FACTORIAL_HARNESS: 'pi',
   FACTORIAL_MODEL: 'eu.anthropic.claude-sonnet-5-5',
   FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
   FACTORIAL_BACKGROUND_MODEL: 'eu.anthropic.claude-haiku-5-5',
@@ -106,7 +105,7 @@ describe('firstOnPath', () => {
 });
 
 describe('shellEnvironment', () => {
-  it('passes the allow-list without the SDK settings or AWS credentials, and sets the agent home and region', () => {
+  it('passes the allow-list only, never AWS credentials, and sets the agent home and region', () => {
     const env = shellEnvironment(config, {
       PATH: '/usr/bin',
       LANG: 'C.UTF-8',
@@ -206,7 +205,7 @@ it('keeps the pi pin the same in the workspace and the image', () => {
 });
 
 describe('pi settings', () => {
-  it('retries a failed model call 10 times, as Claude Code does', () => {
+  it('retries a failed model call 10 times, as Claude Code did', () => {
     const retry = SettingsManager.inMemory(structuredClone(PI_SETTINGS)).getRetrySettings();
     assert.deepEqual(retry, { enabled: true, maxRetries: 10, baseDelayMs: 2000, maxAgentDelayMs: 60_000 });
   });

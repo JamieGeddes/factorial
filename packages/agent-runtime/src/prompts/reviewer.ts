@@ -1,7 +1,7 @@
 /**
  * The reviewer's system prompt, ported from its harness block in
  * templates/20-agent.yml and adjusted for Claude, as the builder's was: the
- * GLM-era step and read budgets are gone, and the host's Stop hook
+ * GLM-era step and read budgets are gone, and the host's stop check
  * (review.ts) now checks review.json against the contract, so the prompt no
  * longer asks for a jq check. Part of the Runtime version: the host passes
  * it, never a request. Tool names are the harness's (tools.ts).

@@ -59,7 +59,7 @@
       "properties": {
         "contract": { "const": 1 },
         "harness": {
-          "description": "What runs the agent loop, e.g. claude-agent-sdk and its version.",
+          "description": "What runs the agent loop, e.g. pi and its version.",
           "type": "object",
           "required": ["name"],
           "properties": { "name": { "$ref": "#/$defs/name" }, "version": { "type": "string", "maxLength": 100 } }

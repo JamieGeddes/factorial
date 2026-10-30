@@ -1,21 +1,19 @@
 /**
  * Entry point: reads the Runtime version's configuration, then serves the
- * Runtime contract on port 8080 and runs the role once when asked, on the
- * version's harness (claude-sdk/harness.ts by default, pi/harness.ts for
- * spike #181), streamed as run events (contracts/run/v1/).
+ * Runtime contract on port 8080 and runs the role once when asked, on pi
+ * (pi/harness.ts), streamed as run events (contracts/run/v1/).
  */
 import { createLogger } from '@factorial/log';
 
-import { claudeHarness } from './claude-sdk/harness.ts';
-import { piHarness } from './pi/harness.ts';
 import { readConfig } from './config.ts';
+import { piHarness } from './pi/harness.ts';
 import { HOST_ROLES } from './roles.ts';
 import { Run, type RunRequest } from './run.ts';
 import { createServer, pingTracker } from './server.ts';
 
 const config = readConfig(process.env);
-// The host must be root so the agent user, which the SDK subprocess drops to,
-// can neither signal nor trace it, nor change the run's record.
+// The host must be root so the agent user, which every tool drops to, can
+// neither signal nor trace it, nor change the run's record.
 if (process.getuid?.() !== 0) throw new Error('the host process must run as root; see agent-runtime/Dockerfile');
 // As root, the host must read no configuration from a directory the agent user can write.
 for (const [name, value] of [['HOME', process.env.HOME], ['cwd', process.cwd()]]) {
@@ -27,7 +25,7 @@ let log = createLogger('agent-runtime');
 const abortController = new AbortController();
 const { ping, setBusy } = pingTracker();
 
-const harness = (config.harness === 'pi' ? piHarness : claudeHarness)(config, HOST_ROLES[config.role], abortController);
+const harness = piHarness(config, HOST_ROLES[config.role], abortController);
 const { started } = harness;
 
 function startRun(request: RunRequest) {

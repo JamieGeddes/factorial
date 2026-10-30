@@ -167,11 +167,11 @@ Resources:
   # ===========================================================================
   # Role blocks. One block per agent role: its execution role, runtime, live
   # endpoint and outputs. Every role is a runtime from the agent-runtime
-  # image running Factorial's host around the Claude Agent SDK, which reads
-  # its role from FACTORIAL_ROLE: the builder, which also plans (its plan
-  # subagent, since phase 3.1), and the reviewer (since phase 3.2). To add a
-  # role <role>, add it to the host (packages/agent-runtime/src/config.ts),
-  # then copy a block and change:
+  # image running Factorial's host around pi, which reads its role from
+  # FACTORIAL_ROLE: the builder, which also plans (its plan subagent), and the
+  # reviewer. To add a role <role>, add its manifest (packages/roles) and its
+  # host part (packages/agent-runtime/src/roles.ts), then copy a block and
+  # change:
   # - logical IDs to <Role>RuntimeRole, <Role>Runtime and
   #   <Role>RuntimeLiveEndpoint;
   # - RoleName to factorial-agent-<role>, AgentRuntimeName to
@@ -184,9 +184,9 @@ Resources:
 
   # ---------------------------------------------------------------------------
   # Role: builder. Plans the change with its plan subagent, then makes it.
-  # Factorial's host process around the Claude Agent SDK on AgentCore Runtime
-  # (docs/agent-sdk-plan.md), on Claude through Bedrock with this role and
-  # no model key.
+  # Factorial's host process around pi on AgentCore Runtime
+  # (docs/pi-plan.md), on Claude through Bedrock with this role and no model
+  # key.
   # Every update creates an immutable runtime version; the live endpoint is
   # moved by the deploy workflow's promotion step, never by this template.
   # ---------------------------------------------------------------------------
@@ -221,7 +221,7 @@ Resources:
               # them. Changing a model changes both. Global profiles since
               # 2026-10-28 (#181): requests may be served in any commercial
               # region, accepted for the proof of concept, and their list
-              # prices are the ones the Agent SDK estimates with. The EU
+              # prices are the ones pi estimates with. The EU
               # profiles stay granted until no session runs on a version that
               # names them; the deploy moves this role before `live`.
               - Sid: InferenceProfiles
@@ -266,7 +266,7 @@ Resources:
       AgentRuntimeName: factorial_builder
       # Runtime V2 restores sessions from a snapshot. Set explicitly; rollback is V1.
       PlatformVersion: V2
-      Description: Factorial builder on the Claude Agent SDK.
+      Description: Factorial builder on pi.
       RoleArn: !GetAtt BuilderRuntimeRole.Arn
       AgentRuntimeArtifact:
         ContainerConfiguration:
@@ -287,15 +287,8 @@ Resources:
       # existing stack. AWS_REGION is reserved and set by the service.
       EnvironmentVariables:
         FACTORIAL_ROLE: builder
-        # What runs the agent loop: pi (packages/agent-runtime/src/pi/), the
-        # target for every role since spike #181 (docs/pi-plan.md, #198).
-        # claude-agent-sdk is the rollback until phase 4 removes it; the
-        # models, limits and policy are the same on both. Switching is a new
-        # Runtime version.
-        FACTORIAL_HARNESS: pi
-        # Reasoning effort: high since the spike, which compared harnesses at
-        # the same effort; reviewed with phase 2's figures. Unset, each
-        # harness keeps its own default.
+        # Reasoning effort, high since spike #181. Unset, pi's default is
+        # medium.
         FACTORIAL_EFFORT: high
         # The run contract the host speaks (contracts/run/v1/). The invoker
         # reads it from the version serving `live` before it invokes, so a
@@ -405,7 +398,7 @@ Resources:
       AgentRuntimeName: factorial_reviewer
       # Runtime V2 restores sessions from a snapshot. Set explicitly; rollback is V1.
       PlatformVersion: V2
-      Description: Factorial reviewer on the Claude Agent SDK.
+      Description: Factorial reviewer on pi.
       RoleArn: !GetAtt ReviewerAgentRole.Arn
       AgentRuntimeArtifact:
         ContainerConfiguration:
@@ -424,10 +417,7 @@ Resources:
       # no web search gateway.
       EnvironmentVariables:
         FACTORIAL_ROLE: reviewer
-        # pi, as the builder, since phase 3 of docs/pi-plan.md (#198);
-        # claude-agent-sdk is the rollback until phase 4 removes it.
-        FACTORIAL_HARNESS: pi
-        # As the builder's; pi's own default would be medium.
+        # As the builder's.
         FACTORIAL_EFFORT: high
         # As the builder's (contracts/run/v1/).
         FACTORIAL_RUN_CONTRACT: '1'

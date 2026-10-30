@@ -7,8 +7,8 @@
  *
  * Nothing here names a harness: tools are kinds (tools.ts), prompts take each
  * harness's tool names, and the policy judges neutral tool calls and returns
- * what to send the model. Each harness maps them onto its own hooks
- * (claude-sdk/hooks.ts).
+ * what to send the model. The harness maps them onto its own hooks (pi's
+ * host extension, pi/harness.ts).
  */
 import path from 'node:path';
 

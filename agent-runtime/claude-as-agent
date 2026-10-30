@@ -1,8 +1,0 @@
-#!/bin/sh
-# The SDK starts Claude Code through this wrapper (pathToClaudeCodeExecutable),
-# so the model's loop, its shell and every tool it runs are the agent user,
-# while the host process that holds the hooks, the limits and the run's record
-# stays root. no_new_privs and an empty bounding set stop anything the agent
-# runs from regaining privilege.
-exec setpriv --reuid=agent --regid=agent --init-groups --no-new-privs --bounding-set=-all -- \
-  /opt/factorial/agent-runtime/node_modules/@anthropic-ai/claude-agent-sdk-linux-arm64/claude "$@"

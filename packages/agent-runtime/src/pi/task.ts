@@ -1,9 +1,8 @@
 /**
- * What pi's subagent tool tells the model. The Claude Agent SDK's Agent tool
- * comes with Claude Code's own guidance on delegating; this is Factorial's,
- * written from Anthropic's published subagent documentation
- * (code.claude.com/docs/en/agent-sdk/subagents and /sub-agents), so the
- * builder is briefed on the same points on either harness.
+ * What pi's subagent tool tells the model. pi brings no guidance on
+ * delegating, so this is Factorial's, written from Anthropic's published
+ * subagent documentation (code.claude.com/docs/en/agent-sdk/subagents and
+ * /sub-agents), the points Claude Code's Agent tool briefed the builder on.
  */
 import { MAX_CONCURRENT_SUBAGENTS, type SubagentSpec } from '../agents.ts';
 

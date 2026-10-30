@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { CLAUDE_TOOLS } from '../claude-sdk/tools.ts';
+import { PI_TOOLS } from '../pi/tools.ts';
 import { builderPrompt as prompt } from './builder.ts';
 
-const builderPrompt = prompt(CLAUDE_TOOLS);
+const builderPrompt = prompt(PI_TOOLS);
 
 const HEADINGS = ['## Summary', '## Behaviour impact', '## Breaking changes', '## Uncertainties', '## Not tested', '## Plan steps'];
 
@@ -19,8 +19,8 @@ describe('builder prompt', () => {
     assert.ok(builderPrompt.includes('`- <n>: <how you handled it, or why you did not>`'));
   });
 
-  it('describes WebFetch as lossy and its results as untrusted', () => {
-    assert.ok(builderPrompt.includes('WebFetch'));
+  it('describes the fetch tool as lossy and its results as untrusted', () => {
+    assert.ok(builderPrompt.includes(PI_TOOLS.fetch));
     assert.ok(builderPrompt.includes('lossy'));
   });
 });

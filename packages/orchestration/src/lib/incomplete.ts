@@ -1,8 +1,8 @@
 /**
  * Recognising a builder that stopped before finishing. The invoker exits
  * with INCOMPLETE_EXIT_CODE when the builder stops for any reason other than
- * a finished run (the Agent SDK's success), and the
- * ECS task's failure cause carries that code. Collect uses it to decide
+ * a finished run (run.ended with outcome complete), and the ECS task's failure
+ * cause carries that code. Collect uses it to decide
  * whether the build continues in another round; Report uses it to say what
  * happened.
  */
