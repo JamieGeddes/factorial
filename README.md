@@ -8,8 +8,8 @@ Factorial is a software factory: an agentic AI system that builds and refines so
 
 | Path | Contents |
 |---|---|
-| `contracts/` | Language-neutral, versioned contracts. `contracts/workitem/` is Factorial's API; `contracts/plan/` and `contracts/review/` are the builder's plan and the reviewer's output, and `contracts/run/` what a role's Runtime host streams to the invoker, internal but versioned the same way. |
-| `packages/` | TypeScript workspaces. `@factorial/workitem` validates the `WorkItem` contract; `@factorial/artefacts` holds the artefact store's key layout, redaction and upload; `@factorial/log` writes the structured log lines; `@factorial/plan` validates plans; `@factorial/review` validates reviews; `@factorial/roles` holds the role manifests. |
+| `contracts/` | Language-neutral, versioned contracts. `contracts/workitem/` is Factorial's API; `contracts/plan/` and `contracts/review/` are the builder's plan and the reviewer's output, `contracts/run/` what a role's Runtime host streams to the invoker, and `contracts/progress/` the stage transitions the orchestrator announces, internal but versioned the same way. |
+| `packages/` | TypeScript workspaces. `@factorial/workitem` validates the `WorkItem` contract; `@factorial/artefacts` holds the artefact store's key layout, redaction and upload; `@factorial/log` writes the structured log lines; `@factorial/plan` validates plans; `@factorial/review` validates reviews; `@factorial/roles` holds the role manifests; `@factorial/progress` writes the progress record (stage entries on the ledger and `WorkItemProgress` events). |
 | `templates/` | CloudFormation templates (`.yml`). |
 | `scripts/` | Repository tooling, in TypeScript, run directly by Node. |
 | `.factorial/` | How Factorial treats this repository as a target, like any other: `sensitive-paths.json` lists the changes its reviews flag for care. |

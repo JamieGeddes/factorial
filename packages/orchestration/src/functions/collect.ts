@@ -22,7 +22,8 @@ import type { WorkContext } from '../lib/context.ts';
 import { LIMIT_COMMIT_MESSAGE } from '../lib/continue-files.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
-import { logged, runKey, type Logger } from '../lib/log.ts';
+import { runKey, type Logger } from '../lib/log.ts';
+import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { InvalidPlanError, checkPlanFiles, parsePlanRead, planDigest, readPlanScript, type CheckedPlan, type PlanDigest } from '../lib/plan-files.ts';
 import { planSize } from '../lib/plan-size.ts';
 import { asAgent, cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
@@ -269,7 +270,7 @@ export function roundStartFor(ctx: WorkContext, start: RoundStart | null | undef
   };
 }
 
-export interface CollectInput extends WorkContext {
+export interface CollectInput extends WorkContext, ProgressInput {
   /**
    * Set when the build failed: push whatever the agent left so the work is
    * not lost. Uncommitted changes are committed with a message that says so.
@@ -283,7 +284,12 @@ export interface CollectInput extends WorkContext {
   roundStart?: RoundStart | null;
 }
 
-export const handler = logged('collect', (input: CollectInput) => runKey(input), async (input, log): Promise<CollectResult> => {
+/** SaveWork runs Collect after a failed build: it ends that round's Build, in case the invoker could not. */
+const collectStage: StagePolicy<CollectInput, CollectResult> = {
+  closes: (input) => (input.salvage ? [{ stage: 'Build', outcome: 'failed', error: stepError(input.failure) ?? stageError('BuildFailed') }] : []),
+};
+
+export const handler = staged('collect', (input: CollectInput) => runKey(input), collectStage, async (input, log): Promise<CollectResult> => {
   const { salvage = false, builderSessionId, failure, roundStart, ...ctx } = input;
   const incomplete = salvage && builderIncomplete(failure);
   const start = roundStartFor(ctx, roundStart);

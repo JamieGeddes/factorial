@@ -10,6 +10,8 @@ All paths are in the AWS console, region **Europe (Ireland) eu-west-1**. Replace
 
 Note `attempt`, `artefactPrefix`, `executionArn`, `status`, `route`, `threadKey` and, for a resumed or rework item, `resumedFrom` or `reworkOf.previousWorkItemId` (an earlier run, found the same way). A build that ran in more than one session has `buildRounds` and `buildSessionId`: round 1's builder session is the work item id, round *n*'s is `<id>-r<n>`. Items accepted before #163 have no `route` or `threadKey`, and items accepted before #203 no `executionArn`.
 
+**Stage timings.** `stages` holds one entry per stage that ran (`Build#2` for the second build round), each with `startedAt`, `endedAt`, `outcome` and any `error`; `stages.Build.run` and `stages.Review.run` summarise each agent run (Runtime version, model, effort, turns, tokens, cost estimate, record keys). `endedAt` on the row says when the item ended. Items accepted before #15 have no `stages`. The same transitions went to the `factorial-work` bus as `WorkItemProgress` events (`contracts/progress/v1/`), and the Lambdas log `progress not recorded` when one could not be written.
+
 **The thread.** Table **factorial-threads** → **Query**, partition key `threadKey` = the row's `threadKey` → **Run**: the branch, the pull request (`prNumber`, `prOpenedBy`), the turn holding it (`inFlight`) and the automatic rework count. To list every turn on the thread: table **factorial-work-items** → **Query** → **Select a table or index**: `threadKey-createdAt-index`, partition key `threadKey` = the same value → **Run**. To start from a pull request instead: table **factorial-threads** → **Query** → index `pullRequestKey-index`, partition key `<owner>/<name>#<number>` in lower case → **Run**.
 
 ## 2. The execution

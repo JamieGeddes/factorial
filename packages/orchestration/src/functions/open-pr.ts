@@ -13,7 +13,8 @@ import type { GitHubClient, Repo } from '@factorial/github-app';
 import { parsePlanJson, type Plan } from '@factorial/plan';
 import { issueNumber, type ReworkTurn, type WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
-import { logged, runKey, type Logger } from '../lib/log.ts';
+import { runKey, type Logger } from '../lib/log.ts';
+import { staged, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
@@ -25,7 +26,7 @@ import { testResultArtefact } from '../lib/test-result.ts';
 
 import { pullRequestBody, reworkComment, safeLogin, type ReviewOutcome, type TestResult } from './pr-body.ts';
 
-interface OpenPrInput {
+interface OpenPrInput extends ProgressInput {
   ctx: WorkContext;
   collect: { headSha: string; summary: string };
   test: TestResult & { sha?: string };
@@ -111,7 +112,10 @@ async function replyToRework(
   return { prNumber: pr.number, prUrl: pr.url };
 }
 
-export const handler = logged('open-pr', (input: OpenPrInput) => runKey(input.ctx), async (input, log): Promise<OpenPrResult> => {
+/** A pull request opened or answered ends the work item; a failure goes on to ReportFailure, which ends it. */
+const openPrStage: StagePolicy<OpenPrInput, OpenPrResult> = { ends: (_input, result) => result !== undefined };
+
+export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ctx), openPrStage, async (input, log): Promise<OpenPrResult> => {
   const { ctx } = input;
   await putJsonArtefact(ctx.artefactPrefix, 'test/result.json', testResultArtefact(input.test));
   const headSha = assertCommitSha(input.collect.headSha, 'head sha');

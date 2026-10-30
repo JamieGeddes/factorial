@@ -2,7 +2,8 @@
  * What a stage records about its agent's run: `build/usage.json` or
  * `review/usage.json`. Holds counts and identifiers only, never content.
  */
-import { RUN_CONTRACT_VARIABLE, type ModelRef, type ModelTotal } from '@factorial/run';
+import type { RunEntry } from '@factorial/progress';
+import { RUN_CONTRACT_VARIABLE, type ModelRef, type ModelTotal, type RunOutcome } from '@factorial/run';
 
 import type { CallUsage, RunUsage } from './usage.ts';
 import type { SubagentRun, SubagentTotal } from './run-events.ts';
@@ -17,6 +18,8 @@ export interface VersionInfo {
   runtimeVersion?: string;
   modelId?: string;
   exploreModelId?: string;
+  /** The reasoning effort the version fixes (`FACTORIAL_EFFORT`). */
+  effort?: string;
   /** The version's own limits; the invoker passes none at invoke time. */
   maxTurns?: number;
   maxBudgetUsd?: number;
@@ -35,6 +38,7 @@ export function runtimeInfoOf(environment: Record<string, string> | undefined): 
   const info: VersionInfo = {};
   if (env.FACTORIAL_MODEL) info.modelId = env.FACTORIAL_MODEL;
   if (env.FACTORIAL_EXPLORE_MODEL) info.exploreModelId = env.FACTORIAL_EXPLORE_MODEL;
+  if (env.FACTORIAL_EFFORT) info.effort = env.FACTORIAL_EFFORT;
   const maxTurns = number('FACTORIAL_MAX_TURNS');
   const maxBudgetUsd = number('FACTORIAL_MAX_BUDGET_USD');
   const maxDurationSeconds = number('FACTORIAL_MAX_DURATION_SECONDS');
@@ -103,5 +107,45 @@ export function usageRecord(params: {
     calls: params.calls,
     ...(params.harness ? { harness: params.harness } : {}),
     ...(params.error ? { error: params.error } : {}),
+  };
+}
+
+/**
+ * The run as its stage's entry in the progress record keeps it (#15): the
+ * metadata usage.json holds, without the per-call list, the configured models
+ * or anything the harness said.
+ */
+export function runEntryOf(params: {
+  role: string;
+  sessionId: string;
+  version: VersionInfo;
+  harness?: HarnessRecord | undefined;
+  stopReason: string | undefined;
+  outcome?: RunOutcome | undefined;
+  toolCalls: number;
+  durationSeconds: number;
+  usage: RunUsage;
+  /** The stored run record's ledger pointer; only its keys are kept. */
+  record?: Record<string, unknown> | undefined;
+}): RunEntry {
+  const { version, harness, record } = params;
+  return {
+    role: params.role,
+    ...(version.runtimeName ? { runtimeName: version.runtimeName } : {}),
+    ...(version.runtimeVersion ? { runtimeVersion: version.runtimeVersion } : {}),
+    ...(version.runContract !== undefined ? { runContract: version.runContract } : {}),
+    ...(harness?.name ? { harness: { name: harness.name, ...(harness.version ? { version: harness.version } : {}) } } : {}),
+    ...(version.modelId ? { modelId: version.modelId } : {}),
+    ...(version.effort ? { effort: version.effort } : {}),
+    sessionId: params.sessionId,
+    toolCalls: params.toolCalls,
+    ...(harness?.turns !== undefined ? { turns: harness.turns } : {}),
+    durationSeconds: params.durationSeconds,
+    ...(params.stopReason ? { stopReason: params.stopReason } : {}),
+    ...(params.outcome ? { outcome: params.outcome } : {}),
+    usage: { ...params.usage },
+    ...(harness?.costUsd !== undefined ? { costUsd: harness.costUsd } : {}),
+    ...(typeof record?.transcriptKey === 'string' ? { transcriptKey: record.transcriptKey } : {}),
+    ...(typeof record?.usageKey === 'string' ? { usageKey: record.usageKey } : {}),
   };
 }

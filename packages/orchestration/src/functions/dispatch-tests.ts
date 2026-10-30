@@ -7,17 +7,19 @@
 import type { WorkContext } from '../lib/context.ts';
 import { requireEnv } from '../lib/env.ts';
 import { repositoryClient } from '../lib/github.ts';
-import { logged, runKey } from '../lib/log.ts';
+import { runKey } from '../lib/log.ts';
+import { staged, type ProgressInput } from '../lib/progress.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
-interface DispatchInput {
+interface DispatchInput extends ProgressInput {
   taskToken: string;
   ctx: WorkContext;
   collect: { headSha: string };
 }
 
-export const handler = logged('dispatch-tests', (input: DispatchInput) => runKey(input.ctx), async (input, log): Promise<void> => {
+// The Test stage ends when the workflow reports back: PrepareReview records a pass, Report a failure.
+export const handler = staged('dispatch-tests', (input: DispatchInput) => runKey(input.ctx), { endsLater: true }, async (input, log): Promise<void> => {
   const { ctx } = input;
   const sha = assertCommitSha(input.collect.headSha, 'head sha');
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };

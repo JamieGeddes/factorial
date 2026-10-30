@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "eventId": "84c2d660-d3ec-11f1-92c7-34ac6b750765:WorkItem:ended",
+  "workItemId": "84c2d660-d3ec-11f1-92c7-34ac6b750765",
+  "attempt": 1,
+  "threadKey": "jamiegeddes/factorial#factorial/84c2d660-d3ec-11f1-92c7-34ac6b750765",
+  "source": { "type": "github-issue", "url": "https://github.com/JamieGeddes/factorial/issues/15" },
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "stage": "WorkItem",
+  "transition": "ended",
+  "at": "2026-10-30T22:40:03.870Z",
+  "status": "pr-opened"
+}

@@ -37,12 +37,13 @@ import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-
 
 import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts';
 import { createLogger } from '@factorial/log';
+import { isStageName, progressRecorder, stageError } from '@factorial/progress';
 import { ROLES } from '@factorial/roles';
 import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE, validateRunStatus, type RunOutcome, type RunStatus } from '@factorial/run';
 import { assertWorkItem } from '@factorial/workitem';
 
 import { INCOMPLETE_EXIT_CODE, incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
-import { runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
+import { runEntryOf, runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
 import { RunTally, runUsageOf, runtimeStop, subagentsOf } from './run-events.ts';
 import { traceBaggage } from './trace.ts';
@@ -74,6 +75,8 @@ if (!Number.isInteger(buildRound) || buildRound < 1) throw new Error('BUILD_ROUN
 const round = manifest.rounds ? buildRound : undefined;
 const { stage } = manifest;
 const { running, done, failed } = manifest.statuses;
+// The state's name, for the progress record (#15); an execution started before #15 passes none, and records nothing.
+const progressStage = isStageName(process.env.STAGE) ? process.env.STAGE : undefined;
 /** Where this run's records go: the stage, or a round folder under it after the first round. */
 const recordPath = (name: string): string => (round !== undefined && round > 1 ? `${stage}/round-${round}/${name}` : `${stage}/${name}`);
 
@@ -86,6 +89,8 @@ const control = new BedrockAgentCoreControlClient({});
 
 /** Every line carries the work item id; the attempt is added once the ledger row is read. */
 let log = createLogger(stage, { workItemId });
+// Best effort: a progress write that fails is logged and the run goes on.
+const progress = progressRecorder(process.env, { onError: (message, fields) => log.error(message, fields) });
 
 async function record(status: string, attributes: Record<string, unknown>): Promise<void> {
   const names: Record<string, string> = { '#status': 'status', '#updatedAt': 'updatedAt' };
@@ -188,6 +193,22 @@ function finish(succeeded: boolean): Promise<void> {
         ? { [`${stage}Rounds`]: round, [`${stage}UsageTotal`]: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage }
         : {};
     await record(succeeded ? done : failed, { ...outcome, ...rounds });
+    if (progressStage) {
+      const entry = runEntryOf({
+        role,
+        sessionId,
+        version: run.version,
+        harness: run.harness,
+        stopReason,
+        outcome: run.outcome,
+        toolCalls: run.toolCalls,
+        durationSeconds,
+        usage: run.usage,
+        record: stored,
+      });
+      const error = run.error ? stageError(stopReason ?? 'error', run.error) : undefined;
+      await progress.ended(workItemId, progressStage, buildRound, succeeded ? 'succeeded' : 'failed', { run: entry, ...(error ? { error } : {}) });
+    }
   })();
   return finished;
 }
@@ -226,6 +247,7 @@ async function main(): Promise<number> {
   }
   log.info('invoking agent', { role, sessionId, qualifier, ...(round !== undefined ? { buildRound: round } : {}), ...run.version });
   await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
+  if (progressStage) await progress.started(workItemId, progressStage, buildRound);
 
   run.startedAt = Date.now();
   transcript.append({ request: { role, prompt, ...run.version } });

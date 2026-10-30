@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "eventId": "84c2d660-d3ec-11f1-92c7-34ac6b750765:Build#2:failed",
+  "workItemId": "84c2d660-d3ec-11f1-92c7-34ac6b750765",
+  "attempt": 1,
+  "threadKey": "jamiegeddes/factorial#factorial/84c2d660-d3ec-11f1-92c7-34ac6b750765",
+  "source": { "type": "github-issue", "url": "https://github.com/JamieGeddes/factorial/issues/15" },
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "stage": "Build",
+  "round": 2,
+  "transition": "failed",
+  "at": "2026-10-30T22:31:40.002Z",
+  "error": { "name": "max_turns", "message": "incomplete: the builder reached its turn limit (max_turns)" },
+  "run": {
+    "role": "builder",
+    "runtimeName": "factorial_builder",
+    "runtimeVersion": "37",
+    "runContract": 1,
+    "harness": { "name": "pi", "version": "1.4.0" },
+    "modelId": "global.anthropic.claude-sonnet-5-5",
+    "effort": "high",
+    "sessionId": "84c2d660-d3ec-11f1-92c7-34ac6b750765-r2",
+    "toolCalls": 61,
+    "turns": 150,
+    "durationSeconds": 1290,
+    "stopReason": "max_turns",
+    "outcome": "incomplete",
+    "usage": {
+      "modelCalls": 153,
+      "inputTokens": 9120440,
+      "outputTokens": 48211,
+      "totalTokens": 9168651,
+      "cacheReadInputTokens": 8803112,
+      "cacheWriteInputTokens": 291004,
+      "uncachedInputTokens": 317328,
+      "maxCallInputTokens": 98112,
+      "lastCallInputTokens": 97001
+    },
+    "costUsd": 4.12,
+    "transcriptKey": "84c2d660-d3ec-11f1-92c7-34ac6b750765/1/build/round-2/transcript.jsonl",
+    "usageKey": "84c2d660-d3ec-11f1-92c7-34ac6b750765/1/build/round-2/usage.json"
+  }
+}

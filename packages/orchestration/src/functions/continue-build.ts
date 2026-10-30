@@ -17,7 +17,8 @@ import { parsePlanJson } from '@factorial/plan';
 
 import type { WorkContext } from '../lib/context.ts';
 import { MAX_NOTES_ARTEFACT_BYTES, builderSessionId } from '../lib/continue-files.ts';
-import { logged, runKey } from '../lib/log.ts';
+import { runKey } from '../lib/log.ts';
+import { staged, type ProgressInput } from '../lib/progress.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import { planProvider, requestProvider, reworkProvider, roundNotesProvider } from '../lib/seed-providers.ts';
 import type { SeedProvider } from '../lib/seed.ts';
@@ -28,7 +29,7 @@ import { recordProgress } from '../lib/table.ts';
 import type { RoundStart } from './collect.ts';
 import { seedSession } from './prepare.ts';
 
-interface ContinueBuildInput {
+interface ContinueBuildInput extends ProgressInput {
   ctx: WorkContext;
   /** The round about to start: 2 for the first continuation. */
   round: number;
@@ -51,7 +52,7 @@ async function artefact(ctx: WorkContext, path: string, maxBytes: number): Promi
   return read?.text;
 }
 
-export const handler = logged('continue-build', (input: ContinueBuildInput) => runKey(input.ctx), async (input, log): Promise<ContinueBuildResult> => {
+export const handler = staged('continue-build', (input: ContinueBuildInput) => runKey(input.ctx), {}, async (input, log): Promise<ContinueBuildResult> => {
   const { ctx, round, collect } = input;
   if (!Number.isInteger(round) || round < 2) throw new Error(`round ${round} is not a continuation round`);
   const sessionId = builderSessionId(ctx.workItem.id, round);

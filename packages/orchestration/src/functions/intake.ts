@@ -24,7 +24,8 @@ import { assertWorkItem, type WorkItem, type WorkItemReworkCause } from '@factor
 import { branchFor, type ReworkTurn } from '../lib/context.ts';
 import { botLogin, repositoryClient } from '../lib/github.ts';
 import { assertIntakeRecord, type IntakeRecord, type RefusalStatus } from '../lib/intake-record.ts';
-import { logged, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
+import { unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
+import { staged, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { nextAttempt, resumableAttempt, sourceKey, type Attempt } from '../lib/resume.ts';
 import { commentToAcknowledge, inlineCommentIdFromUrl } from '../lib/rework-points.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
@@ -43,7 +44,7 @@ import {
 import { acceptWorkItem, attemptRecord, pullRequestKey, recordProgress, statusOf, turnsOf } from '../lib/table.ts';
 import { continuedPullRequest, reworkCause } from '../lib/turn.ts';
 
-interface IntakeInput {
+interface IntakeInput extends ProgressInput {
   workItem: unknown;
   factorialVersion: string;
   /** The execution's ARN; its name is EventBridge's, not the work item id (#203). Absent from an execution started before #203. */
@@ -279,7 +280,10 @@ async function reply(repo: Repo, number: number, text: string, log: Logger): Pro
 
 const intakeKey = (input: IntakeInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
-export const handler = logged('intake', intakeKey, async (input, stageLog): Promise<IntakeResult> => {
+/** Intake's stage starts once the ledger row exists; a refusal ends the work item here. */
+const intakeStage: StagePolicy<IntakeInput, IntakeResult> = { startsInHandler: true, ends: (_input, result) => result?.route === 'refuse' };
+
+export const handler = staged('intake', intakeKey, intakeStage, async (input, stageLog, stage): Promise<IntakeResult> => {
   assertWorkItem(input.workItem);
   const workItem = input.workItem;
   assertUuid(workItem.id, 'WorkItem id');
@@ -293,6 +297,7 @@ export const handler = logged('intake', intakeKey, async (input, stageLog): Prom
   const prefix = artefactPrefix(workItem.id, attempt);
 
   await acceptWorkItem(workItem, input.factorialVersion, attempt, input.executionArn);
+  await stage.start();
   await putJsonArtefact(prefix, 'workitem.json', workItem);
 
   const decision: Decision = superseded
