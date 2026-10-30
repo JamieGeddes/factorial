@@ -11,6 +11,7 @@ interface State {
   Type: string;
   Output?: Record<string, unknown> | string;
   Catch?: Array<{ ErrorEquals: string[]; Output?: Record<string, unknown> }>;
+  Arguments?: { Payload?: Record<string, unknown> };
 }
 
 /** The DefinitionString block, with CloudFormation substitutions replaced so it parses as JSON. */
@@ -48,4 +49,9 @@ test('every catcher outputs the work item id with the error', () => {
       assert.ok('error' in catcher.Output, `${name} catcher ${catcher.ErrorEquals.join(',')} lacks error`);
     }
   }
+});
+
+test('Intake receives the execution ARN, so the ledger row leads to the execution (#203)', () => {
+  const intake = definition().States.Intake;
+  assert.equal(intake?.Arguments?.Payload?.executionArn, '{% $states.context.Execution.Id %}');
 });

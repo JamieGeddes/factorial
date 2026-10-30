@@ -107,7 +107,7 @@ This is the layer that makes the hostile-session rule real.
 - Every stage writes its inputs and outputs to the artefact store under `<workItemId>/<attempt>/<stage>/`. The bucket is versioned, requires TLS, and its policy denies `DeleteObject` and `DeleteObjectVersion` to every principal. Retention is a lifecycle rule, never a permission someone could use.
 - Only orchestrator Lambdas and the invoker hold the write policy, which grants `PutObject` and nothing else. No agent role can reach the bucket.
 - Text is redacted before upload and before logging. The ledger holds status, usage and pointers, never content.
-- One correlation key, the work item id, is the execution name, the session id, the artefact prefix, the ledger key and an attribute on every log line, so any run can be reconstructed afterwards from one value.
+- One correlation key, the work item id, is the session id, the artefact prefix, the ledger key and an attribute on every log line, and the ledger row records the execution's ARN, so any run can be reconstructed afterwards from one value.
 
 ### 3.8 Untrusted input
 

@@ -21,7 +21,7 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 | Field | Purpose |
 |---|---|
 | `schemaVersion` | Contract version. Always `2` for this schema. |
-| `id` | UUID assigned by the adapter. Used as the Step Functions execution name and for tracing. |
+| `id` | UUID assigned by the adapter. The correlation key: session id, ledger key, artefact prefix and a field on every log line. Not the Step Functions execution name, which EventBridge assigns; the ledger row records the execution's ARN. |
 | `source.type` | Trigger type, kebab-case, e.g. `github-issue`. New triggers add a value; nothing else changes. |
 | `source.id` | Identifier of the record within the source system: an issue number, or the id of a review, comment or workflow run. |
 | `source.url` | Link back to the originating record. |

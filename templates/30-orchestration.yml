@@ -1092,7 +1092,8 @@ Resources:
                 "FunctionName": "${IntakeFunctionAlias}",
                 "Payload": {
                   "workItem": "{% $workItemInput %}",
-                  "factorialVersion": "${FactorialVersion}"
+                  "factorialVersion": "${FactorialVersion}",
+                  "executionArn": "{% $states.context.Execution.Id %}"
                 }
               },
               "Assign": { "intake": "{% $states.result.Payload %}" },

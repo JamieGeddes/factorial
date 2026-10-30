@@ -46,6 +46,8 @@ import { continuedPullRequest, reworkCause } from '../lib/turn.ts';
 interface IntakeInput {
   workItem: unknown;
   factorialVersion: string;
+  /** The execution's ARN; its name is EventBridge's, not the work item id (#203). Absent from an execution started before #203. */
+  executionArn?: string;
 }
 
 /** What the state machine carries from Intake: the route, and for `change` what Prepare needs. */
@@ -290,7 +292,7 @@ export const handler = logged('intake', intakeKey, async (input, stageLog): Prom
   const log = stageLog.with({ attempt });
   const prefix = artefactPrefix(workItem.id, attempt);
 
-  await acceptWorkItem(workItem, input.factorialVersion, attempt);
+  await acceptWorkItem(workItem, input.factorialVersion, attempt, input.executionArn);
   await putJsonArtefact(prefix, 'workitem.json', workItem);
 
   const decision: Decision = superseded
