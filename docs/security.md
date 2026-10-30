@@ -224,9 +224,11 @@ One thing must be confirmed by direct invocation before the change ships: that t
 
 **Decided 2026-10-23**, as part of the move to the Claude Agent SDK on AgentCore Runtime (`docs/agent-sdk-plan.md`). In force for every role since 2026-10-26: the builder moved on 2026-10-25 and the reviewer on 2026-10-26.
 
+**Kept with pi, decided 2026-10-29** (spike #181, `docs/pi-plan.md`). Every role moves to pi and the SDK is removed. In-session enforcement stays Factorial's code, and more of it is: pi has no privilege drop, subagents or limits of its own, so the host provides them. 9.2b lists how each mitigation is kept on pi. The builder runs on pi; until the reviewer moves and the SDK host is removed, 9.2 also applies to the SDK host, and when it is removed 9.2b becomes the only list.
+
 ### 9.1 What changes
 
-On the Harness, the tool allow-list, the model and the loop's limits are enforced by a managed process in the microVM that Factorial does not own. On the Runtime they are enforced by Factorial's TypeScript host process around the SDK's `query()`: permission rules, hooks, subagent definitions and caps. Section 3.4 names "code running inside the sandbox" as the thing to avoid; this decision accepts it for in-session controls only. No outer boundary changes: the execution role, the permissions boundaries, the hostile-session rule, the bundle and clean room, the trusted test workflow and the tested-head check are untouched, and none of them depends on which loop ran in Build.
+On the Harness, the tool allow-list, the model and the loop's limits are enforced by a managed process in the microVM that Factorial does not own. On the Runtime they are enforced by Factorial's TypeScript host process around the SDK's `query()`: permission rules, hooks, subagent definitions and caps. On pi the same host process also runs the loop: pi's session, the role's policy as one host extension, subagents as child sessions, and the turn and budget limits. Section 3.4 names "code running inside the sandbox" as the thing to avoid; this decision accepts it for in-session controls only. No outer boundary changes: the execution role, the permissions boundaries, the hostile-session rule, the bundle and clean room, the trusted test workflow and the tested-head check are untouched, and none of them depends on which loop ran in Build.
 
 ### 9.2 Mitigations
 
@@ -239,11 +241,11 @@ On the Harness, the tool allow-list, the model and the loop's limits are enforce
 - **Caps in the host.** Subagent depth, concurrency, per-agent turns, `maxTurns` and `maxBudgetUsd` are set by the host process.
 - **No subagent output is evidence.** Subagent reports are the model's claim, like the builder's summary. Anything the orchestrator acts on still leaves as a named file and is validated outside the session.
 
-### 9.2b The pi harness (spike #181)
+### 9.2b The pi harness (every role, `docs/pi-plan.md`)
 
 `docs/session-boundaries.md` draws where the root host and the `agent` user meet on both hosts, and what differs.
 
-`FACTORIAL_HARNESS=pi` on a Runtime version runs the role on pi (`packages/agent-runtime/src/pi/`) instead of the SDK. The default is `claude-agent-sdk`; the builder's version sets `pi` for the spike's runs. pi runs its loop in the host process, so the mitigations above are kept as follows:
+`FACTORIAL_HARNESS=pi` on a Runtime version runs the role on pi (`packages/agent-runtime/src/pi/`) instead of the SDK. The builder's version sets `pi` (since spike #181); the reviewer's moves in phase 3 of `docs/pi-plan.md`, and the SDK host goes in phase 4. pi runs its loop in the host process, so the mitigations above are kept as follows:
 - **Tools, not the loop, drop to the agent user.** The loop, the role's policy and the limits stay in the root host, out of the model's reach. Every tool that runs a command or touches a file does it as the agent user with the same `setpriv` restrictions as `claude-as-agent`. The shell runs as `bash -c` that way. Read, write, edit, find and grep go through a file helper (`agent-ops.mjs`) run that way, so root never follows a link the model planted.
 - **No search binary runs as root.** pi's grep starts `ripgrep` from the host process. The image installs Debian's `ripgrep` and puts a wrapper named `rg` ahead of it on the path (`agent-runtime/rg-as-agent`), which runs it as the agent user with the same `setpriv` restrictions and a minimal environment; the host refuses to start pi unless that wrapper is the `rg` it would run. pi's grep reads the search path and context lines through the file helper. Its find is given a glob operation, so it never starts `fd`. `PI_OFFLINE=1` stops pi downloading any tool or checking for updates. Checked in the image on 2026-10-28: pi's grep, called as root, found matches in `/workspace` and got permission denied on `/var/lib/factorial` and through a planted link into it.
 - **The shell's environment** is the SDK subprocess's allow-list without the SDK's own settings and without AWS credentials: pi's loop calls Bedrock from the host, so the shell needs none, where the SDK's subprocess made the calls itself (since 2026-10-30). This keeps a local run's static keys out of the shell; on the Runtime none is set, and the execution role's temporary credentials stay reachable from the shell as section 7 records.
