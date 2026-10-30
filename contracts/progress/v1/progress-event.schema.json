@@ -113,7 +113,7 @@
             "lastCallInputTokens": { "$ref": "#/$defs/count" }
           }
         },
-        "costUsd": { "description": "The harness's estimate at list prices, not a bill.", "type": "number", "minimum": 0 },
+        "costUsd": { "description": "The harness's estimate at list prices, not a bill, rounded by the invoker to 4 decimal places (a hundredth of a cent) when it records the figure.", "type": "number", "minimum": 0 },
         "transcriptKey": { "type": "string", "maxLength": 1024 },
         "usageKey": { "type": "string", "maxLength": 1024 }
       }

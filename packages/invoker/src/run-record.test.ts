@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import { progressEventErrors, progressEvent } from '@factorial/progress';
 
-import { runEntryOf, runtimeInfoOf, usageRecord } from './run-record.ts';
+import { roundUsd, runEntryOf, runtimeInfoOf, usageRecord } from './run-record.ts';
 import { addCallUsage, emptyRunUsage } from './usage.ts';
 
 describe('usageRecord', () => {
@@ -124,5 +124,42 @@ describe('runEntryOf', () => {
       runEntryOf({ role: 'reviewer', sessionId: id, version: {}, stopReason: 'interrupted', toolCalls: 0, durationSeconds: 3, usage: emptyRunUsage() }),
       { role: 'reviewer', sessionId: id, toolCalls: 0, durationSeconds: 3, stopReason: 'interrupted', usage: emptyRunUsage() },
     );
+  });
+});
+
+describe('roundUsd', () => {
+  it('rounds to 4 decimal places and keeps undefined', () => {
+    assert.equal(roundUsd(0.25970079999999995), 0.2597);
+    assert.equal(roundUsd(0.08171640000000001), 0.0817);
+    assert.equal(roundUsd(0), 0);
+    assert.equal(roundUsd(undefined), undefined);
+  });
+
+  it('is recorded in usageRecord and runEntryOf, with an absent cost staying absent', () => {
+    const common = { version: {}, stopReason: 'completed', toolCalls: 0, usage: emptyRunUsage() };
+    const model = { id: 'x', purpose: 'main' };
+    const record = usageRecord({
+      ...common,
+      interrupted: false,
+      startedAt: 0,
+      endedAt: 1000,
+      calls: [],
+      harness: {
+        costUsd: 0.25970079999999995,
+        models: [
+          { model, usage: {} as never, costUsd: 0.08171640000000001 },
+          { model, usage: {} as never },
+        ],
+      },
+    });
+    assert.equal(record.harness?.costUsd, 0.2597);
+    assert.equal(record.harness?.models?.[0]?.costUsd, 0.0817);
+    assert.ok(!('costUsd' in (record.harness?.models?.[1] ?? {})));
+
+    const entry = (costUsd: number | undefined) => runEntryOf({ ...common, role: 'builder', sessionId: 's', durationSeconds: 1, harness: costUsd === undefined ? {} : { costUsd } });
+    assert.equal(entry(0.25970079999999995).costUsd, 0.2597);
+    assert.equal(entry(0.08171640000000001).costUsd, 0.0817);
+    assert.ok(!('costUsd' in entry(undefined)));
+    assert.ok(!('costUsd' in usageRecord({ ...common, interrupted: false, startedAt: 0, endedAt: 1, calls: [], harness: {} }).harness!));
   });
 });

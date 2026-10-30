@@ -43,7 +43,7 @@ import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE, validateRunStatus, type RunOutcome
 import { assertWorkItem } from '@factorial/workitem';
 
 import { INCOMPLETE_EXIT_CODE, incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
-import { runEntryOf, runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
+import { roundUsd, runEntryOf, runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
 import { RunTally, runUsageOf, runtimeStop, subagentsOf } from './run-events.ts';
 import { traceBaggage } from './trace.ts';
@@ -335,8 +335,8 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
     ...(started ? { configuredModels: started.models } : {}),
     ...(end?.detail ? { detail: end.detail } : {}),
     ...(end?.turns === undefined ? {} : { turns: end.turns }),
-    ...(end?.cost ? { costUsd: end.cost.usd } : {}),
-    ...(end?.models ? { models: end.models } : {}),
+    ...(end?.cost ? { costUsd: roundUsd(end.cost.usd) } : {}),
+    ...(end?.models ? { models: end.models.map((m) => (m.costUsd === undefined ? m : { ...m, costUsd: roundUsd(m.costUsd) })) } : {}),
     deniedToolCalls: end?.deniedToolCalls ?? 0,
     reconnects,
     ...(tally.invalidEvents > 0 ? { invalidEvents: tally.invalidEvents } : {}),
