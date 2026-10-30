@@ -19,6 +19,7 @@
 import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 
 import type { WorkContext } from '../lib/context.ts';
+import { LIMIT_COMMIT_MESSAGE } from '../lib/continue-files.ts';
 import { commitIdentity, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { logged, runKey, type Logger } from '../lib/log.ts';
@@ -39,7 +40,10 @@ import { recordProgress } from '../lib/table.ts';
 
 export interface CollectResult {
   pushed: boolean;
+  /** This round's commits. */
   commitCount: number;
+  /** The work item's commits over every round so far: from its base commit to the head. */
+  itemCommitCount: number;
   headSha: string;
   summary: string;
   /** True when the build stopped at the builder's limit rather than failing: the state machine may start another round. */
@@ -55,8 +59,15 @@ const MAX_BUNDLE_BYTES = 8_000_000;
 export const LEFTOVER_COMMIT_MESSAGE = 'Apply remaining changes left by the agent';
 export const SALVAGE_COMMIT_MESSAGE = 'Save work in progress after the build failed';
 
-export function inspectScript(baseCommit: string, leftoverMessage: string = LEFTOVER_COMMIT_MESSAGE): string {
+/** The message for the commit of uncommitted work: a failed build, a builder that reached its limit, or neither. */
+export function leftoverMessage(salvage: boolean, incomplete: boolean): string {
+  if (incomplete) return LIMIT_COMMIT_MESSAGE;
+  return salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE;
+}
+
+export function inspectScript(baseCommit: string, leftoverMessage: string = LEFTOVER_COMMIT_MESSAGE, itemBaseCommit: string = baseCommit): string {
   const base = shellQuote(assertCommitSha(baseCommit, 'base commit'));
+  const itemBase = shellQuote(assertCommitSha(itemBaseCommit, 'work item base commit'));
   return [
     'set -uo pipefail',
     HARDENED_GIT_ENV,
@@ -68,12 +79,16 @@ export function inspectScript(baseCommit: string, leftoverMessage: string = LEFT
     `printf '%s' ${shellQuote(SECTION)}`,
     `git diff --name-only ${base} HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
+    `git rev-list --count ${itemBase}..HEAD`,
+    `printf '%s' ${shellQuote(SECTION)}`,
     'if [ -f /workspace/summary.md ]; then head -c 60000 /workspace/summary.md; fi',
   ].join('\n');
 }
 
 export interface Inspection {
   commitCount: number;
+  /** Commits since the work item's base commit, over every round. */
+  itemCommitCount: number;
   headSha: string;
   /** Paths changed between the base branch and the agent's head. */
   changedPaths: string[];
@@ -81,16 +96,18 @@ export interface Inspection {
 }
 
 export function parseInspection(stdout: string): Inspection {
-  const [count = '', sha = '', paths = '', summary = ''] = stdout.split(SECTION);
+  const [count = '', sha = '', paths = '', itemCount = '', ...rest] = stdout.split(SECTION);
+  const summary = rest.join(SECTION);
   const commitCount = Number.parseInt(count.trim(), 10);
-  if (!Number.isInteger(commitCount) || !/^[0-9a-f]{40}$/.test(sha.trim())) {
+  const itemCommitCount = Number.parseInt(itemCount.trim(), 10);
+  if (!Number.isInteger(commitCount) || !Number.isInteger(itemCommitCount) || !/^[0-9a-f]{40}$/.test(sha.trim())) {
     throw new Error(`Could not parse session inspection output: ${redactSecrets(stdout.slice(0, 500))}`);
   }
   const changedPaths = paths
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
-  return { commitCount, headSha: sha.trim(), changedPaths, summary: summary.trim() };
+  return { commitCount, itemCommitCount, headSha: sha.trim(), changedPaths, summary: summary.trim() };
 }
 
 /** GitHub refuses pushes that touch Actions workflows unless the token carries the workflows permission. */
@@ -275,13 +292,13 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
   // as the user the model ran as (asAgent).
   const inspection = await runCommand(
     agentSession,
-    asAgent(inspectScript(start.commit, salvage ? SALVAGE_COMMIT_MESSAGE : LEFTOVER_COMMIT_MESSAGE)),
+    asAgent(inspectScript(start.commit, leftoverMessage(salvage, incomplete), ctx.baseCommit)),
     300,
   );
   if (inspection.exitCode !== 0) {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
-  const { commitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
+  const { commitCount, itemCommitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
   await storeSessionFiles(agentSession, ctx, log);
 
   const plan = await collectPlan(agentSession, ctx, log);
@@ -300,12 +317,12 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     // Nothing new this round, but earlier rounds' work is on the branch: that
     // pushed head is what is tested.
     log.info('no new commits this round; the branch keeps the earlier rounds\' work', { incomplete, headSha: start.commit });
-    return { pushed: true, commitCount, headSha: start.commit, summary, incomplete, ...digest };
+    return { pushed: true, commitCount, itemCommitCount, headSha: start.commit, summary, incomplete, ...digest };
   }
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary, ...planFields });
     log.info('agent made no commits', { incomplete });
-    return { pushed: false, commitCount, headSha, summary, incomplete, ...digest };
+    return { pushed: false, commitCount, itemCommitCount, headSha, summary, incomplete, ...digest };
   }
 
   const bundle = await mustRun(agentSession, asAgent(bundleScript(start.commit, headSha)), 300);
@@ -367,5 +384,5 @@ export const handler = logged('collect', (input: CollectInput) => runKey(input),
     agentHeadSha: headSha,
     commitCount,
   });
-  return { pushed: true, commitCount, headSha: pushedSha, summary, incomplete, ...digest };
+  return { pushed: true, commitCount, itemCommitCount, headSha: pushedSha, summary, incomplete, ...digest };
 });

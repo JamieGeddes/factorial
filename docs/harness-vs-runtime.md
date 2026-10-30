@@ -8,6 +8,8 @@
 
 **2026-10-28:** pi evaluated as a sixth option, for model and provider flexibility; see **pi on AgentCore Runtime**. Spike: #181.
 
+**2026-10-30:** the pi spike passed its gate; see **pi spike results**. Decided 2026-10-29: pi for every role and the Claude Agent SDK removed, after the binding changes are approved.
+
 A decision record, as principle 6 in `docs/architecture-principles.md` asks for: the question, the evidence, the options, the decision and its consequences. It extends the one-paragraph decision in `docs/design-plan.md` §3.2 with the evidence from the first week of runs.
 
 ## The question
@@ -365,6 +367,46 @@ The gate:
 - no finding against the security mitigations;
 - (b) continues in rounds with its work saved.
 
+## pi spike results
+
+Run from 2026-10-29 to 2026-10-30 under #181: the builder on pi 1.4.0 (`FACTORIAL_HARNESS: pi`), Sonnet 5.5 for the main loop and `plan`, Haiku 5.5 for `explore`, all through the global inference profiles, `FACTORIAL_EFFORT: high`; the reviewer stayed on the SDK. Costs are pi's estimates at global list price.
+
+**Run (a), parity: #166 (PR #189).** A refactor of how sessions are seeded, against the SDK host's #87 (PR #128).
+
+| | SDK, #87 (PR #128) | pi, #166 (PR #189) |
+|---|---|---|
+| Artefacts | `c5cfb8d0-d072-11f1-91e5-0ba824b748bc/1/` | `d9f622d0-d37f-11f1-9b01-f64c5e3f8f01/1/` |
+| Sessions | 1, `success` | 1, `complete` |
+| Turns | 42 | 43 (1.02×) |
+| Model calls | 41, no plan subagent | 62: 43 main, 19 in `plan` |
+| Input tokens | 2.84M | 4.14M (1.46×): 3.22M main, 0.92M `plan` |
+| Cache reads | 96% | 94.7% |
+| Peak context | 112k | 116k |
+| Output tokens | 50k | 81k (30k in `plan`) |
+| Duration | 8.7 minutes | 18.8 minutes (5.3 in `plan`) |
+| Cost | $1.05 | $1.75 (about $0.52 in `plan`) |
+
+The two items differ and #87's build had no plan subagent, so the 1.46× is mostly the plan subagent's 19 calls on a larger item. The main loops are 1.13× in input, with the same context growth per call (about 2.7k) and the same 5-minute cache, so pi adds no overhead per call that the figures show. There is no like-for-like run: phase 2 of the move to pi compares per-item figures instead. The rework on #189 (an `@` comment with four points) took 19 turns and $0.56; the SDK reviewer approved it.
+
+**Run (b), limits and rounds: #78 (PR #192).** The builder's turn limit lowered to 10 (#190, reverted by #191). Each round stopped `incomplete` at the limit, SaveWork pushed its work, and the next round began in a fresh session from the branch and `notes.md`, with no re-measuring: round 1 planned and measured ($0.51), round 2 committed the new clone script ($0.17), round 3 fixed its tests ($0.11). The item ended at `MaxBuildRounds` with 4 commits saved. Relabelled at 150 turns, it resumed from the branch, planned only what remained, and finished in 13 turns ($0.31); tests passed and the SDK reviewer approved it. $1.21 for the item, review included.
+
+**Found and fixed on the way.**
+- pi retried a failed model call 3 times by default; now 10, as Claude Code does (#187).
+- pi's Bedrock auth looks only for credentials named in the environment, which the Runtime does not set, so #166's first run failed before any model call; pi's provider now falls back to the AWS SDK's default chain (#188).
+- At a limit pi counted the call its stop cut off (11 turns at 10) and reported its `error` ending as the detail; the failure comment counted only the last round's commits ("1 commit" for 4); and SaveWork labelled a round that reached its limit "after the build failed" (#196).
+- AWS credential variables in the host's environment reached pi's shell, by the allow-list shared with the SDK host; pi's shell no longer gets them (#196). On the Runtime none is set.
+
+**The gate.**
+
+| | Result |
+|---|---|
+| Parity | Met: one session, a valid plan, a complete report, tests passed; turns 1.02× and input 1.46× (within 1.5×), cache reads 94.7% (at least 90%) |
+| The contract | Met: no change to the invoker or the orchestrator; the fixes were in the host |
+| Security | Met: `scripts/pi-security-probe.ts` in the real image, 22 of 22 checks held (`docs/security.md` §9.2b); with the privilege drop removed, 12 fail |
+| Limits | Met: run (b) continued in rounds with its work saved, and resumed after relabelling |
+
+**Decision (2026-10-29).** pi for every role, and the Claude Agent SDK removed: pi's loop, policy and limits are code Factorial owns and can read, and it keeps other models a configuration change. The binding changes to `CLAUDE.md` and `docs/security.md` §9 come first and need human approval; then the builder stays on pi, the reviewer moves, and the SDK code and its binary leave the image. Until then `FACTORIAL_HARNESS` on a Runtime version is the rollback.
+
 ## If building from scratch
 
 Asked on 2026-10-22: with Claude models allowed in production (GLM was chosen to keep the proof of concept cheap), would a different agent layer be the better choice from the start? Yes. The Harness would not be the first choice; the spine would be built exactly as it is, with the Claude Agent SDK on an AgentCore Runtime inside it, and Claude Managed Agents weighed as the alternative.
@@ -412,7 +454,7 @@ What would still be built: the reviewer as a separate session, because judged ou
 - The model moves to one whose vendor SDK brings its own harness, and running that harness on Runtime is cheaper than reproducing it in configuration.
 - Bedrock Managed Agents passes its gates above, which would make it the managed alternative to the Agent SDK spike.
 - Claude Managed Agents leaves beta on Claude Platform on AWS, which makes it the managed alternative with the least code to own (see **If building from scratch**).
-- A role needs a model the Claude Agent SDK cannot reach, or a change to the loop that its configuration cannot make: the pi spike (#181) answers both.
+- A role needs a model the Claude Agent SDK cannot reach, or a change to the loop that its configuration cannot make: the pi spike (#181) answered both, and pi passed (**pi spike results**).
 
 If revisited, the order is: the Claude Agent SDK on a Runtime (available now, closes both gaps, TypeScript); then Bedrock Managed Agents if its gates are met (managed, no loop code); then Strands on Runtime as the last resort. Each is kept to the builder, with the planner and reviewer staying on Harness so that the roles that judge the builder's output never run its code.
 

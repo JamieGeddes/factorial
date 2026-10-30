@@ -106,9 +106,20 @@ describe('firstOnPath', () => {
 });
 
 describe('shellEnvironment', () => {
-  it('passes the allow-list without the SDK settings, and sets the agent home and region', () => {
-    const env = shellEnvironment(config, { PATH: '/usr/bin', AWS_SESSION_TOKEN: 't', ANTHROPIC_BEDROCK_BASE_URL: 'http://stub', GITHUB_TOKEN: 'never', HOME: '/root' });
-    assert.deepEqual(env, { PATH: '/usr/bin', AWS_SESSION_TOKEN: 't', HOME: '/home/agent', AWS_REGION: 'eu-west-1' });
+  it('passes the allow-list without the SDK settings or AWS credentials, and sets the agent home and region', () => {
+    const env = shellEnvironment(config, {
+      PATH: '/usr/bin',
+      LANG: 'C.UTF-8',
+      AWS_ACCESS_KEY_ID: 'k',
+      AWS_SECRET_ACCESS_KEY: 's',
+      AWS_SESSION_TOKEN: 't',
+      AWS_CONTAINER_CREDENTIALS_FULL_URI: 'http://169.254.170.23/v1/credentials',
+      AWS_CONTAINER_AUTHORIZATION_TOKEN: 'a',
+      ANTHROPIC_BEDROCK_BASE_URL: 'http://stub',
+      GITHUB_TOKEN: 'never',
+      HOME: '/root',
+    });
+    assert.deepEqual(env, { PATH: '/usr/bin', LANG: 'C.UTF-8', HOME: '/home/agent', AWS_REGION: 'eu-west-1' });
   });
 });
 

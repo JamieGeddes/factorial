@@ -7,6 +7,9 @@
  * memory between rounds; the old session is discarded, hostile like any
  * session an agent has run in.
  */
+/** The message of the commit Collect makes of a round's uncommitted work when the builder stopped at its limit. */
+export const LIMIT_COMMIT_MESSAGE = 'Save work in progress when the builder reached its limit';
+
 /** The previous round's notes are read back from the artefact store at most this large. */
 export const MAX_NOTES_ARTEFACT_BYTES = 64 * 1024;
 
@@ -28,7 +31,7 @@ export function builderSessionId(workItemId: string, round: number): string {
 export function continuingSection(params: { round: number; baseCommit: string; pushed: boolean; commitCount: number; planned: boolean }): string {
   const { round, baseCommit, pushed, commitCount, planned } = params;
   const state = pushed
-    ? `Its ${commitCount === 1 ? 'commit is' : `${commitCount} commits are`} on this branch. If the last commit is "Save work in progress after the build failed", it holds whatever that session had not committed: check it, it may be unfinished.`
+    ? `Its ${commitCount === 1 ? 'commit is' : `${commitCount} commits are`} on this branch. If the last commit is "${LIMIT_COMMIT_MESSAGE}", it holds whatever that session had not committed: check it, it may be unfinished.`
     : 'It committed nothing, so the branch is as it was at the start.';
   return [
     '',

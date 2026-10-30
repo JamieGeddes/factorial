@@ -62,26 +62,32 @@ describe('reportMessage', () => {
 
 describe('saved work after a failure', () => {
   it('links the branch and says the work is untested when Collect pushed it', () => {
-    const text = reportMessage({ status: 'failed', ctx, error: { Error: 'States.TaskFailed' }, saved: { pushed: true, commitCount: 3 } });
+    const text = reportMessage({ status: 'failed', ctx, error: { Error: 'States.TaskFailed' }, saved: { pushed: true, commitCount: 1, itemCommitCount: 3 } });
     assert.match(text, /Work in progress \(3 commits\) was saved to/);
     assert.match(text, /https:\/\/github\.com\/JamieGeddes\/factorial\/tree\/factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c/);
     assert.match(text, /untested and no pull request was opened/);
   });
 
   it('uses the singular for one commit', () => {
-    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 1 } }), /\(1 commit\)/);
-    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 3 } }), /\(3 commits\)/);
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 1, itemCommitCount: 1 } }), /\(1 commit\)/);
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 1, itemCommitCount: 3 } }), /\(3 commits\)/);
   });
 
-  it('leaves the count out when the round pushed no commits of its own', () => {
-    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 0 } }), /^ Work in progress was saved to /);
+  it("counts the item's commits over every round, not the last round's", () => {
+    // #78: round 3 committed 1 and the branch held 4.
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 1, itemCommitCount: 4 } }), /\(4 commits\)/);
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 0, itemCommitCount: 4 } }), /\(4 commits\)/);
+  });
+
+  it('leaves the count out when Collect gave no item count', () => {
+    assert.match(savedWorkNote({ ctx, saved: { pushed: true, commitCount: 2 } }), /^ Work in progress was saved to /);
     assert.match(savedWorkNote({ ctx, saved: { pushed: true } }), /^ Work in progress was saved to /);
   });
 
   it('says nothing when nothing was pushed, or Collect did not run', () => {
     assert.equal(savedWorkNote({ ctx, saved: { pushed: false, commitCount: 0 } }), '');
     assert.equal(savedWorkNote({ ctx, saved: null }), '');
-    assert.equal(savedWorkNote({ saved: { pushed: true, commitCount: 2 } }), '');
+    assert.equal(savedWorkNote({ saved: { pushed: true, commitCount: 1, itemCommitCount: 2 } }), '');
   });
 });
 
@@ -101,7 +107,7 @@ describe('a builder that stopped before finishing', () => {
   });
 
   it('says the builder ran out, and links the saved work', () => {
-    const text = reportMessage({ status: 'failed', ctx, error: taskFailed(3), saved: { pushed: true, commitCount: 4 } });
+    const text = reportMessage({ status: 'failed', ctx, error: taskFailed(3), saved: { pushed: true, commitCount: 1, itemCommitCount: 4 } });
     assert.match(text, /^Factorial's builder reached its iteration or time limit before finishing, so the change was not tested and no pull request was opened\./);
     assert.match(text, /Work in progress \(4 commits\) was saved to/);
     assert.doesNotMatch(text, /could not complete/);
@@ -213,7 +219,7 @@ describe('a rework item', () => {
   });
 
   it('says saved work is on the pull request untested, without the relabel hint', () => {
-    const note = savedWorkNote({ ctx: reworkCtx, saved: { pushed: true, commitCount: 2 } });
+    const note = savedWorkNote({ ctx: reworkCtx, saved: { pushed: true, commitCount: 1, itemCommitCount: 2 } });
     assert.match(note, /\(2 commits\) was saved to this pull request's branch, so the pull request now includes it untested/);
     assert.doesNotMatch(note, /label/);
   });
@@ -223,7 +229,7 @@ describe('a rework item', () => {
       status: 'failed',
       ctx: reworkCtx,
       error: { Error: 'States.TaskFailed', Cause: JSON.stringify({ Containers: [{ Name: 'invoker', ExitCode: 3 }] }) },
-      saved: { pushed: true, commitCount: 1 },
+      saved: { pushed: true, commitCount: 1, itemCommitCount: 1 },
     });
     assert.match(text, /iteration or time limit before finishing, so the change was not tested and the pull request was not updated\./);
     assert.match(text, /\(1 commit\) was saved to this pull request's branch/);
