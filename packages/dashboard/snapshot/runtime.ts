@@ -13,6 +13,8 @@ export interface Snapshot {
   item(id: string): Promise<SnapshotItem | undefined>;
   /** A snapshot file's URL, relative to the page. */
   url(file: string): URL;
+  /** Reads the snapshot's files: the embedded data, or the page's own host. */
+  read: typeof fetch;
 }
 
 /**
@@ -50,6 +52,7 @@ export async function loadSnapshot(realFetch: typeof fetch, base: string): Promi
   return {
     index,
     url,
+    read: realFetch,
     item(id) {
       const file = index.items[id]?.file;
       if (!file) return Promise.resolve(undefined);
@@ -93,7 +96,7 @@ class SnapshotEventSource extends EventTarget {
   }
 }
 
-/** Puts the snapshot behind `fetch` and `EventSource`; returns what it replaced, for tests. */
+/** Puts the snapshot behind `fetch` and `EventSource`; returns what it replaced, for tests. Anything but a data route still goes to the page's own `fetch`. */
 export function install(snapshot: Snapshot, target: { fetch: typeof fetch; EventSource: unknown; history: { pushState: unknown; replaceState: unknown } }): { fetch: typeof fetch } {
   const real = target.fetch.bind(target);
   target.fetch = async (input, init) => {
@@ -101,7 +104,7 @@ export function install(snapshot: Snapshot, target: { fetch: typeof fetch; Event
     const url = new URL(href, snapshot.url('index.html'));
     const found = await answer(url, (init?.method ?? (typeof input === 'object' && 'method' in input ? input.method : 'GET')).toUpperCase(), snapshot.index, snapshot.item);
     if (!found) return real(input, init);
-    if ('file' in found) return real(snapshot.url(found.file), init?.signal ? { signal: init.signal } : undefined);
+    if ('file' in found) return snapshot.read(snapshot.url(found.file), init?.signal ? { signal: init.signal } : undefined);
     return new Response(found.body, { status: found.status, headers: { 'content-type': found.contentType, 'content-length': String(new TextEncoder().encode(found.body).byteLength) } });
   };
   target.EventSource = SnapshotEventSource;
