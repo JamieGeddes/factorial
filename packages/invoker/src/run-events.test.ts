@@ -106,6 +106,20 @@ describe('RunTally', () => {
     assert.deepEqual(tally.add({ type: 'reasoning', text: '   ' }), []);
   });
 
+  it('redacts before cutting, so a token cut at the boundary leaves no tail in a log line', () => {
+    const secret = 'S'.repeat(40);
+    const token = `ghs_${secret}`;
+    // The cut keeps the last 4,000 characters, which start inside the token.
+    const text = `${token}${'x'.repeat(4000 - 20)}`;
+    const tally = tallyWith();
+    for (const type of ['reasoning', 'text']) {
+      const [line] = tally.add({ type, text });
+      assert.ok(!String(line?.fields.text).includes('SSSSSSSSSS'), type);
+    }
+    const [result] = tally.add({ type: 'tool.result', callId: 'c', content: `${'y'.repeat(3989)} ${token}` });
+    assert.ok(!String(result?.fields.content).includes('SSSSS'));
+  });
+
   it('ends at run.ended', () => {
     const tally = tallyWith(ended('complete', 'completed', { turns: 3, cost: { usd: 0.04, basis: 'harness-estimate' } }));
     assert.equal(tally.ended, true);

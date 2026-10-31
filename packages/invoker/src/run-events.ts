@@ -9,6 +9,8 @@
  */
 import { RUN_CONTRACT, outcomeOfReason, validateRunEvent, type RunEnded, type RunEvent, type RunOutcome, type RunStarted, type RunStatus, type TokenUsage } from '@factorial/run';
 
+import { redactSecrets } from '@factorial/artefacts';
+
 import { roundUsd } from './run-record.ts';
 import { addCallUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
 
@@ -62,6 +64,14 @@ export function subagentsOf(runs: SubagentRun[]): { runs: SubagentRun[]; totals:
   }
   return { runs, totals: [...byType.values()] };
 }
+
+/**
+ * Text cut for a log line, redacted first. The logger redacts each whole line
+ * too, but a cut that keeps the end can drop a credential's prefix and leave
+ * its tail unrecognised; redacting before the cut cannot.
+ */
+const head = (text: string): string => redactSecrets(text).slice(0, 4000);
+const tail = (text: string): string => redactSecrets(text).slice(-4000);
 
 export interface LogLine {
   message: string;
@@ -140,19 +150,19 @@ export class RunTally {
       case 'tool.call': {
         this.toolCalls += 1;
         const input = JSON.stringify(event.input ?? {});
-        return [{ message: 'tool use', fields: { tool: event.tool, agent, input: input.slice(0, 4000), bytes: Buffer.byteLength(input) } }];
+        return [{ message: 'tool use', fields: { tool: event.tool, agent, input: head(input), bytes: Buffer.byteLength(input) } }];
       }
       case 'tool.result':
         return [
           {
             message: 'tool result',
-            fields: { callId: event.callId, agent, isError: event.isError ?? false, content: event.content.slice(0, 4000), bytes: Buffer.byteLength(event.content) },
+            fields: { callId: event.callId, agent, isError: event.isError ?? false, content: head(event.content), bytes: Buffer.byteLength(event.content) },
           },
         ];
       case 'text':
-        return event.text.trim() ? [{ message: 'assistant text', fields: { agent, model: event.model?.id, text: event.text.slice(-4000) } }] : [];
+        return event.text.trim() ? [{ message: 'assistant text', fields: { agent, model: event.model?.id, text: tail(event.text) } }] : [];
       case 'reasoning':
-        return event.text.trim() ? [{ message: 'reasoning', fields: { agent, model: event.model?.id, text: event.text.slice(-4000) } }] : [];
+        return event.text.trim() ? [{ message: 'reasoning', fields: { agent, model: event.model?.id, text: tail(event.text) } }] : [];
       case 'subagent.ended': {
         const usage = this.subagentCalls.get(event.agentId) ?? emptyRunUsage();
         this.subagentRuns.push({
