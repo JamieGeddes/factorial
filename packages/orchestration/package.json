@@ -12,6 +12,7 @@
   "dependencies": {
     "@aws-sdk/client-bedrock-agentcore": "^3.1152.0",
     "@aws-sdk/client-dynamodb": "^3.1152.0",
+    "@aws-sdk/client-eventbridge": "^3.1152.0",
     "@aws-sdk/client-secrets-manager": "^3.1152.0",
     "@aws-sdk/client-ssm": "^3.1152.0",
     "@aws-sdk/lib-dynamodb": "^3.1152.0",
@@ -19,6 +20,7 @@
     "@factorial/artefacts": "^0.1.0",
     "@factorial/github-app": "^0.1.0",
     "@factorial/log": "^0.1.0",
+    "@factorial/outcome": "^0.1.0",
     "@factorial/plan": "^0.1.0",
     "@factorial/progress": "^0.1.0",
     "@factorial/pull-request-closed": "^0.1.0",

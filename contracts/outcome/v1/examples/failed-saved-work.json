@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90",
+  "attempt": 2,
+  "threadKey": "JamieGeddes/factorial#factorial/0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90",
+  "route": "change",
+  "source": { "type": "github-issue", "id": "5f1c2d7e-1111-4a2b-9c3d-4e5f6a7b8c9d", "url": "https://github.com/JamieGeddes/factorial/issues/165" },
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "result": "failed",
+  "at": "2026-10-31T12:00:00.000Z",
+  "artefactPrefix": "0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90/2/",
+  "branch": "factorial/0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90",
+  "savedWork": { "branch": "factorial/0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90", "commits": 3 }
+}
