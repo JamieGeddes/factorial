@@ -108,6 +108,7 @@ This is the layer that makes the hostile-session rule real.
 - Only orchestrator Lambdas and the invoker hold the write policy, which grants `PutObject` and nothing else. No agent role can reach the bucket.
 - Text is redacted before upload and before logging. The ledger holds status, usage and pointers, never content.
 - One correlation key, the work item id, is the session id, the artefact prefix, the ledger key and an attribute on every log line, and the ledger row records the execution's ARN, so any run can be reconstructed afterwards from one value.
+- The live feed (#194) is a view of what the invoker already receives, redacted as the transcript is and capped. IAM alone authorises it: only the invoker and the forwarder may publish, a person subscribes with their own credentials, and the agent boundary denies `appsync:*`, so no session can publish to its own channel or read another run's.
 
 ### 3.8 Untrusted input
 

@@ -5,6 +5,7 @@
 import type { RunEntry } from '@factorial/progress';
 import { RUN_CONTRACT_VARIABLE, type ModelRef, type ModelTotal, type RunOutcome } from '@factorial/run';
 
+import type { LiveRecord } from './live-feed.ts';
 import type { CallUsage, RunUsage } from './usage.ts';
 import type { SubagentRun, SubagentTotal } from './run-events.ts';
 
@@ -60,6 +61,8 @@ export interface UsageRecord extends VersionInfo {
   calls: CallUsage[];
   /** What the harness reported beyond the counts above. */
   harness?: HarnessRecord;
+  /** The live feed (#194): events published and dropped, and the catch-up chunks stored. */
+  live?: LiveRecord;
   error?: string;
 }
 
@@ -117,6 +120,7 @@ export function usageRecord(params: {
   usage: RunUsage;
   calls: CallUsage[];
   harness?: HarnessRecord | undefined;
+  live?: LiveRecord | undefined;
   error?: string | undefined;
 }): UsageRecord {
   return {
@@ -127,6 +131,7 @@ export function usageRecord(params: {
     usage: params.usage,
     calls: params.calls,
     ...(params.harness ? { harness: roundedHarness(params.harness) } : {}),
+    ...(params.live ? { live: params.live } : {}),
     ...(params.error ? { error: params.error } : {}),
   };
 }

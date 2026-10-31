@@ -46,6 +46,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 - `/aws/lambda/factorial-report`
 - `/aws/lambda/factorial-notify` (the "started" comment on a labelled issue; the ledger row's `startedNotifiedAt` says it was sent)
 - `/aws/lambda/factorial-thread-outcome` (the pull request's outcome on its thread; lines carry the id of the item that opened the pull request, and one the function ignored names the pull request, `<owner>/<name>#<number>`, instead)
+- `/aws/lambda/factorial-live-forward` (work-item progress on the live feed, section 6; `forwarded` lines carry the id as a field, and `not forwarded` says why an event was skipped)
 
 Set the time range to cover the run, then run:
 
@@ -57,6 +58,8 @@ fields @timestamp, stage, attempt, level, message, @log
 ```
 
 Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`.
+
+The invoker's lines for a run, by `message`: `invoking agent`, `run started`, `model call` (the call's usage, model, agent, its cost estimate when the host sends one, and the summed calls so far as `total`), `assistant text` and `reasoning` (the last 4,000 characters), `tool use` (input cut at 4,000 characters, with its size), `tool result` (`callId`, `isError`, content cut at 4,000 characters, with its size), `context compacted`, `model call retried`, `re-attaching to the run`, `run ended`, `runtime run ended`, `live feed closed`, `run record stored` and `agent finished`. Add `| filter message = "model call"` to follow a run's token burn. The live feed's problems are `live publish failed`, `live chunk not stored` and `live progress not recorded`, each at most once a minute with a count of those suppressed; none fails the run.
 
 A notice that failed (the function erred after its retries, or EventBridge could not deliver to it) is not in the log group alone: it is in the SQS queue `factorial-notify-failed`. In the console go to **SQS** → **Queues** → `factorial-notify-failed` → **Send and receive messages** → **Poll for messages**, then search the message bodies for the work item id. A body is the progress event, with no content. Messages are kept 14 days; nothing reads the queue yet (alarms are #16). An outcome that failed to record is in `factorial-thread-outcome-failed` the same way, as the `PullRequestClosed` event: search for the pull request number.
 
@@ -74,4 +77,61 @@ The invoker sends the session id, which is the work item id (with `-r<n>` for a 
 
 Traces appear only once CloudWatch Transaction Search is enabled for the account, which is not yet the case; enabling it belongs with the per-role metrics work. Until then the transcripts in the artefacts (`build/`, which holds the plan subagent's run too, and `review/`) are the record of what each agent did.
 
-The builder runs on a Runtime (`docs/pi-plan.md`): Factorial's host process writes its own structured lines, with `workItemId` and `attempt` from the invoker's payload, to `/aws/bedrock-agentcore/runtimes/factorial_builder-*-live` (run started, tool use denied, plan invalid, report incomplete, run ended). Its `build/transcript.jsonl` holds the run's events (`contracts/run/v1/`: model calls, text, tool calls and results, subagents, compaction, and any other harness messages as `harness` events), and its `build/usage.json` adds a `harness` block (`sdk` before 2026-10-28) with the harness and its version, the models by purpose, the harness's cost estimate, per-model usage (subagents included), a `subagents` entry (each `plan` or `explore` run in order, and a total per agent type: duration and tool calls from the SDK's Agent result; model calls and tokens summed from the subagent's own streamed calls, with output a lower bound (`outputTokensAtLeast`); and `finalContextTokens`, the SDK's `totalTokens`, which is the subagent's last call and not a total. Already inside the run's totals, with no dollar cost) and how many times the invoker re-attached to the stream. The reviewer runs on its own Runtime since phase 3.2, and its host writes the same lines to `/aws/bedrock-agentcore/runtimes/factorial_reviewer-*-live` (run started, tool use denied, reviewer sent back with the reason (an invalid review, or the second pass), run ended); its `review/usage.json` has the same `harness` block, with no subagents.
+The builder runs on a Runtime (`docs/pi-plan.md`): Factorial's host process writes its own structured lines, with `workItemId` and `attempt` from the invoker's payload, to `/aws/bedrock-agentcore/runtimes/factorial_builder-*-live` (run started, tool use denied, plan invalid, report incomplete, run ended). Its `build/transcript.jsonl` holds the run's events, each line with its stream number `seq` since #194 (`contracts/run/v1/`: model calls, text, tool calls and results, subagents, compaction, and any other harness messages as `harness` events), and its `build/usage.json` adds a `harness` block (`sdk` before 2026-10-28) with the harness and its version, the models by purpose, the harness's cost estimate, per-model usage (subagents included), a `subagents` entry (each `plan` or `explore` run in order, and a total per agent type: duration and tool calls from the SDK's Agent result; model calls and tokens summed from the subagent's own streamed calls, with output a lower bound (`outputTokensAtLeast`); and `finalContextTokens`, the SDK's `totalTokens`, which is the subagent's last call and not a total. Already inside the run's totals, with no dollar cost) and how many times the invoker re-attached to the stream. The reviewer runs on its own Runtime since phase 3.2, and its host writes the same lines to `/aws/bedrock-agentcore/runtimes/factorial_reviewer-*-live` (run started, tool use denied, reviewer sent back with the reason (an invalid review, or the second pass), run ended); its `review/usage.json` has the same `harness` block, with no subagents.
+
+## 6. Watching a run live
+
+While an agent runs, the invoker publishes each of its events to the AppSync Events API `factorial-live` (#194). The feed is a view of what the invoker already receives, redacted as the transcript is; the transcript stays the record, and nothing about the run depends on the feed.
+
+**Channels**, all in the namespace `factorial`:
+
+| Channel | Carries |
+|---|---|
+| `/factorial/runs/<id>/<stage>/<round>` | One run's events: `build/1`, `build/2`, `review/1`. |
+| `/factorial/work-items/<id>` | One work item's progress. |
+| `/factorial/work-items` | Every work item's progress. |
+
+A run event arrives as `{ workItemId, attempt, role, stage, round, seq, at, event }`, where `seq` is its number in the run's stream (from 1, without gaps) and `at` when the invoker received it. The text of `text` and `reasoning`, a `tool.call`'s input and a `tool.result`'s content keep their first 16 KiB on the channel, with `truncated: true` and the field's full size in `bytes`. A `harness` event carries its name only. Progress is each `WorkItemProgress` event as it is, and the execution's own `{ eventId, workItemId, transition, at }` (`started`, `succeeded`, `failed`, `timed-out` or `aborted`), from `factorial-live-forward`. Both are at least once: drop repeats by `eventId`. An execution whose input and output together pass 248 KiB comes without its input, so its transitions are logged as `not forwarded` instead.
+
+Everything on the channel was written by a model or a tool. Show it as text, never as HTML or Markdown, and strip control characters before printing it to a terminal.
+
+**Catch-up chunks.** The channel keeps nothing for a late subscriber. Every 200 events or 30 seconds, and when the run ends, the invoker stores the events since its last upload as `<stage>/live/<n>.jsonl` in the artefact store (`n` from `0001`; a later round under `<stage>/round-<r>/live/`), the transcript's own lines, uncut, each with its `seq`. To join a run part-way, subscribe first, then read the chunks in order, then drop any event whose `seq` you already have; read the chunks again while there is a gap. `usage.json` records `live`: events `published` and `dropped`, and `chunks` (`count`, `lastSeq`, `failed`).
+
+**Progress on the ledger row.** Every 60 seconds, and at the run's start and end, the invoker replaces the row's `live` attribute: `role`, `stage`, `round`, `at`, `seq`, `events`, `toolCalls`, `modelCalls`, `usage`, `costUsd`, `elapsedSeconds`, `lastEvent` and the version's `limits`. Mid-run, `costUsd` is the sum of the host's per-call estimates and `turns` is absent; after the run, both are the harness's figures, `usage` matches `usage.json` and `ended` is `true`. A later run of the same item (the next build round, the review) replaces it. A `live.at` more than a minute old on a running item means the invoker has stopped.
+
+**From a terminal:**
+
+```
+node scripts/tail-run.ts <id>             # the first build round
+node scripts/tail-run.ts <id> build 2     # the second build round
+node scripts/tail-run.ts <id> review
+```
+
+It prints the run from its first event, one line per tool call, and the item's progress, until the run ends. It finds the API and the bucket from the `factorial-orchestration` stack's outputs (`LiveHttpDomain`, `WorkArtefactsBucketName`), or from `FACTORIAL_LIVE_HTTP_DOMAIN` and `FACTORIAL_ARTEFACT_BUCKET`.
+
+**Permissions.** A person subscribes with their own AWS credentials; nothing in Factorial holds a subscriber's key. The stack's outputs `LiveApiArn` and `LiveNamespaceArn` give the two ARNs. To watch runs with `tail-run.ts`, an identity needs:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": "appsync:EventConnect", "Resource": "<LiveApiArn>" },
+    { "Effect": "Allow", "Action": "appsync:EventSubscribe", "Resource": "<LiveNamespaceArn>" },
+    { "Effect": "Allow", "Action": "s3:ListBucket", "Resource": "arn:aws:s3:::factorial-work-artefacts-<account id>" },
+    { "Effect": "Allow", "Action": "s3:GetObject", "Resource": "arn:aws:s3:::factorial-work-artefacts-<account id>/*" },
+    { "Effect": "Allow", "Action": "cloudformation:DescribeStacks", "Resource": "arn:aws:cloudformation:eu-west-1:<account id>:stack/factorial-orchestration/*" }
+  ]
+}
+```
+
+The last statement is needed only when the two environment variables are not set. To add it in the console: **IAM** → left nav **Users** (or **Roles**) → the identity → **Permissions** tab → **Add permissions** → **Create inline policy** → **JSON** → paste the policy with the ARNs filled in → **Next** → name it `factorial-live-subscribe` → **Create policy**. No agent role can connect, publish or subscribe: the agent permissions boundary denies `appsync:*`. To check a role (`factorial-agent-builder`, `factorial-agent-reviewer`):
+
+```
+aws iam simulate-principal-policy \
+  --policy-source-arn arn:aws:iam::<account id>:role/factorial-agent-builder \
+  --action-names appsync:EventConnect appsync:EventPublish appsync:EventSubscribe \
+  --resource-arns <LiveApiArn> <LiveNamespaceArn> \
+  --query 'EvaluationResults[].[EvalActionName,EvalDecision]' --output table
+```
+
+Every row should say `explicitDeny` or `implicitDeny`. The simulator applies the role's permissions boundary.

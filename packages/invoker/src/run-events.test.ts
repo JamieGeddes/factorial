@@ -58,6 +58,54 @@ describe('RunTally', () => {
     assert.equal(tally.ended, false);
   });
 
+  it('logs each model call with its usage, its model, the agent and the summed calls so far', () => {
+    const tally = new RunTally();
+    tally.add(started);
+    const [first] = tally.add({ ...call({ inputTokens: 100, outputTokens: 10, cacheReadInputTokens: 90 }), model: { provider: 'bedrock', id: 'claude' }, cost: { usd: 0.00125 } });
+    const [second] = tally.add({ ...call({ inputTokens: 40, outputTokens: 4 }, 'toolu_1'), cost: { usd: 0.0005 } });
+    assert.equal(first?.message, 'model call');
+    assert.deepEqual(first?.fields, {
+      agent: 'main',
+      model: 'claude',
+      usage: { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadInputTokens: 90, cacheWriteInputTokens: 0 },
+      costUsd: 0.0013,
+      total: {
+        modelCalls: 1,
+        inputTokens: 100,
+        outputTokens: 10,
+        totalTokens: 110,
+        cacheReadInputTokens: 90,
+        cacheWriteInputTokens: 0,
+        uncachedInputTokens: 10,
+        maxCallInputTokens: 100,
+        lastCallInputTokens: 100,
+      },
+      totalCostUsd: 0.0013,
+    });
+    assert.equal(second?.fields.agent, 'subagent');
+    assert.equal((second?.fields.total as { modelCalls: number }).modelCalls, 2);
+    assert.equal(second?.fields.totalCostUsd, 0.0018);
+    assert.equal(tally.costedCalls, 2);
+    // A call without a cost adds nothing to the cost.
+    const [third] = tally.add(call({ inputTokens: 1, outputTokens: 1 }));
+    assert.equal(third?.fields.costUsd, undefined);
+    assert.equal(tally.costedCalls, 2);
+  });
+
+  it('logs a tool result cut at 4,000 characters with its size, and reasoning by its last 4,000', () => {
+    const content = `${'r'.repeat(5000)}`;
+    const tally = tallyWith();
+    assert.deepEqual(tally.add({ type: 'tool.result', callId: 'toolu_1', isError: true, content }), [
+      { message: 'tool result', fields: { callId: 'toolu_1', agent: 'main', isError: true, content: 'r'.repeat(4000), bytes: 5000 } },
+    ]);
+    assert.equal(tally.add({ type: 'tool.result', agentId: 'a', callId: 'toolu_2', content: 'ok' })[0]?.fields.isError, false);
+    const thought = `start ${'t'.repeat(4000)}end`;
+    const [line] = tally.add({ type: 'reasoning', text: thought });
+    assert.equal(line?.message, 'reasoning');
+    assert.equal(line?.fields.text, thought.slice(-4000));
+    assert.deepEqual(tally.add({ type: 'reasoning', text: '   ' }), []);
+  });
+
   it('ends at run.ended', () => {
     const tally = tallyWith(ended('complete', 'completed', { turns: 3, cost: { usd: 0.04, basis: 'harness-estimate' } }));
     assert.equal(tally.ended, true);

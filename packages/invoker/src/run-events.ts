@@ -80,6 +80,11 @@ export class RunTally {
   invalidEvents = 0;
   /** Set when the first event shows the host speaks another contract. */
   contractMismatch: string | undefined;
+  /** The sum of the hosts' per-call cost estimates, over the calls that carried one. */
+  callCostUsd = 0;
+  costedCalls = 0;
+  /** The summed calls so far, for the `model call` lines. */
+  private callTotal = emptyRunUsage();
   private events = 0;
   /** Each subagent's model calls so far, by agent id. */
   private readonly subagentCalls = new Map<string, RunUsage>();
@@ -112,16 +117,42 @@ export class RunTally {
       case 'model.call': {
         const call = callUsageOf(event.usage);
         this.calls.push(call);
+        this.callTotal = addCallUsage(this.callTotal, call);
         if (event.agentId !== undefined) this.subagentCalls.set(event.agentId, addCallUsage(this.subagentCalls.get(event.agentId) ?? emptyRunUsage(), call));
-        return [];
+        if (event.cost !== undefined) {
+          this.callCostUsd += event.cost.usd;
+          this.costedCalls += 1;
+        }
+        return [
+          {
+            message: 'model call',
+            fields: {
+              agent,
+              model: event.model?.id,
+              usage: call,
+              ...(event.cost !== undefined ? { costUsd: roundUsd(event.cost.usd) } : {}),
+              total: this.callTotal,
+              ...(this.costedCalls > 0 ? { totalCostUsd: roundUsd(this.callCostUsd) } : {}),
+            },
+          },
+        ];
       }
       case 'tool.call': {
         this.toolCalls += 1;
         const input = JSON.stringify(event.input ?? {});
         return [{ message: 'tool use', fields: { tool: event.tool, agent, input: input.slice(0, 4000), bytes: Buffer.byteLength(input) } }];
       }
+      case 'tool.result':
+        return [
+          {
+            message: 'tool result',
+            fields: { callId: event.callId, agent, isError: event.isError ?? false, content: event.content.slice(0, 4000), bytes: Buffer.byteLength(event.content) },
+          },
+        ];
       case 'text':
         return event.text.trim() ? [{ message: 'assistant text', fields: { agent, model: event.model?.id, text: event.text.slice(-4000) } }] : [];
+      case 'reasoning':
+        return event.text.trim() ? [{ message: 'reasoning', fields: { agent, model: event.model?.id, text: event.text.slice(-4000) } }] : [];
       case 'subagent.ended': {
         const usage = this.subagentCalls.get(event.agentId) ?? emptyRunUsage();
         this.subagentRuns.push({

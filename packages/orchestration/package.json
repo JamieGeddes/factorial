@@ -18,6 +18,7 @@
     "@aws-sdk/util-dynamodb": "^3.996.9",
     "@factorial/artefacts": "^0.1.0",
     "@factorial/github-app": "^0.1.0",
+    "@factorial/live": "^0.1.0",
     "@factorial/log": "^0.1.0",
     "@factorial/plan": "^0.1.0",
     "@factorial/progress": "^0.1.0",

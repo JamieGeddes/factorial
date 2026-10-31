@@ -66,9 +66,20 @@ describe('streamRun', () => {
       return streams[payloads.length - 1]!();
     };
     const messages: unknown[] = [];
-    const reconnects = await streamRun(invoke, { action: 'run' }, (m) => messages.push(m), ended(messages), options);
+    const seqs: number[] = [];
+    const reconnects = await streamRun(
+      invoke,
+      { action: 'run' },
+      (m, seq) => {
+        messages.push(m);
+        seqs.push(seq);
+      },
+      ended(messages),
+      options,
+    );
     assert.equal(reconnects, 2);
     assert.deepEqual(messages, [{ n: 1 }, { n: 2 }, { n: 3 }, { type: 'result' }]);
+    assert.deepEqual(seqs, [1, 2, 3, 4]);
     assert.deepEqual(payloads, [{ action: 'run' }, { action: 'attach', after: 2 }, { action: 'attach', after: 2 }]);
   });
 

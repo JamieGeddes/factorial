@@ -27,6 +27,11 @@
  * `<stage>/round-<n>/`, and the ledger's `<stage>UsageTotal` sums the
  * rounds). The stage, statuses and first message come from the role's
  * manifest (@factorial/roles).
+ *
+ * While the run goes on, each event is also published to the run's live
+ * channel, its transcript line uploaded in catch-up chunks, and the run's
+ * progress kept on the ledger row's `live` attribute (live-feed.ts, #194).
+ * None of these can fail the run.
  */
 import { readFileSync } from 'node:fs';
 
@@ -36,12 +41,15 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import { artefactKey, putArtefact, putJsonArtefact } from '@factorial/artefacts';
+import { chunkPath, httpPublisher, runChannel } from '@factorial/live';
 import { createLogger } from '@factorial/log';
 import { isStageName, progressRecorder, stageError } from '@factorial/progress';
 import { ROLES } from '@factorial/roles';
 import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE, validateRunStatus, type RunOutcome, type RunStatus } from '@factorial/run';
 import { assertWorkItem } from '@factorial/workitem';
 
+import { LiveFeed, type LiveRecord } from './live-feed.ts';
+import { liveSnapshot } from './live-ledger.ts';
 import { INCOMPLETE_EXIT_CODE, incompleteReason, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
 import { roundUsd, runEntryOf, runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
@@ -73,6 +81,8 @@ const sensitivePaths = parseSensitivePaths(process.env.SENSITIVE_PATHS);
 const buildRound = Number(process.env.BUILD_ROUND ?? '1');
 if (!Number.isInteger(buildRound) || buildRound < 1) throw new Error('BUILD_ROUND is not a positive integer');
 const round = manifest.rounds ? buildRound : undefined;
+/** The round in the run's live channel and chunk keys: `build/2`, `review/1`. */
+const liveRound = round ?? 1;
 const { stage } = manifest;
 const { running, done, failed } = manifest.statuses;
 // The state's name, for the progress record (#15); an execution started before #15 passes none, and records nothing.
@@ -134,6 +144,39 @@ const run = {
   harness: undefined as HarnessRecord | undefined,
 };
 const transcript = new TranscriptBuffer('/tmp/transcript.jsonl');
+/** The run's events as the invoker reads them, shared with the live feed's snapshots. */
+const tally = new RunTally();
+/** Set once the ledger row is read: the channel and the chunks need the attempt and the prefix. */
+let feed: LiveFeed | undefined;
+
+/** The live feed for this run (#194). With no endpoint configured it publishes nothing and counts every event dropped. */
+function liveFeed(): LiveFeed {
+  const httpDomain = process.env.LIVE_HTTP_DOMAIN;
+  const region = process.env.LIVE_REGION ?? process.env.AWS_REGION;
+  if (!httpDomain || !region) log.info('live feed off: no LIVE_HTTP_DOMAIN');
+  const prefix = run.prefix;
+  return new LiveFeed({
+    context: { workItemId, attempt: run.attempt, role, stage, round: liveRound },
+    channel: runChannel(workItemId, stage, liveRound),
+    send: httpDomain && region ? httpPublisher({ httpDomain, region }) : undefined,
+    putChunk: prefix ? (n, text) => putArtefact(prefix, chunkPath(stage, liveRound, n), text, 'application/x-ndjson') : undefined,
+    writeLive: async (snapshot) => {
+      await documents.send(
+        new UpdateCommand({
+          TableName: tableName,
+          Key: { workItemId },
+          UpdateExpression: 'SET #live = :live',
+          ConditionExpression: 'attribute_exists(workItemId)',
+          ExpressionAttributeNames: { '#live': 'live' },
+          ExpressionAttributeValues: { ':live': snapshot },
+        }),
+      );
+    },
+    snapshot: (state, ended) =>
+      liveSnapshot({ role, stage, round: liveRound, now: new Date(), startedAt: run.startedAt, ...state, tally, version: run.version, ended }),
+    report: (message, fields) => log.error(message, fields),
+  });
+}
 
 /** The runtime version `live` serves, its model and limits. Best effort: the run goes ahead without it. */
 async function runtimeInfo({ runtimeId }: RuntimeTarget): Promise<VersionInfo> {
@@ -155,7 +198,7 @@ async function runtimeInfo({ runtimeId }: RuntimeTarget): Promise<VersionInfo> {
 }
 
 /** Upload the transcript and usage under the role's stage. Returns their keys for the stage's entry, never content. */
-async function storeRunRecord(): Promise<{ transcriptKey: string; usageKey: string } | undefined> {
+async function storeRunRecord(live: LiveRecord | undefined): Promise<{ transcriptKey: string; usageKey: string } | undefined> {
   const kept = transcript.close();
   if (!run.prefix) {
     log.error('no artefact prefix on the ledger row; run record not stored');
@@ -163,7 +206,7 @@ async function storeRunRecord(): Promise<{ transcriptKey: string; usageKey: stri
   }
   try {
     await putArtefact(run.prefix, recordPath('transcript.jsonl'), readFileSync(transcript.path, 'utf8'), 'application/x-ndjson');
-    await putJsonArtefact(run.prefix, recordPath('usage.json'), usageRecord({ ...run, endedAt: Date.now() }));
+    await putJsonArtefact(run.prefix, recordPath('usage.json'), usageRecord({ ...run, live, endedAt: Date.now() }));
     log.info('run record stored', { transcriptBytes: kept.bytes, events: kept.events, truncated: kept.truncated });
     return {
       transcriptKey: artefactKey(run.prefix, recordPath('transcript.jsonl')),
@@ -180,7 +223,10 @@ let finished: Promise<void> | undefined;
 /** Store the run record and the outcome exactly once, whichever way the run ends. */
 function finish(succeeded: boolean): Promise<void> {
   finished ??= (async () => {
-    const stored = await storeRunRecord();
+    // The feed's last publishes, chunk and progress come first, so usage.json counts them.
+    const live = await feed?.close();
+    if (live) log.info('live feed closed', { ...live });
+    const stored = await storeRunRecord(live);
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
     log.info('agent finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.harness?.costUsd });
@@ -237,10 +283,12 @@ async function main(): Promise<number> {
     );
   }
   log.info('invoking agent', { role, sessionId, qualifier, ...(round !== undefined ? { buildRound: round } : {}), ...run.version });
+  feed = liveFeed();
   await record(running, {});
   if (progressStage) await progress.started(workItemId, progressStage, buildRound);
 
   run.startedAt = Date.now();
+  feed.start();
   transcript.append({ request: { role, prompt, ...run.version } });
   await invokeRuntime(target, prompt);
 
@@ -279,17 +327,18 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
     return response.response as AsyncIterable<Uint8Array>;
   };
 
-  const tally = new RunTally();
   const reconnects = await streamRun(
     invoke,
     { action: 'run', contract: RUN_CONTRACT, prompt, round: buildRound, workItemId, attempt: run.attempt },
-    (message) => {
-      if (typeof message === 'object' && message !== null) transcript.append(message);
-      for (const line of tally.add(message)) log.info(line.message, line.fields);
+    (message, seq) => {
+      const at = new Date();
+      const line = typeof message === 'object' && message !== null ? transcript.append(message, at, seq) : undefined;
+      for (const logLine of tally.add(message)) log.info(logLine.message, logLine.fields);
       // Kept current, so a stopped task still records what was used.
       run.toolCalls = tally.toolCalls;
       run.calls = tally.calls;
       run.usage = tally.calls.reduce(addCallUsage, emptyRunUsage());
+      feed?.event(message, seq, at, line);
     },
     () => tally.ended,
     {

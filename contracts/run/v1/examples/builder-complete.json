@@ -15,7 +15,7 @@
   { "type": "text", "model": { "provider": "bedrock", "id": "claude-sonnet-5-5" }, "text": "Planning first." },
   { "type": "tool.call", "callId": "toolu_plan", "tool": "task", "input": { "subagent_type": "plan", "prompt": "Plan the change." } },
   { "type": "subagent.started", "agentId": "toolu_plan", "agentType": "plan" },
-  { "type": "model.call", "agentId": "toolu_plan", "usage": { "inputTokens": 4100, "outputTokens": 12, "cacheReadInputTokens": 4000 }, "exact": false },
+  { "type": "model.call", "agentId": "toolu_plan", "usage": { "inputTokens": 4100, "outputTokens": 12, "cacheReadInputTokens": 4000 }, "exact": false, "cost": { "usd": 0.0015 } },
   { "type": "tool.call", "agentId": "toolu_plan", "callId": "toolu_read", "tool": "read", "input": { "path": "/workspace/README.md" } },
   { "type": "tool.result", "agentId": "toolu_plan", "callId": "toolu_read", "content": "# Factorial" },
   { "type": "subagent.ended", "agentId": "toolu_plan", "agentType": "plan", "durationMs": 2000, "toolCalls": 4, "finalContextTokens": 900 },

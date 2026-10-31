@@ -196,6 +196,14 @@ Resources:
             Effect: Allow
             Action: sts:GetCallerIdentity
             Resource: '*'
+          # The live feed (#194): publishing to the `factorial` namespace of
+          # an AppSync Events API, and nothing else of AppSync. An Event
+          # API's ARN holds its generated id; the namespace's name is in the
+          # ARN, so the grant is scoped by it.
+          - Sid: LiveFeed
+            Effect: Allow
+            Action: appsync:EventPublish
+            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*/channelNamespace/factorial
           # Bounded roles may only hand off to, or step into, other Factorial
           # roles, which carry this boundary themselves. Any account is allowed
           # so that the future sandbox-account roles work.
@@ -268,6 +276,7 @@ Resources:
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-cloudformation-appsync
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
 
   # ---------------------------------------------------------------------------
@@ -359,6 +368,79 @@ Resources:
               - xray:GetSamplingRules
               - xray:GetSamplingTargets
             Resource: '*'
+          # The live feed (#194) carries every run's events. Nothing above
+          # allows AppSync; this says so outright, so no agent role can
+          # publish to a run's channel or read another run's feed, whatever
+          # its own policy grants.
+          - Sid: DenyLiveFeed
+            Effect: Deny
+            Action: appsync:*
+            Resource: '*'
+
+  # ---------------------------------------------------------------------------
+  # AppSync for the CloudFormation execution role (#194): the live feed's
+  # Event API and its namespace. An Event API's ARN holds an id AppSync
+  # generates, so it cannot be scoped by name. Instead every action on an
+  # existing API or namespace requires the aws:cloudformation:stack-name tag
+  # of a factorial- stack, which only CloudFormation can set (the aws: prefix
+  # is reserved, and both resource types take CloudFormation's system tags).
+  # Creating an API authorises against no resource; it needs the
+  # Project=Factorial tag, and the result is reachable only through the
+  # statements here. Kept out of the role's inline policy for its size limit.
+  # ---------------------------------------------------------------------------
+  CloudFormationAppSyncPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-cloudformation-appsync
+      Description: AppSync Event APIs for the CloudFormation execution role, scoped to factorial- stacks.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CreateEventApis
+            Effect: Allow
+            Action: appsync:CreateApi
+            Resource: '*'
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: Factorial
+          - Sid: CreateChannelNamespaces
+            Effect: Allow
+            Action: appsync:CreateChannelNamespace
+            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*/channelNamespace/*
+            Condition:
+              StringEquals:
+                aws:RequestTag/Project: Factorial
+          # Only the stack tag and CloudFormation's own may be applied.
+          - Sid: TagOnCreate
+            Effect: Allow
+            Action: appsync:TagResource
+            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*
+            Condition:
+              StringEqualsIfExists:
+                aws:RequestTag/Project: Factorial
+              ForAllValues:StringEquals:
+                aws:TagKeys:
+                  - Project
+                  - aws:cloudformation:stack-name
+                  - aws:cloudformation:stack-id
+                  - aws:cloudformation:logical-id
+          - Sid: ManageFactorialEventApis
+            Effect: Allow
+            Action:
+              - appsync:GetApi
+              - appsync:UpdateApi
+              - appsync:DeleteApi
+              - appsync:GetChannelNamespace
+              - appsync:UpdateChannelNamespace
+              - appsync:DeleteChannelNamespace
+              - appsync:ListChannelNamespaces
+              - appsync:ListTagsForResource
+              - appsync:TagResource
+              - appsync:UntagResource
+            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*
+            Condition:
+              StringLike:
+                aws:ResourceTag/aws:cloudformation:stack-name: factorial-*
 
   # ---------------------------------------------------------------------------
   # CloudFormation execution role. CloudFormation assumes this to create the
@@ -370,6 +452,11 @@ Resources:
     Properties:
       RoleName: factorial-cloudformation
       Description: Assumed by CloudFormation to deploy Factorial's own stacks.
+      # The inline policy below is near IAM's 10,240-character limit for a
+      # role's inline policies, so services added since #194 go in managed
+      # policies, each listed in both foundation deny lists.
+      ManagedPolicyArns:
+        - !Ref CloudFormationAppSyncPolicy
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -478,6 +565,7 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:role/factorial-cloudformation
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-cloudformation-appsync
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
               # Deployments create credential providers but never read what
               # they hold.

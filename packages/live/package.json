@@ -1,0 +1,19 @@
+{
+  "name": "@factorial/live",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The live run feed (#194): channel names, the event envelope and its caps, signed publishing and subscribing on the AppSync Events API, and catch-up chunks",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@aws-sdk/credential-provider-node": "^3.972.86",
+    "@factorial/artefacts": "^0.1.0",
+    "@smithy/signature-v4": "^5.7.4"
+  }
+}
