@@ -36,6 +36,8 @@ export interface Artefacts {
   get(key: string, finished: boolean): Promise<ArtefactBody | undefined>;
   /** A catch-up chunk's text, or undefined until it exists. */
   chunk(key: string): Promise<string | undefined>;
+  /** Any object written once (a chunk, the stored plan, a run's `usage.json`) as text, kept once it exists. */
+  once(key: string): Promise<string | undefined>;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -80,6 +82,14 @@ export function createArtefacts(s3: Sender, bucket: () => Promise<string>, maxBy
     const bytes = (await object.Body?.transformToByteArray()) ?? new Uint8Array();
     return { bytes, contentType: object.ContentType ?? 'application/octet-stream' };
   };
+  const once = async (key: string): Promise<string | undefined> => {
+    const hit = cache.get(key);
+    if (hit) return new TextDecoder().decode(hit.bytes);
+    const content = await read(key);
+    if (!content) return undefined;
+    cache.set(key, content.bytes, content.contentType);
+    return new TextDecoder().decode(content.bytes);
+  };
   return {
     async list(workItemId) {
       if (!isWorkItemId(workItemId)) return [];
@@ -114,13 +124,7 @@ export function createArtefacts(s3: Sender, bucket: () => Promise<string>, maxBy
         ...(object.ContentLength !== undefined ? { size: object.ContentLength } : {}),
       };
     },
-    async chunk(key) {
-      const hit = cache.get(key);
-      if (hit) return new TextDecoder().decode(hit.bytes);
-      const content = await read(key);
-      if (!content) return undefined;
-      cache.set(key, content.bytes, content.contentType);
-      return new TextDecoder().decode(content.bytes);
-    },
+    chunk: (key) => once(key),
+    once: (key) => once(key),
   };
 }

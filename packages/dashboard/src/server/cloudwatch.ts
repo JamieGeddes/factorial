@@ -13,6 +13,8 @@ export interface Alarms {
   total: number;
   /** Those in `ALARM`, by name. */
   firing: string[];
+  /** When each alarm in `firing` entered it. */
+  since: Record<string, string>;
 }
 
 /** Events per minute on the bus, over the last ten whole minutes: the sum of its rules' invocations. */
@@ -37,21 +39,28 @@ export async function busRate(cw: Sender, now: Date): Promise<number> {
   return values.reduce((a, b) => a + b, 0) / 10;
 }
 
+type Alarm = { AlarmName?: string; StateValue?: string; StateUpdatedTimestamp?: Date };
+
 export async function alarms(cw: Sender): Promise<Alarms> {
   let total = 0;
   const firing: string[] = [];
+  const since: Record<string, string> = {};
   let token: string | undefined;
   do {
     const page = (await cw.send(
       new DescribeAlarmsCommand({ AlarmNamePrefix: ALARM_PREFIX, AlarmTypes: ['MetricAlarm', 'CompositeAlarm'], ...(token ? { NextToken: token } : {}) }),
-    )) as { MetricAlarms?: Array<{ AlarmName?: string; StateValue?: string }>; CompositeAlarms?: Array<{ AlarmName?: string; StateValue?: string }>; NextToken?: string };
+    )) as { MetricAlarms?: Array<Alarm>; CompositeAlarms?: Array<Alarm>; NextToken?: string };
     for (const alarm of [...(page.MetricAlarms ?? []), ...(page.CompositeAlarms ?? [])]) {
       total += 1;
-      if (alarm.StateValue === 'ALARM' && alarm.AlarmName) firing.push(alarm.AlarmName);
+      if (alarm.StateValue === 'ALARM' && alarm.AlarmName) {
+        firing.push(alarm.AlarmName);
+        const at = alarm.StateUpdatedTimestamp;
+        if (at instanceof Date && Number.isFinite(at.getTime())) since[alarm.AlarmName] = at.toISOString();
+      }
     }
     token = page.NextToken;
   } while (token);
-  return { total, firing };
+  return { total, firing, since };
 }
 
 export function createCloudWatch(cw: Sender, ttlMs = 30_000, now: () => Date = () => new Date()) {

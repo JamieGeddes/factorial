@@ -4,11 +4,12 @@ import { Elapsed } from '../Elapsed.tsx';
 import { Pill } from '../Pill.tsx';
 import { Table, type Column } from '../Table.tsx';
 import { clip, fmtUsd, shortId } from '../../lib/format.ts';
+import { runHref } from '../../lib/overview.ts';
 import type { WorkItemSummary } from '../../lib/work-items.ts';
 
-/** Where a row leads: the item's latest run once #58 adds that view; until then, the item's detail. */
+/** Where a row leads: the item's latest agent run, or its detail while it has none. */
 export function rowHref(item: WorkItemSummary): string {
-  return `/work-items/${item.id}`;
+  return runHref(item);
 }
 
 const columns: Column<WorkItemSummary>[] = [

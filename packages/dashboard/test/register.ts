@@ -6,4 +6,7 @@
  */
 import { register } from 'node:module';
 
+// Days are local time in the app; tests fix the zone so they read the same anywhere.
+process.env.TZ = 'UTC';
+
 register('./hooks.ts', import.meta.url);

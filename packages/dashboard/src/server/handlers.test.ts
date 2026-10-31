@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { stubServices } from '../../test/services.ts';
 import { ID, ID2 } from '../../test/stubs.ts';
 import type { LedgerRow } from '../lib/records.ts';
-import { getArtefact, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
+import { getArtefact, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
 
 const item = (id: string, fields: Partial<LedgerRow>): LedgerRow => ({
   workItemId: id,
@@ -106,4 +106,37 @@ test('a stream’s channels change by JSON only, for a stream that exists', asyn
   const ok = await read(await post(JSON.stringify({ channels: ['/factorial/work-items', '/factorial/other', `/factorial/runs/${ID}/build/1`] })));
   assert.deepEqual(ok.body.channels, ['/factorial/work-items', `/factorial/runs/${ID}/build/1`]);
   stream.close();
+});
+
+test('/api/overview: tiles, pucks and sessions from the ledger', async () => {
+  const services = stubServices({ rows, threads: [{ threadKey: 'k', outcome: { state: 'merged', at: 'a', by: 'b' } }] });
+  const { status, body } = await read(await getOverview(services));
+  assert.equal(status, 200);
+  assert.equal((body.pucks as Array<{ id: string; stage: string }>).map((p) => `${p.id}:${p.stage}`).join(), `${ID2}:Build`);
+  assert.equal((body.tiles as Array<{ label: string }>).length, 6);
+  assert.deepEqual(body.notices, []);
+});
+
+test('/api/runs/{id}/{stage}/{round}: the stored plan, else the builder\'s write in the chunks; limits from usage.json; 400 and 404', async () => {
+  const plan = JSON.stringify({ steps: [{ id: 'stored', files: [] }] });
+  const written = JSON.stringify({ steps: [{ id: 'written', files: ['x.ts'] }] });
+  const chunk = `{"at":"a","seq":4,"type":"tool.call","tool":"write","input":{"path":"/workspace/plan.json","content":${JSON.stringify(written)}}}\n`;
+  const done = item(ID, { result: 'pr-opened', stages: { Build: { startedAt: 'a', endedAt: 'b', run: { usageKey: `${ID}/1/build/usage.json` } } } });
+  const running = item(ID2, { stages: { Build: { startedAt: '2026-11-01T09:01:00Z' } } });
+  const services = stubServices({
+    rows: [done, running],
+    objects: { [`${ID}/1/plan/plan.json`]: plan, [`${ID}/1/build/usage.json`]: '{"maxTurns":150,"maxBudgetUsd":5}', [`${ID2}/1/build/live/0001.jsonl`]: chunk },
+  });
+  const finished = await read(await getRun(services, ID, 'build', '1'));
+  assert.equal(finished.status, 200);
+  assert.deepEqual(finished.body.plan, { steps: [{ id: 'stored', files: [] }], source: 'plan/plan.json, as Collect stored it' });
+  assert.deepEqual(finished.body.limits, { maxTurns: 150, maxBudgetUsd: 5 });
+  assert.equal(finished.body.transcript, `/api/work-items/${ID}/artefacts/1/build/transcript.jsonl`);
+  const live = await read(await getRun(services, ID2, 'build', '1'));
+  assert.deepEqual(live.body.plan, { steps: [{ id: 'written', files: ['x.ts'] }], source: "the builder's write of plan.json, event 4" });
+  assert.equal(live.body.transcript, undefined);
+  assert.equal((await read(await getRun(services, ID2, 'review', '1'))).body.plan, undefined);
+  assert.equal((await getRun(services, 'nope', 'build', '1')).status, 400);
+  assert.equal((await getRun(services, ID, 'Build', '1')).status, 404);
+  assert.equal((await getRun(services, '00000000-0000-0000-0000-000000000000', 'build', '1')).status, 404);
 });
