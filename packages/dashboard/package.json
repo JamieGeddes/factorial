@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=ExperimentalWarning --import ./test/register.ts --test 'src/**/*.test.ts' 'src/**/*.test.tsx'",
+    "test": "node --disable-warning=ExperimentalWarning --import ./test/register.ts --test 'src/**/*.test.ts' 'src/**/*.test.tsx' 'scripts/*.test.ts'",
     "build": "NEXT_TELEMETRY_DISABLED=1 next build",
     "start": "node --disable-warning=ExperimentalWarning scripts/start.ts"
   },

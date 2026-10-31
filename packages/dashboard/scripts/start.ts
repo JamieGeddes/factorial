@@ -8,6 +8,9 @@
  * chain (AWS_PROFILE, SSO, environment variables). Builds the app first when
  * no build exists; `--dev` runs the development server instead.
  *
+ * Ctrl-C stops it: the signal goes to the server, and if the server is still
+ * running 5 seconds later it is killed (`shutdown.ts`).
+ *
  * Environment: DASHBOARD_PORT (default 4757), and the overrides listed in
  * docs/dashboard.md.
  */
@@ -17,6 +20,8 @@ import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { createShutdown } from './shutdown.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const next = createRequire(import.meta.url).resolve('next/dist/bin/next');
@@ -43,5 +48,14 @@ child.stdout.on('data', (data: Buffer) => {
   }
 });
 
-for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => child.kill(signal));
-child.on('exit', (code) => process.exit(code ?? 0));
+// Ctrl-C or SIGTERM goes to the server, which ends its live streams and exits.
+// If it is still running 5 seconds later it is killed; a second Ctrl-C kills it
+// at once. The server is read-only and holds no state, so this loses nothing.
+const shutdown = createShutdown({
+  forward: (signal) => child.kill(signal),
+  kill: () => child.kill('SIGKILL'),
+  exit: (code) => process.exit(code),
+  timers: { setTimeout, clearTimeout: (handle) => clearTimeout(handle as NodeJS.Timeout) },
+});
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => shutdown.signal(signal));
+child.on('exit', (code) => shutdown.exited(code));
