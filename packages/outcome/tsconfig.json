@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "../../contracts/outcome/v1/*.json", "../../contracts/outcome/v1/examples/*.json"]
+}

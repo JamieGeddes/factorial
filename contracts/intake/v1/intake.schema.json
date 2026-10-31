@@ -60,7 +60,7 @@
       "format": "uuid"
     },
     "refusal": {
-      "description": "For the refuse route: the ledger status recorded and whether the refusal was answered on the pull request.",
+      "description": "For the refuse route: the ledger status recorded and whether the refusal is answered on the pull request. Since #165 the GitHub reporter posts the answer from the refused outcome; `replied` says one is due.",
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "replied"],

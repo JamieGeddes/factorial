@@ -1,12 +1,13 @@
 /**
- * The notifier for work items that came from a labelled GitHub issue: when
- * Build starts in round 1, react to the issue with eyes and say once that
- * work has started. Everything else is spoken for already: Intake reacts to
- * comment turns, Report and OpenPullRequest answer at the end.
+ * The started notice, for work items that came from a labelled GitHub issue:
+ * when Build starts in round 1, react to the issue with eyes and say once
+ * that work has started (#205). Intake reacts to comment turns, and the
+ * outcome (`deliver.ts`) answers at the end.
  */
 import type { ProgressEvent } from '@factorial/progress';
+import { TRIGGER_TYPES } from '@factorial/workitem';
 
-import type { Notifier } from './types.ts';
+import type { ReporterDeps } from './types.ts';
 
 const ISSUE_URL = /^https:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/issues\/([1-9][0-9]*)$/;
 
@@ -28,7 +29,8 @@ export function startedComment(workItemId: string): string {
   return `Factorial has started work on this issue (work item \`${workItemId}\`). A pull request or a comment here will follow.`;
 }
 
-export const githubIssueNotifier: Notifier = async (event, deps) => {
+export async function noticeStarted(event: ProgressEvent, deps: ReporterDeps): Promise<void> {
+  if (event.source.type !== TRIGGER_TYPES.githubIssue) return;
   // Round 1 of the build is the only start without a `round`: it is recorded from round 2.
   if (event.stage !== 'Build' || event.transition !== 'started' || event.round !== undefined) return;
 
@@ -38,7 +40,7 @@ export const githubIssueNotifier: Notifier = async (event, deps) => {
     return;
   }
 
-  const at = deps.now();
+  const at = deps.now().toISOString();
   if (!(await deps.ledger.claimStarted(event.workItemId, at))) {
     deps.log.info('started notice already sent, or no ledger row', {});
     return;
@@ -64,4 +66,4 @@ export const githubIssueNotifier: Notifier = async (event, deps) => {
     throw error;
   }
   deps.log.info('started notice sent', { issue: number });
-};
+}

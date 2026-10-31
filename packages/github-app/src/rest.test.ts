@@ -55,6 +55,35 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
+  it('lists conversation comments since a time, page by page', async () => {
+    const seen: Seen[] = [];
+    const full = Array.from({ length: 100 }, (_, i) => ({ user: { login: 'a' }, body: `c${i}` }));
+    const pages = [full, [{ user: null, body: null }]];
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      seen.push({ url: String(url), method: init?.method, headers: {}, body: undefined });
+      return new Response(JSON.stringify(pages[seen.length - 1] ?? []), { status: 200 });
+    }) as typeof fetch;
+    const client = new GitHubClient({ token: 't', fetchImpl });
+    const comments = await client.listIssueComments(repo, 7, { since: '2026-10-31T12:00:00.000Z' });
+    assert.equal(comments.length, 101);
+    assert.deepEqual(comments[100], { authorLogin: 'ghost', body: '' });
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/7/comments?per_page=100&page=1&since=2026-10-31T12%3A00%3A00.000Z');
+    assert.match(seen[1]?.url ?? '', /page=2/);
+    assert.equal(seen.length, 2);
+  });
+
+  it('stops listing comments at the page limit', async () => {
+    let calls = 0;
+    const full = Array.from({ length: 100 }, () => ({ user: { login: 'a' }, body: 'x' }));
+    const fetchImpl = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify(full), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new GitHubClient({ token: 't', fetchImpl });
+    assert.equal((await client.listIssueComments(repo, 7, { maxPages: 3 })).length, 300);
+    assert.equal(calls, 3);
+  });
+
   it('reacts to an issue', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { id: 1 }, seen) });

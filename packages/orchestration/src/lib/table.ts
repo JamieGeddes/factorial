@@ -77,17 +77,27 @@ export async function statusOf(workItemId: string): Promise<string | undefined> 
   return typeof status === 'string' ? status : undefined;
 }
 
-/** The attempt number, artefact prefix and whether work was saved, on a ledger row, if the row exists. */
-export async function attemptRecord(workItemId: string): Promise<{ attempt?: number; artefactPrefix?: string; savedWork?: boolean } | undefined> {
+/** What a ledger row says of its attempt: Intake writes the route, thread and branch, later stages the rest. */
+export interface AttemptRecord {
+  attempt?: number;
+  artefactPrefix?: string;
+  savedWork?: boolean;
+  route?: string;
+  threadKey?: string;
+  branch?: string;
+}
+
+/** The attempt number, artefact prefix, whether work was saved, and Intake's route and thread, on a ledger row, if the row exists. */
+export async function attemptRecord(workItemId: string): Promise<AttemptRecord | undefined> {
   const result = await documents.send(
     new GetCommand({
       TableName: requireEnv('TABLE_NAME'),
       Key: { workItemId },
-      ProjectionExpression: '#attempt, #prefix, savedWork',
-      ExpressionAttributeNames: { '#attempt': 'attempt', '#prefix': 'artefactPrefix' },
+      ProjectionExpression: '#attempt, #prefix, savedWork, #route, threadKey, branch',
+      ExpressionAttributeNames: { '#attempt': 'attempt', '#prefix': 'artefactPrefix', '#route': 'route' },
     }),
   );
-  return result.Item as { attempt?: number; artefactPrefix?: string; savedWork?: boolean } | undefined;
+  return result.Item as AttemptRecord | undefined;
 }
 
 /** One turn on a thread, as the thread index projects it. */
