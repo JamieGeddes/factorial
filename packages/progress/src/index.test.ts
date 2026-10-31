@@ -238,3 +238,43 @@ test('every example in the contract fits it', async () => {
     assert.deepEqual(progressEventErrors(JSON.parse(readFileSync(new URL(name, folder), 'utf8'))), [], name);
   }
 });
+
+test('announces a merged pull request for the item that opened it, writing nothing', async () => {
+  const ledger = new FakeLedger();
+  const { r, bus, errors } = recorder(ledger);
+  const row = structuredClone(ledger.row!);
+  const outcome = { state: 'merged', at: '2026-10-31T09:12:40Z', by: 'owner', mergeCommit: 'c'.repeat(40) } as const;
+  await r.pullRequestClosed(row, 209, outcome);
+  await r.pullRequestClosed(row, 209, outcome);
+  assert.deepEqual(errors, []);
+  assert.equal(ledger.writes, 0);
+  assert.equal(bus.events.length, 2);
+  assert.deepEqual(bus.events[0], bus.events[1]);
+  const [event] = bus.events;
+  assert.equal(event?.eventId, `${ID}:PullRequest:merged`);
+  assert.equal(event?.stage, 'PullRequest');
+  assert.equal(event?.at, outcome.at);
+  assert.deepEqual(event?.pullRequest, { number: 209, by: 'owner', mergeCommit: outcome.mergeCommit });
+  assert.deepEqual(progressEventErrors(event), []);
+});
+
+test('a pull request closed without merging carries no merge commit', async () => {
+  const { r, bus, errors } = recorder();
+  await r.pullRequestClosed(newRow(), 12, { state: 'closed', at: '2026-10-31T09:00:00Z', by: 'owner', mergeCommit: 'c'.repeat(40) });
+  assert.deepEqual(errors, []);
+  assert.equal(bus.events[0]?.eventId, `${ID}:PullRequest:closed`);
+  assert.deepEqual(bus.events[0]?.pullRequest, { number: 12, by: 'owner' });
+});
+
+test('the schema keeps the pull request outcome to its own stage and transitions', () => {
+  const base = progressEvent(newRow(), 'PullRequest', 'merged', '2026-10-31T09:12:40Z', { pullRequest: { number: 1, by: 'owner' } });
+  assert.deepEqual(progressEventErrors(base), []);
+  const { pullRequest: _omitted, ...missing } = base!;
+  assert.notDeepEqual(progressEventErrors(missing), []);
+  assert.notDeepEqual(progressEventErrors({ ...base, stage: 'Build' }), []);
+  assert.notDeepEqual(progressEventErrors({ ...base, transition: 'succeeded', eventId: `${ID}:PullRequest:succeeded` }), []);
+  assert.notDeepEqual(progressEventErrors({ ...base, transition: 'closed', eventId: `${ID}:PullRequest:closed`, pullRequest: { number: 1, by: 'o', mergeCommit: 'c'.repeat(40) } }), []);
+  const started = progressEvent(newRow(), 'Build', 'started', '2026-10-31T09:12:40Z');
+  assert.notDeepEqual(progressEventErrors({ ...started, pullRequest: { number: 1, by: 'owner' } }), []);
+  assert.equal(isStageName('PullRequest'), false);
+});

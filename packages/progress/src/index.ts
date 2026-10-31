@@ -13,6 +13,10 @@
  * raised, so the progress record can never fail a stage. Every write requires
  * the ledger row to exist, so a write for an item not yet accepted (or with
  * no row) creates nothing.
+ *
+ * What became of the pull request an item opened (#204) is the one event
+ * recorded elsewhere: `factorial-thread-outcome` writes it on the thread,
+ * then announces it here for the item that opened the pull request.
  */
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
@@ -34,13 +38,17 @@ export const PROGRESS_SOURCE = 'factorial.progress';
 export const PROGRESS_DETAIL_TYPE = 'WorkItemProgress';
 /** The stage name of the work item's own end. */
 export const WORK_ITEM_STAGE = 'WorkItem';
+/** The stage name of what became of the pull request the work item opened. */
+export const PULL_REQUEST_STAGE = 'PullRequest';
 
 /** Stages that run once per build round; every other stage runs at most once per work item. */
 const ROUND_STAGES = new Set(['Build', 'SaveWork', 'ContinueBuild']);
 const STAGE_PATTERN = /^[A-Z][A-Za-z]*$/;
 
 export type StageOutcome = 'succeeded' | 'failed';
-export type Transition = 'started' | StageOutcome | 'ended';
+/** What became of a pull request: merged, or closed without merging. */
+export type PullRequestState = 'merged' | 'closed';
+export type Transition = 'started' | StageOutcome | 'ended' | PullRequestState;
 
 export interface StageError {
   name: string;
@@ -104,6 +112,18 @@ export interface ProgressEvent {
   status?: string;
   error?: StageError;
   run?: RunEntry;
+  pullRequest?: { number: number; by: string; mergeCommit?: string };
+}
+
+/** What became of a pull request, as its thread records it (`outcome` on the `factorial-threads` row). */
+export interface PullRequestOutcome {
+  state: PullRequestState;
+  /** When it closed. */
+  at: string;
+  /** Who merged it, or who closed it without merging. */
+  by: string;
+  /** For a merge: the commit it made on the base branch. */
+  mergeCommit?: string;
 }
 
 const ajv = new Ajv2020({ allErrors: true, strict: true });
@@ -118,7 +138,7 @@ export function progressEventErrors(event: unknown): string[] {
 
 /** Whether a stage name can be recorded: a state machine state name. */
 export function isStageName(stage: unknown): stage is string {
-  return typeof stage === 'string' && stage.length <= 64 && STAGE_PATTERN.test(stage) && stage !== WORK_ITEM_STAGE;
+  return typeof stage === 'string' && stage.length <= 64 && STAGE_PATTERN.test(stage) && stage !== WORK_ITEM_STAGE && stage !== PULL_REQUEST_STAGE;
 }
 
 /** The round a stage is recorded under: only a round stage, and only after the first round. */
@@ -151,7 +171,7 @@ export function progressEvent(
   key: string,
   transition: Transition,
   at: string,
-  extra: { status?: string; error?: StageError; run?: RunEntry } = {},
+  extra: Pick<ProgressEvent, 'status' | 'error' | 'run' | 'pullRequest'> = {},
 ): ProgressEvent | undefined {
   const source = row.workItem?.source;
   const repository = row.workItem?.repository;
@@ -317,6 +337,18 @@ export class ProgressRecorder {
         });
       }
       if (row.endedAt && row.status) await this.announce(progressEvent(row, WORK_ITEM_STAGE, 'ended', row.endedAt, { status: row.status }));
+    });
+  }
+
+  /**
+   * Announce what became of the pull request the item on `row` opened, once
+   * its thread records it. The thread is the record, so nothing is written
+   * here; a repeat puts the same event, with the same `eventId`, again.
+   */
+  async pullRequestClosed(row: LedgerRow, prNumber: number, outcome: PullRequestOutcome): Promise<void> {
+    await this.guard('pull request closed', row.workItemId, PULL_REQUEST_STAGE, async () => {
+      const pullRequest = { number: prNumber, by: outcome.by, ...(outcome.state === 'merged' && outcome.mergeCommit ? { mergeCommit: outcome.mergeCommit } : {}) };
+      await this.announce(progressEvent(row, PULL_REQUEST_STAGE, outcome.state, outcome.at, { pullRequest }));
     });
   }
 
