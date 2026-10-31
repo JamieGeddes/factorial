@@ -9,8 +9,10 @@ import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { summarise } from '../lib/work-items.ts';
+import { BuildRoundsTag } from './BuildRoundsTag.tsx';
 import { Meter } from './Meter.tsx';
 import { Pill } from './Pill.tsx';
+import { RunLine } from './RunLine.tsx';
 import { WorkItemsTable } from './work-items/WorkItemsTable.tsx';
 
 const router = { push() {}, replace() {}, refresh() {}, prefetch() {}, back() {}, forward() {} };
@@ -80,4 +82,22 @@ test('no client module imports @factorial/live beyond its channel names, or anyt
     }
   };
   for (const file of client) visit(file);
+});
+
+test('the build rounds tag shows for an item with Build#2 and not for a single round', () => {
+  const two = { workItemId: ID, stages: { Build: {}, 'Build#2': {} } };
+  assert.equal(render(<BuildRoundsTag row={two} />), '<span class="tag">2 build rounds</span>');
+  assert.equal(render(<BuildRoundsTag row={{ workItemId: ID, stages: { Build: {} } }} />), '');
+  assert.equal(render(<BuildRoundsTag row={{ workItemId: ID }} />), '');
+});
+
+test('the run line colours the stop reason by outcome and shows markup as text', () => {
+  const line = (outcome: 'complete' | 'incomplete' | 'failed', stopReason = 'end_turn') =>
+    render(<RunLine entry={{ run: { runtimeName: 'pi', runtimeVersion: '0.4.1', turns: 3, toolCalls: 7, stopReason, outcome } }} />);
+  assert.ok(line('incomplete').includes('<span class="stop waiting">stopped: end_turn</span>'));
+  assert.ok(line('failed').includes('class="stop failed"'));
+  assert.ok(line('complete').includes('class="stop plain"'));
+  assert.ok(line('complete').startsWith('<span class="sub run-line">pi v0.4.1 · 3 turns · 7 tool calls · '));
+  assert.ok(line('complete', '<b>x</b>').includes('stopped: &lt;b&gt;x&lt;/b&gt;'));
+  assert.equal(render(<RunLine entry={{}} />), '');
 });
