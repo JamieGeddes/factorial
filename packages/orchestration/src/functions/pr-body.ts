@@ -14,6 +14,7 @@ import {
 import type { ReworkTurn, WorkContext } from '../lib/context.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
+import type { ReworkReplyFacts, RunDetails } from '../lib/report-file.ts';
 import { GUARD_FINDING_PREFIX, type ReviewDigest } from '../lib/review-files.ts';
 import type { ReworkPoint } from '../lib/rework-points.ts';
 
@@ -84,7 +85,7 @@ export function agentText(text: string, max: number): string {
 }
 
 /** Free text from an agent that may run to several paragraphs: kept as lines, headings and tags neutralised, then cut. */
-function agentBlock(text: string, max: number): string {
+export function agentBlock(text: string, max: number): string {
   const lines = replaceEmDashes(text)
     .replace(/<(?=\/?(?:details|summary)\b)/gi, '&lt;')
     .split('\n')
@@ -346,15 +347,15 @@ export function planSection(plan: PlanView | undefined, summary: BuilderSummary 
  * its form is fixed (`| Branch | \`factorial/<id>\` |`); Prepare checks the
  * value against the pull request's real head.
  */
-export function runDetailsSection(ctx: WorkContext, headSha: string): string {
+export function runDetailsSection(details: RunDetails, headSha: string): string {
   const rows: Array<[string, string]> = [
-    ['Work item', `[${ctx.workItem.source.type} ${ctx.workItem.source.id}](${ctx.workItem.source.url})`],
-    ['Requested by', `@${ctx.workItem.requestedBy}`],
-    ['Branch', `\`${ctx.branch}\``],
+    ['Work item', `[${details.source.type} ${details.source.id}](${details.source.url})`],
+    ['Requested by', `@${details.requestedBy}`],
+    ['Branch', `\`${details.branch}\``],
     ['Head', `\`${headSha.slice(0, 12)}\``],
-    ['Built by', `Factorial \`${ctx.factorialVersion.slice(0, 12)}\``],
-    ['Session', `\`${ctx.sessionId}\``],
-    ['Artefacts', `\`${ctx.artefactPrefix}\``],
+    ['Built by', `Factorial \`${details.factorialVersion.slice(0, 12)}\``],
+    ['Session', `\`${details.sessionId}\``],
+    ['Artefacts', `\`${details.artefactPrefix}\``],
   ];
   return [
     '<details>',
@@ -366,6 +367,19 @@ export function runDetailsSection(ctx: WorkContext, headSha: string): string {
     '',
     '</details>',
   ].join('\n');
+}
+
+/** The run details of a work context. */
+export function runDetailsOf(ctx: WorkContext): RunDetails {
+  const { source } = ctx.workItem;
+  return {
+    source: { type: source.type, id: source.id, url: source.url },
+    requestedBy: ctx.workItem.requestedBy,
+    branch: ctx.branch,
+    factorialVersion: ctx.factorialVersion,
+    sessionId: ctx.sessionId,
+    artefactPrefix: ctx.artefactPrefix,
+  };
 }
 
 /** The pull request description. The builder's text is `summaryText`, as read from summary.md. */
@@ -380,7 +394,7 @@ export function pullRequestBody(ctx: WorkContext, summaryText: string, test: Tes
     reviewSection(extras.review),
     testsSection(test, summary, facts, plan),
     planSection(plan, summary),
-    runDetailsSection(ctx, headSha),
+    runDetailsSection(runDetailsOf(ctx), headSha),
   ].join('\n\n');
   // Whatever the sections let through, the body has no em or en dashes.
   return `${replaceEmDashes(body)}\n`;
@@ -421,36 +435,52 @@ export function reworkPointsSection(rework: Pick<ReworkTurn, 'cause'>, points: r
   return [heading, '', ...lines].join('\n');
 }
 
-/**
- * The reply to a rework request, posted on the pull request in place of a new
- * one. It answers each point, then gives the summary, the automated review
- * and the test result for the new head. The description is left as it was:
- * it describes the change as first opened, and this comment the rework.
- */
-export function reworkComment(
+/** What the reply to a rework is built from, as OpenPullRequest knows it: stored in report.json for the reporter. */
+export function reworkReplyFacts(
   ctx: WorkContext,
   rework: Pick<ReworkTurn, 'cause'>,
   summaryText: string,
   test: TestResult,
   headSha: string,
   extras: Pick<BodyExtras, 'review' | 'facts'> = {},
-): string {
+): ReworkReplyFacts {
+  return {
+    cause: rework.cause,
+    requestedBy: ctx.workItem.requestedBy,
+    headSha,
+    test: { ...(test.runUrl ? { runUrl: test.runUrl } : {}), ...(test.outcome ? { outcome: test.outcome } : {}) },
+    points: ctx.reworkPoints ?? [],
+    summaryText,
+    ...(extras.review !== undefined ? { review: extras.review } : {}),
+    ...(extras.facts !== undefined ? { facts: extras.facts } : {}),
+    runDetails: runDetailsOf(ctx),
+  };
+}
+
+/**
+ * The reply to a rework request, posted on the pull request in place of a new
+ * one. It answers each point, then gives the summary, the automated review
+ * and the test result for the new head. The description is left as it was:
+ * it describes the change as first opened, and this comment the rework.
+ */
+export function reworkComment(reply: ReworkReplyFacts): string {
+  const { test, headSha, summaryText } = reply;
   const summary = parseBuilderSummary(summaryText);
-  const requester = safeLogin(ctx.workItem.requestedBy);
+  const requester = safeLogin(reply.requestedBy);
   const why = {
     review: 'the review',
     'checks-failed': 'the failing checks',
     comment: requester ? `the request from @${requester}` : 'the request in the conversation',
-  }[rework.cause];
+  }[reply.cause];
   // Only a run whose tests passed reaches this reply.
   const tested = test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
   const body = [
     `Factorial has reworked this pull request after ${why}. The branch is now at \`${headSha.slice(0, 12)}\`, and ${tested}. The description above still describes the change as first opened; this comment covers the rework.`,
-    reworkPointsSection(rework, ctx.reworkPoints ?? [], summary),
+    reworkPointsSection(reply, reply.points, summary),
     summarySection(summary, summaryText, undefined),
-    reviewSection(extras.review),
-    testsSection(test, summary, extras.facts ?? null, undefined),
-    runDetailsSection(ctx, headSha),
+    reviewSection(reply.review),
+    testsSection(test, summary, reply.facts ?? null, undefined),
+    runDetailsSection(reply.runDetails, headSha),
   ].join('\n\n');
   return `${replaceEmDashes(body)}\n`;
 }

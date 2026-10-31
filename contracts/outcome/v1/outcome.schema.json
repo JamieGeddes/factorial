@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:outcome:v1",
+  "title": "Outcome",
+  "description": "What the pipeline concluded about one turn: the detail of an Outcome event (source factorial.outcome) on the factorial-work bus, also stored as outcome/outcome.json and recorded as `result` on the ledger row. Emitted only by the orchestrator, once per work item, at its terminal state; the reporter for its source type delivers it. Pointers only, never content. Internal to Factorial, not part of the WorkItem API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "workItemId", "attempt", "source", "repository", "result", "at", "artefactPrefix"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "workItemId": { "description": "The turn's WorkItem: one outcome per work item.", "type": "string", "format": "uuid" },
+    "attempt": { "type": "integer", "minimum": 1 },
+    "threadKey": { "description": "The thread, <owner>/<name>#<branch>, once Intake has found it.", "type": "string", "minLength": 1 },
+    "route": { "description": "The route Intake chose (contracts/intake/v1). Absent when the turn ended before Intake chose one.", "enum": ["change", "refuse"] },
+    "source": {
+      "description": "Copied from the WorkItem: where the request came from, and so which reporter delivers the outcome.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id", "url"],
+      "properties": {
+        "type": { "type": "string", "pattern": "^[a-z][a-z0-9]*(-[a-z0-9]+)*$" },
+        "id": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "inReplyTo": {
+      "description": "Copied from the WorkItem when present: what the turn continues.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "number"],
+      "properties": {
+        "kind": { "const": "pull-request" },
+        "number": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "repository": {
+      "description": "Where the code lives, which is not always where the request came from.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "owner", "name"],
+      "properties": {
+        "provider": { "enum": ["github"] },
+        "owner": { "type": "string", "minLength": 1 },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "result": {
+      "description": "What the turn concluded, from a fixed enum.",
+      "enum": ["pr-opened", "pr-updated", "no-changes", "tests-failed", "invalid-plan", "failed", "refused"]
+    },
+    "reason": {
+      "description": "For refused only: why Intake refused the turn.",
+      "enum": ["not-eligible", "busy", "rework-limit", "covered-by-review"]
+    },
+    "at": { "description": "When the outcome was built.", "type": "string", "format": "date-time" },
+    "artefactPrefix": {
+      "description": "The attempt's artefact prefix, <workItemId>/<attempt>/. Its report.json carries what delivery needs.",
+      "type": "string",
+      "pattern": "^[0-9a-f-]{36}/[1-9][0-9]*/$"
+    },
+    "pullRequest": {
+      "description": "The pull request the turn opened or updated, or the one a rework turn continued.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "url"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "format": "uri" }
+      }
+    },
+    "branch": { "description": "The thread's branch, once known.", "type": "string", "minLength": 1, "maxLength": 255 },
+    "testedSha": { "description": "On pr-opened and pr-updated: the commit the checks passed on, which is the branch head.", "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "savedWork": {
+      "description": "Untested work pushed to the branch although the turn did not finish: after a failed build.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["branch"],
+      "properties": {
+        "branch": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "commits": { "description": "The work item's commits over every round, when known.", "type": "integer", "minimum": 1 }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "result": { "const": "refused" } } },
+      "then": { "required": ["reason"], "properties": { "reason": true, "route": { "const": "refuse" }, "savedWork": false } },
+      "else": { "properties": { "reason": false } }
+    },
+    {
+      "if": { "properties": { "result": { "enum": ["pr-opened", "pr-updated"] } } },
+      "then": {
+        "required": ["pullRequest", "branch", "testedSha"],
+        "properties": { "pullRequest": true, "branch": true, "testedSha": true, "route": { "const": "change" }, "savedWork": false }
+      },
+      "else": { "properties": { "testedSha": false } }
+    },
+    { "if": { "properties": { "result": { "const": "pr-updated" } } }, "then": { "required": ["inReplyTo"], "properties": { "inReplyTo": true } } }
+  ]
+}

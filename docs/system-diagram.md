@@ -66,8 +66,9 @@ flowchart TB
         invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync, egress only)<br/>runs each agent to completion,<br/>streams transcript to logs"]
         collect["Lambda: factorial-collect<br/>(commits leftovers, exports git<br/>bundle from hostile session,<br/>pushes from clean-room session)"]
         dispatch["Lambda: factorial-dispatch-tests<br/>(dispatches test.yml on main<br/>with task token + tested sha)"]
-        openpr["Lambda: factorial-open-pr<br/>(verifies head = tested sha,<br/>opens PR, comments on issue)"]
-        report["Lambda: factorial-report<br/>(tells the requester when<br/>no PR will follow)"]
+        openpr["Lambda: factorial-open-pr<br/>(verifies head = tested sha,<br/>opens PR, emits the outcome)"]
+        report["Lambda: factorial-report<br/>(ends a turn with no PR,<br/>emits the outcome)"]
+        reporter["Lambda: factorial-report-github<br/>(one comment per outcome,<br/>the started notice)"]
         callbackrole["factorial-test-callback role<br/>(OIDC, main only,<br/>SendTask* only)"]
         sfn --> prepare
         sfn -->|"RunTask"| invoker
@@ -88,7 +89,11 @@ flowchart TB
     testwf --> oidc
     oidc -->|"sts:AssumeRoleWithWebIdentity<br/>(control)"| callbackrole
     callbackrole -->|"SendTaskSuccess /<br/>SendTaskFailure<br/>(control)"| sfn
-    openpr -->|"create PR, comment<br/>(data)"| pr
+    openpr -->|"create PR<br/>(data)"| pr
+    openpr -->|"PutEvents: Outcome<br/>(data)"| bus
+    report -->|"PutEvents: Outcome<br/>(data)"| bus
+    bus -->|"rules on source.type github-*<br/>(control)"| reporter
+    reporter -->|"comment, reply,<br/>re-request review<br/>(data)"| pr
 
     prepare -.-> ledger
     invoker -.-> ledger
@@ -96,6 +101,7 @@ flowchart TB
     dispatch -.-> ledger
     openpr -.-> ledger
     report -.-> ledger
+    reporter -.-> ledger
 
     class webhooksecret human
 ```
@@ -110,7 +116,7 @@ flowchart TB
 6. **Collect** (Lambda, deterministic). Treats the session as hostile: validates and stores the builder's plan (no valid plan → **report** `invalid-plan`), commits anything uncommitted, exports the commits as a git bundle, and pushes the branch from a clean-room session with hooks disabled, using a fresh installation token.
 7. **HasChanges** (Choice). No pushed commits → **report** (`no-changes`) and finish.
 8. **Test** (Lambda + callback). Dispatches `test.yml` on the default branch with the task token and the tested commit sha. The checks job runs the untrusted commit with no credentials; the report job assumes `factorial-test-callback` through OIDC (main only) and sends task success or failure. Failure → **report** (`tests-failed`) and fail.
-9. **OpenPullRequest** (Lambda). Confirms the branch head is still the tested commit, opens the PR attributed to `factorial[bot]`, and comments on the issue. A human reviews and approves.
+9. **OpenPullRequest** (Lambda). Confirms the branch head is still the tested commit, opens the PR attributed to `factorial[bot]`, and emits the turn's `Outcome`; `factorial-report-github` comments on the issue (#165). A human reviews and approves.
 
 ## Versioning and promotion
 

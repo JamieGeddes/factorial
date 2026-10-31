@@ -29,14 +29,15 @@ export function resource(name: string): Json {
   return found;
 }
 
-/** EventBridge matching for the operators the rules use: an array is any-of, `{ exists: false }` is absence, an object nests. */
+/** EventBridge matching for the operators the rules use: an array is any-of, `{ exists: false }` is absence, `{ prefix }` a string's start, an object nests. */
 export function matches(pattern: Json, event: Json): boolean {
   return Object.entries(pattern).every(([key, expected]) => {
     const actual = event[key];
     if (Array.isArray(expected)) {
       return expected.some((item) => {
         if (item !== null && typeof item === 'object') {
-          const { exists } = item as { exists?: boolean };
+          const { exists, prefix } = item as { exists?: boolean; prefix?: string };
+          if (prefix !== undefined) return typeof actual === 'string' && actual.startsWith(prefix);
           assert.notEqual(exists, undefined, `unsupported operator in ${JSON.stringify(item)}`);
           return (actual !== undefined) === exists;
         }

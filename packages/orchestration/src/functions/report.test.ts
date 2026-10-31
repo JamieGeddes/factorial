@@ -5,7 +5,15 @@ import type { WorkContext } from '../lib/context.ts';
 
 import { builderIncomplete } from '../lib/incomplete.ts';
 
-import { commentTarget, invalidPlanProblems, reportArtefact, reportMessage, savedWorkNote } from './report.ts';
+import { reportMessage as render, savedWorkNote as renderNote } from '../reporters/github/messages.ts';
+
+import { invalidPlanProblems, outcomeFacts, reportArtefact, reportFacts, type ReportInput } from './report.ts';
+
+const repository = { owner: 'JamieGeddes', name: 'factorial' };
+
+/** What the GitHub reporter says for a Report input: the facts Report stores, worded as the reporter words them. */
+const reportMessage = (input: ReportInput & { sessionIdHint?: string }): string => render(reportFacts(input, input.sessionIdHint), repository);
+const savedWorkNote = (input: Pick<ReportInput, 'ctx' | 'saved' | 'workItem'>): string => renderNote(reportFacts({ status: 'failed', ...input }), repository);
 
 const ctx: WorkContext = {
   workItem: {
@@ -130,7 +138,10 @@ describe('a builder that stopped before finishing', () => {
 
 describe('reportArtefact', () => {
   it('records the outcome and a reason for each terminal status', () => {
-    assert.deepEqual(reportArtefact({ status: 'no-changes' }), { outcome: 'no-changes', reason: 'The agent made no changes.' });
+    const record = reportArtefact({ status: 'no-changes' });
+    assert.equal(record.outcome, 'no-changes');
+    assert.equal(record.reason, 'The agent made no changes.');
+    assert.deepEqual(record.delivery, { kind: 'report', facts: { status: 'no-changes', rework: false } });
     assert.equal(reportArtefact({ status: 'tests-failed' }).outcome, 'tests-failed');
   });
 
@@ -170,10 +181,9 @@ describe('invalid-plan report', () => {
   });
 
   it('records the outcome in report.json', () => {
-    assert.deepEqual(reportArtefact({ status: 'invalid-plan' }), {
-      outcome: 'invalid-plan',
-      reason: 'The builder did not produce a valid plan.',
-    });
+    const record = reportArtefact({ status: 'invalid-plan' });
+    assert.equal(record.outcome, 'invalid-plan');
+    assert.equal(record.reason, 'The builder did not produce a valid plan.');
   });
 });
 
@@ -193,15 +203,10 @@ describe('a rework item', () => {
     },
   };
 
-  it('is reported on its pull request; anything else on its issue', () => {
-    assert.equal(commentTarget(reworkCtx.workItem), 26);
-    assert.equal(commentTarget(ctx.workItem), 7);
-    assert.equal(commentTarget({ ...ctx.workItem, source: { type: 'jira', id: 'X-1', url: 'https://x' } }), undefined);
-  });
-
-  it('is reported on the pull request it replies to, before Prepare has run', () => {
+  it('points the outcome at its pull request, before and after Prepare has run', () => {
+    assert.deepEqual(outcomeFacts({ status: 'no-changes', ctx: reworkCtx }, reworkCtx.workItem, undefined).pullRequest, reworkCtx.rework?.pullRequest);
     const reply = { ...ctx.workItem, source: { type: 'github-pull-request-comment', id: '9', url: 'https://github.com/JamieGeddes/factorial/pull/87#issuecomment-9' }, inReplyTo: { kind: 'pull-request' as const, number: 87 } };
-    assert.equal(commentTarget(reply), 87);
+    assert.equal(outcomeFacts({ status: 'failed', workItem: reply }, reply, undefined).pullRequest?.number, 87);
     assert.match(reportMessage({ status: 'failed', workItem: reply, error: { Error: 'X' } }), /could not complete this work item/);
     assert.match(reportMessage({ status: 'no-changes', workItem: reply }), /the pull request was not updated/);
   });
@@ -234,5 +239,45 @@ describe('a rework item', () => {
     assert.match(text, /iteration or time limit before finishing, so the change was not tested and the pull request was not updated\./);
     assert.match(text, /\(1 commit\) was saved to this pull request's branch/);
     assert.doesNotMatch(text, /no pull request was opened/);
+  });
+});
+
+describe('the outcome Report emits', () => {
+  it('comes from the context once Prepare has run', () => {
+    const facts = outcomeFacts({ status: 'failed', ctx, saved: { pushed: true, itemCommitCount: 2 } }, ctx.workItem, undefined);
+    assert.equal(facts.result, 'failed');
+    assert.equal(facts.route, 'change');
+    assert.equal(facts.threadKey, ctx.threadKey);
+    assert.equal(facts.artefactPrefix, ctx.artefactPrefix);
+    assert.deepEqual(facts.savedWork, { branch: ctx.branch, commits: 2 });
+    assert.equal(facts.pullRequest, undefined);
+  });
+
+  it("comes from Intake's record on the row when Prepare did not finish", () => {
+    const record = { attempt: 2, artefactPrefix: `${ctx.workItem.id}/2/`, route: 'change', threadKey: ctx.threadKey, branch: ctx.branch };
+    const facts = outcomeFacts({ status: 'failed', workItem: ctx.workItem }, ctx.workItem, record);
+    assert.equal(facts.attempt, 2);
+    assert.equal(facts.artefactPrefix, `${ctx.workItem.id}/2/`);
+    assert.equal(facts.route, 'change');
+    assert.equal(facts.branch, ctx.branch);
+    assert.equal(facts.savedWork, undefined);
+  });
+
+  it('falls back to attempt 1 with no route when there is no row', () => {
+    const facts = outcomeFacts({ status: 'failed', workItem: ctx.workItem }, ctx.workItem, undefined);
+    assert.equal(facts.attempt, 1);
+    assert.equal(facts.artefactPrefix, `${ctx.workItem.id}/1/`);
+    assert.equal(facts.route, undefined);
+  });
+
+  it('stores the facts the reporter words, never the cause', () => {
+    const record = reportArtefact(
+      { status: 'failed', ctx, error: { Error: 'States.TaskFailed', Cause: 'fatal: secret output' }, saved: { pushed: true, itemCommitCount: 1 } },
+      ctx.workItem.id,
+    );
+    assert.deepEqual(record.delivery, {
+      kind: 'report',
+      facts: { status: 'failed', rework: false, branch: ctx.branch, sessionId: ctx.sessionId, errorName: 'States.TaskFailed', savedWork: { branch: ctx.branch, commits: 1 } },
+    });
   });
 });

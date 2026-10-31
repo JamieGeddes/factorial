@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "7c1d9e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+  "attempt": 1,
+  "threadKey": "JamieGeddes/factorial#factorial/0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90",
+  "route": "change",
+  "source": { "type": "github-pull-request-review", "id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "url": "https://github.com/JamieGeddes/factorial/pull/230#pullrequestreview-1" },
+  "inReplyTo": { "kind": "pull-request", "number": 230 },
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "result": "pr-updated",
+  "at": "2026-10-31T13:00:00.000Z",
+  "artefactPrefix": "7c1d9e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f/1/",
+  "pullRequest": { "number": 230, "url": "https://github.com/JamieGeddes/factorial/pull/230" },
+  "branch": "factorial/0b8f4a52-5d3c-4c2e-9a51-2f6d1e7c8a90",
+  "testedSha": "9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+}
