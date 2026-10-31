@@ -11,6 +11,7 @@ import { fmtDur, fmtK, fmtUsd, shortId } from '../../../lib/format.ts';
 import { branchUrl } from '../../../lib/links.ts';
 import { text } from '../../../lib/sanitise.ts';
 import { parseStageKey } from '../../../lib/stage-key.ts';
+import { RUN_FOLDERS } from '../../../lib/stages.ts';
 import { isWorkItemId } from '../../../server/artefacts.ts';
 import { workItemDetail } from '../../../server/handlers.ts';
 import { services } from '../../../server/services.ts';
@@ -23,7 +24,7 @@ const seconds = (start?: string, end?: string): number | undefined => {
   return Number.isFinite(a) && Number.isFinite(b) ? (b - a) / 1000 : undefined;
 };
 
-/** One work item: its row, thread and artefacts. Rows of the Work items view open here until #58's run view. */
+/** One work item: its row, thread and artefacts. Work items rows open the latest run; its header links here. */
 export default async function WorkItemPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!isWorkItemId(id)) notFound();
@@ -103,7 +104,7 @@ export default async function WorkItemPage({ params }: { params: Promise<{ id: s
                   return (
                     <tr key={key}>
                       <td>
-                        {stage}
+                        {RUN_FOLDERS[stage] ? <Link href={`/runs/${id}/${RUN_FOLDERS[stage]}/${round ?? 1}`}>{stage}</Link> : stage}
                         {round ? <span className="sub">{`round ${round}`}</span> : null}
                         <RunLine entry={entry} />
                       </td>
@@ -149,9 +150,11 @@ export default async function WorkItemPage({ params }: { params: Promise<{ id: s
                   <span className="v">{live.events ?? 0}</span>
                 </div>
               </div>
-              <p className="note" style={{ margin: 0 }}>
-                The run and its transcript open in the Run &amp; transcript view once #58 adds it.
-              </p>
+              {live.stage && /^[a-z]+$/.test(live.stage) ? (
+                <p className="note" style={{ margin: 0 }}>
+                  <Link href={`/runs/${id}/${live.stage}/${live.round ?? 1}`}>Open the run and its transcript</Link>
+                </p>
+              ) : null}
             </div>
           ) : (
             <p className="note">This item has no live record (#194).</p>

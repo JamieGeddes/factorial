@@ -11,7 +11,7 @@ import { connectAuthorization, connectProtocols, realtimeDomainOf, subscribeAuth
 import { parseStageKey } from '../lib/stage-key.ts';
 import { createArtefacts, type Artefacts } from './artefacts.ts';
 import { REGION, type Sender } from './aws.ts';
-import { createCloudWatch } from './cloudwatch.ts';
+import { createCloudWatch, type Alarms } from './cloudwatch.ts';
 import { createConfig, type Config, type Env } from './config.ts';
 import { createLedger, type Ledger } from './ledger.ts';
 import { LiveConnection, type SocketLike } from './live-connection.ts';
@@ -32,7 +32,7 @@ export interface Services {
   threads: Threads;
   artefacts: Artefacts;
   runtimes: { live(): Promise<RuntimeVersion[]> };
-  cloudwatch: { busRate(): Promise<number>; alarms(): Promise<{ total: number; firing: string[] }> };
+  cloudwatch: { busRate(): Promise<number>; alarms(): Promise<Alarms> };
   live: LiveHub;
   now: () => number;
 }

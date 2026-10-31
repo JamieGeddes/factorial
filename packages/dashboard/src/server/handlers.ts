@@ -1,11 +1,18 @@
 import 'server-only';
 
+import { chunkLines, chunkPath } from '@factorial/live';
+
 import { commitUrl, executionUrl, artefactsUrl, REGION } from '../lib/links.ts';
 import { resultOf } from '../lib/status.ts';
+import { overview, type Overview } from '../lib/overview.ts';
+import { limitsOf, runDetail as buildRunDetail, type Limits, type RunDetail } from '../lib/run-view.ts';
+import { stageKeyOf } from '../lib/stages.ts';
+import { isPlanWrite, planSteps, type PlanStep } from '../lib/transcript.ts';
 import { compareItems, isFilter, matchesFilter, matchesSearch, sourceLabel, summarise, type Filter, type WorkItemSummary } from '../lib/work-items.ts';
 import { isWorkItemId, itemKey } from './artefacts.ts';
-import type { LiveMessage } from './live.ts';
+import { parseChannel, type LiveMessage } from './live.ts';
 import type { Services } from './services.ts';
+import type { LedgerRow } from '../lib/records.ts';
 
 /**
  * What each data route returns (#57): exactly what its view needs, so a
@@ -183,7 +190,7 @@ export async function statusBar(services: Services): Promise<StatusBar> {
     runtimes: runtimes.value ?? [],
     region: REGION,
     ...(rate.value !== undefined ? { busRate: rate.value } : {}),
-    ...(alarms.value ? { alarms: alarms.value } : {}),
+    ...(alarms.value ? { alarms: { total: alarms.value.total, firing: alarms.value.firing } } : {}),
     ...(rows ? { counts: { running: rows.filter((r) => r.running).length, waiting: rows.filter((r) => r.waiting).length } } : {}),
     errors: [stack, runtimes, rate, alarms, running].flatMap((r) => (r.error ? [r.error] : [])),
   };
@@ -248,4 +255,90 @@ export async function postLiveChannels(request: Request, services: Services, str
   }
   if (!Array.isArray(body.channels)) return problem(400, 'channels must be a list');
   return json({ channels: stream.setChannels(body.channels) });
+}
+
+/** The Overview (#58): every row and thread, the alarms in `ALARM`. A failed alarm read leaves them out, never the view. */
+export async function overviewPage(services: Services): Promise<Overview> {
+  const [rows, threads, alarms] = await Promise.all([services.ledger.list(), services.threads.all(), settle(services.cloudwatch.alarms())]);
+  const firing = (alarms.value?.firing ?? []).map((name) => ({ name, ...(alarms.value?.since[name] ? { since: alarms.value.since[name] } : {}) }));
+  return overview({ rows, threads, now: services.now(), alarms: firing });
+}
+
+export function getOverview(services: Services): Promise<Response> {
+  return guarded(async () => json(await overviewPage(services)));
+}
+
+const parseJson = (text: string | undefined): unknown => {
+  if (text === undefined) return undefined;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
+
+/**
+ * A run's plan: the one Collect stored once it has run; before then, for a
+ * build, the builder's last write of `plan.json` in the run's catch-up
+ * chunks, which hold the write's input uncut (the live feed cuts it at 16 KiB).
+ */
+export async function runPlan(services: Services, row: LedgerRow, stage: string, round: number): Promise<{ steps: PlanStep[]; source: string } | undefined> {
+  const id = row.workItemId;
+  const attempt = typeof row.attempt === 'number' ? row.attempt : 1;
+  const stored = planSteps(parseJson(await services.artefacts.once(`${id}/${attempt}/plan/plan.json`)));
+  if (stored) return { steps: stored, source: 'plan/plan.json, as Collect stored it' };
+  if (stage !== 'build') return undefined;
+  let found: { steps: PlanStep[]; seq: number } | undefined;
+  for (let n = 1; n <= 9999; n += 1) {
+    const text = await services.artefacts.once(`${id}/${attempt}/${chunkPath(stage, round, n)}`);
+    if (text === undefined) break;
+    for (const line of chunkLines(text)) {
+      if (!isPlanWrite(line)) continue;
+      const input = line.input as { content?: unknown } | undefined;
+      const steps = typeof input?.content === 'string' ? planSteps(parseJson(input.content)) : undefined;
+      if (steps) found = { steps, seq: line.seq };
+    }
+  }
+  return found ? { steps: found.steps, source: `the builder's write of plan.json, event ${found.seq}` } : undefined;
+}
+
+/** The limits a finished run's `usage.json` records. */
+async function storedLimits(services: Services, row: LedgerRow, stage: string, round: number): Promise<Limits | undefined> {
+  const key = row.stages?.[stageKeyOf(stage, round) ?? '']?.run?.usageKey;
+  if (typeof key !== 'string' || !key.startsWith(`${row.workItemId}/`) || !key.endsWith('/usage.json')) return undefined;
+  return limitsOf(parseJson(await services.artefacts.once(key)));
+}
+
+/** One run's header and side panels, or undefined when the item does not exist or the run is not a run. */
+export async function runPage(services: Services, id: string, stage: string, round: number): Promise<RunDetail | undefined> {
+  if (!isWorkItemId(id) || parseChannel(`/factorial/runs/${id}/${stage}/${round}`)?.kind !== 'run') return undefined;
+  const row = await services.ledger.get(id);
+  if (!row) return undefined;
+  const [thread, config, running, plan, limits] = await Promise.all([
+    row.threadKey ? services.threads.get(row.threadKey) : Promise.resolve(undefined),
+    settle(services.config()),
+    settle(services.ledger.running()),
+    settle(runPlan(services, row, stage, round)),
+    settle(storedLimits(services, row, stage, round)),
+  ]);
+  return buildRunDetail({
+    row,
+    ...(thread ? { thread } : {}),
+    stage,
+    round,
+    ...(config.value?.bucket ? { bucket: config.value.bucket } : {}),
+    running: running.value ?? [],
+    ...(limits.value ? { storedLimits: limits.value } : {}),
+    ...(plan.value ? { plan: plan.value } : {}),
+    now: services.now(),
+  });
+}
+
+export function getRun(services: Services, id: string, stage: string, round: string): Promise<Response> {
+  return guarded(async () => {
+    const n = Number(round);
+    if (!isWorkItemId(id) || !Number.isInteger(n)) return problem(400, 'not a run');
+    const detail = await runPage(services, id, stage, n);
+    return detail ? json(detail) : problem(404, 'no such run');
+  });
 }

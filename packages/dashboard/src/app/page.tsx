@@ -1,19 +1,24 @@
-import Link from 'next/link';
-
-import { NotSetUp } from '../components/NotSetUp.tsx';
+import { OverviewView } from '../components/overview/OverviewView.tsx';
+import { overviewPage } from '../server/handlers.ts';
+import { services } from '../server/services.ts';
 
 export const dynamic = 'force-dynamic';
 
-export default function OverviewPage() {
-  return (
-    <section>
-      <div className="view-head">
-        <h1>Overview</h1>
-        <p>Everything in flight across the factory, refreshed from the live channel.</p>
-      </div>
-      <NotSetUp what="Overview: tiles, stage graph, sessions running, throughput, stage durations and spend" issue={58}>
-        Until then, <Link href="/work-items?filter=running">Work items, Running</Link> lists what is in flight.
-      </NotSetUp>
-    </section>
-  );
+/** Everything in flight (#58): read once here, then kept current from the live stream and the overview route. */
+export default async function OverviewPage() {
+  let initial;
+  try {
+    initial = await overviewPage(services());
+  } catch (error) {
+    const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+    return (
+      <section>
+        <div className="view-head">
+          <h1>Overview</h1>
+        </div>
+        <div className="error-note" role="alert">{`Could not read the ledger: ${message.slice(0, 300)}. Check the AWS credentials the app was started with.`}</div>
+      </section>
+    );
+  }
+  return <OverviewView initial={initial} />;
 }

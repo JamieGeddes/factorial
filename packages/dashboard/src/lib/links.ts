@@ -41,6 +41,15 @@ export function branchUrl(repo: Repository, branch: unknown): string | undefined
   return typeof branch === 'string' && /^[A-Za-z0-9._/-]{1,200}$/.test(branch) && !branch.includes('..') ? github(repo, `/tree/${branch}`) : undefined;
 }
 
+/** A workflow run's page, when `url` is one in `repo`: the record's URL is never used as it is, only its run number. */
+export function actionsRunUrl(repo: Repository, url: unknown): { id: string; url?: string } | undefined {
+  const match = typeof url === 'string' ? /^https:\/\/github\.com\/([^/]+)\/([^/]+)\/actions\/runs\/(\d{1,20})$/.exec(url) : null;
+  if (!match || match[1]?.toLowerCase() !== repo.owner.toLowerCase() || match[2]?.toLowerCase() !== repo.name.toLowerCase()) return undefined;
+  const id = match[3] as string;
+  const page = github(repo, `/actions/runs/${id}`);
+  return { id, ...(page ? { url: page } : {}) };
+}
+
 const EXECUTION_ARN = /^arn:aws:states:[a-z0-9-]+:\d{12}:execution:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+$/;
 
 export function executionUrl(arn: unknown): string | undefined {
