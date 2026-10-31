@@ -28,6 +28,12 @@ export interface TimelineRow {
   /** Seconds since the previous stage ended: a Fargate start, a queue. */
   waitSeconds?: number;
   state: 'done' | 'failed' | 'live' | 'todo';
+  /** An agent stage's run, to open from the row. */
+  href?: string;
+  /** The run the view is showing. */
+  current?: boolean;
+  /** What the agent stage's run cost, once recorded. */
+  costUsd?: number;
 }
 
 export interface Limits {
@@ -135,7 +141,8 @@ export function runEnded(row: LedgerRow, stage: string, round: number, resultSin
 }
 
 /** The item's stages as work and wait, then the graph's stages it has not reached. */
-export function timeline(row: LedgerRow): TimelineRow[] {
+/** The item's stages in order, each agent stage with its run to open and its cost, the one shown marked; then the stages not reached. */
+export function timeline(row: LedgerRow, shown?: { stage: string; round: number }): TimelineRow[] {
   const rows: TimelineRow[] = [];
   let previousEnd: string | undefined;
   const seen = new Set<string>();
@@ -144,6 +151,8 @@ export function timeline(row: LedgerRow): TimelineRow[] {
     seen.add(stage);
     const start = Date.parse(entry.startedAt ?? '');
     const prev = previousEnd ? Date.parse(previousEnd) : NaN;
+    const folder = RUN_FOLDERS[stage];
+    const cost = entry.run?.costUsd;
     rows.push({
       key,
       name: `${stageLabel(stage)}${round && round > 1 ? ` r${round}` : ''}`,
@@ -151,6 +160,8 @@ export function timeline(row: LedgerRow): TimelineRow[] {
       ...(entry.endedAt ? { endedAt: entry.endedAt } : {}),
       ...(Number.isFinite(start) && Number.isFinite(prev) && start > prev ? { waitSeconds: (start - prev) / 1000 } : {}),
       state: entry.endedAt ? (entry.outcome === 'failed' ? 'failed' : 'done') : 'live',
+      ...(folder ? { href: runHrefOf(row.workItemId, folder, round ?? 1), current: shown?.stage === folder && shown.round === (round ?? 1) } : {}),
+      ...(typeof cost === 'number' && Number.isFinite(cost) ? { costUsd: cost } : {}),
     });
     if (entry.endedAt) previousEnd = entry.endedAt;
   }
@@ -251,7 +262,7 @@ export function runDetail(input: RunDetailInput): RunDetail {
       ...(artefacts ? { artefacts } : {}),
       ...(summary.pullRequest ? { pullRequest: summary.pullRequest } : {}),
     },
-    timeline: timeline(row),
+    timeline: timeline(row, { stage, round }),
     ...(entry?.startedAt ? { startedAt: entry.startedAt } : {}),
     ended,
     ...(live ? { live } : {}),

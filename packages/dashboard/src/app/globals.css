@@ -184,6 +184,10 @@ select.search { appearance: none; }
 .tl-row { display: grid; grid-template-columns: 96px 1fr 64px; gap: 10px; align-items: center; font-size: 12px; }
 .tl-row .n { color: var(--ink-2); }
 .tl-row .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.tl-row .v .cost { display: block; font-size: 11px; color: var(--ink-3); }
+.tl-row .n a { color: var(--ink-2); text-decoration: none; border-bottom: 1px dotted var(--hair-strong); }
+.tl-row .n a:hover { color: var(--ink); border-bottom-color: var(--ink-2); }
+.tl-row .n a[aria-current] { color: var(--ink); font-weight: 700; border-bottom-color: var(--accent); }
 .tl-bar { height: 10px; display: flex; gap: 2px; align-items: stretch; }
 .tl-bar i { display: block; border-radius: 2px; min-width: 2px; }
 .tl-bar .wait { background: var(--s4); opacity: .55; }

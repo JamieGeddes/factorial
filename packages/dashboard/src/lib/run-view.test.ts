@@ -21,20 +21,27 @@ const row: LedgerRow = {
   stages: {
     Intake: { startedAt: '2026-11-01T11:00:00Z', endedAt: '2026-11-01T11:00:02Z', outcome: 'succeeded' },
     Prepare: { startedAt: '2026-11-01T11:00:05Z', endedAt: '2026-11-01T11:00:55Z', outcome: 'succeeded' },
-    Build: { startedAt: '2026-11-01T11:01:30Z', endedAt: '2026-11-01T11:30:00Z', outcome: 'failed', run: { runtimeName: 'factorial_builder', runtimeVersion: '46', sessionId: ID, transcriptKey: `${ID}/1/build/transcript.jsonl`, usageKey: `${ID}/1/build/usage.json`, turns: 150 } },
+    Build: { startedAt: '2026-11-01T11:01:30Z', endedAt: '2026-11-01T11:30:00Z', outcome: 'failed', run: { runtimeName: 'factorial_builder', runtimeVersion: '46', sessionId: ID, transcriptKey: `${ID}/1/build/transcript.jsonl`, usageKey: `${ID}/1/build/usage.json`, turns: 150, costUsd: 0.42 } },
     'Build#2': { startedAt: '2026-11-01T11:31:00Z' },
   },
   live: { role: 'builder', stage: 'build', round: 2, at: '2026-11-01T11:59:50Z', limits: { maxTurns: 150, maxBudgetUsd: 5, maxDurationSeconds: 6600 } },
 };
 
 test('the timeline shows each stage as work and the wait since the one before, then the stages not reached', () => {
-  const rows = timeline(row);
+  const rows = timeline(row, { stage: 'build', round: 2 });
   assert.deepEqual(rows.slice(0, 4).map((r) => [r.name, r.state, r.waitSeconds]), [
     ['Intake', 'done', undefined],
     ['Prepare', 'done', 3],
     ['Build', 'failed', 35],
     ['Build r2', 'live', 60],
   ]);
+  assert.deepEqual(rows.map((r) => [r.href, r.current, r.costUsd]).slice(0, 4), [
+    [undefined, undefined, undefined],
+    [undefined, undefined, undefined],
+    [`/runs/${row.workItemId}/build/1`, false, 0.42],
+    [`/runs/${row.workItemId}/build/2`, true, undefined],
+  ]);
+  assert.equal(timeline(row)[2]?.current, false);
   assert.deepEqual(rows.slice(4).map((r) => [r.name, r.state]), [
     ['Collect', 'todo'],
     ['Test', 'todo'],
