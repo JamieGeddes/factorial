@@ -13,14 +13,23 @@
  * no bots, a request addressed to the App, an open pull request the App
  * opened from a `factorial/` branch. Intake checks the rest and applies the
  * thread policies.
+ *
+ * A pull request of Factorial's that closes, merged or not, is recorded as
+ * a `PullRequestClosed` event instead (#204): a fact, not a request, so it
+ * never becomes a work item.
  */
 import { randomUUID } from 'node:crypto';
 
+import { PULL_REQUEST_CLOSED_SCHEMA_VERSION, validatePullRequestClosed, type PullRequestClosed } from '@factorial/pull-request-closed';
 import { TRIGGER_TYPES, WORKITEM_SCHEMA_VERSION, validateWorkItem, type WorkItem } from '@factorial/workitem';
 
 import { BadPayloadError } from './issue-event.ts';
 
-export type PullRequestDecision = { kind: 'ignore'; reason: string } | { kind: 'emit'; workItem: WorkItem };
+export type PullRequestDecision =
+  | { kind: 'ignore'; reason: string }
+  | { kind: 'emit'; workItem: WorkItem }
+  /** A pull request of Factorial's closed: recorded, never a work item. */
+  | { kind: 'closed'; closed: PullRequestClosed };
 
 export interface PullRequestDecideOptions {
   /** The App's slug: its bot user is `<slug>[bot]`, and people address it as `@<slug>`. */
@@ -33,7 +42,7 @@ export interface PullRequestDecideOptions {
 }
 
 /** The webhook events this module decides on; any other goes to the issue adapter or is ignored. */
-export const PULL_REQUEST_EVENTS = ['pull_request_review', 'pull_request_review_comment', 'issue_comment', 'workflow_run'] as const;
+export const PULL_REQUEST_EVENTS = ['pull_request', 'pull_request_review', 'pull_request_review_comment', 'issue_comment', 'workflow_run'] as const;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const WORK_BRANCH = /^factorial\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -331,10 +340,45 @@ function fromWorkflowRun(payload: Record<string, unknown>, options: PullRequestD
   );
 }
 
+/**
+ * A pull request of Factorial's that closed, merged or not: who did it and,
+ * for a merge, the commit. Anyone may close one; the record says who. Every
+ * other action is ignored.
+ */
+function fromPullRequest(payload: Record<string, unknown>, options: PullRequestDecideOptions): PullRequestDecision {
+  const action = str(payload.action, 'action');
+  if (action !== 'closed') return { kind: 'ignore', reason: `ignored pull request action "${action}"` };
+  const repo = repository(payload.repository);
+  const raw = rec(payload.pull_request, 'pull_request');
+  const pr = pullRequest(raw);
+  if (pr.author.login.toLowerCase() !== `${options.appSlug}[bot]`.toLowerCase()) return { kind: 'ignore', reason: `pull request #${pr.number} was not opened by Factorial` };
+  if (!WORK_BRANCH.test(pr.headRef)) return { kind: 'ignore', reason: `pull request #${pr.number} is not on a Factorial work branch` };
+  if (pr.headRepoId !== repo.id) return { kind: 'ignore', reason: `pull request #${pr.number} comes from another repository` };
+  const merged = raw.merged === true;
+  const by = merged && isRecord(raw.merged_by) ? user(raw.merged_by, 'pull_request.merged_by') : user(payload.sender, 'sender');
+  const candidate = {
+    schemaVersion: PULL_REQUEST_CLOSED_SCHEMA_VERSION,
+    repository: { provider: 'github', owner: repo.owner, name: repo.name },
+    number: pr.number,
+    url: str(raw.html_url, 'pull_request.html_url'),
+    headBranch: pr.headRef,
+    merged,
+    closedAt: str(raw.closed_at, 'pull_request.closed_at'),
+    ...(merged ? { mergedAt: str(raw.merged_at, 'pull_request.merged_at') } : {}),
+    ...(merged && typeof raw.merge_commit_sha === 'string' ? { mergeCommit: raw.merge_commit_sha } : {}),
+    by: by.login,
+  };
+  const result = validatePullRequestClosed(candidate);
+  if (!result.ok) throw new BadPayloadError(`event does not map to a valid PullRequestClosed: ${result.errors.join('; ')}`);
+  return { kind: 'closed', closed: result.value };
+}
+
 /** Map a webhook on a pull request to a decision. Throws BadPayloadError for a payload that does not fit. */
 export function decidePullRequestEvent(eventName: string, payload: unknown, options: PullRequestDecideOptions): PullRequestDecision {
   const value = rec(payload, 'payload');
   switch (eventName) {
+    case 'pull_request':
+      return fromPullRequest(value, options);
     case 'pull_request_review':
       return fromReview(value, options);
     case 'pull_request_review_comment':

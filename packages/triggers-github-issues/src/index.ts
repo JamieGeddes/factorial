@@ -6,12 +6,15 @@
  * one WorkItem on the Factorial event bus: when the trigger label is added
  * to an issue, or when a trusted person or a failed run addresses one of
  * Factorial's pull requests (`pull-request-event.ts`, which records the event
- * in reply to the pull request; Intake decides what it means).
+ * in reply to the pull request; Intake decides what it means). When one of
+ * Factorial's pull requests closes, it places a PullRequestClosed event
+ * instead (#204), which records the outcome and asks nothing of Factorial.
  */
 import type { LambdaFunctionURLEvent, LambdaFunctionURLResult } from 'aws-lambda';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { GetSecretValueCommand, SecretsManagerClient } from '@aws-sdk/client-secrets-manager';
 
+import { PULL_REQUEST_CLOSED_DETAIL_TYPE, PULL_REQUEST_CLOSED_EVENT_SOURCE } from '@factorial/pull-request-closed';
 import { WORKITEM_DETAIL_TYPE, WORKITEM_EVENT_SOURCE } from '@factorial/workitem';
 
 import { BadPayloadError, decideIssueEvent } from './issue-event.ts';
@@ -118,6 +121,29 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     // reason is logged so a request that did nothing can be traced.
     if (forPullRequest) console.log(JSON.stringify({ message: 'event ignored', event: githubEvent, deliveryId, reason: decision.reason }));
     return respond(202, { message: decision.reason });
+  }
+
+  if (decision.kind === 'closed') {
+    const { closed } = decision;
+    const put = await eventBridge.send(
+      new PutEventsCommand({
+        Entries: [
+          {
+            EventBusName: requireEnv('EVENT_BUS_NAME'),
+            Source: PULL_REQUEST_CLOSED_EVENT_SOURCE,
+            DetailType: PULL_REQUEST_CLOSED_DETAIL_TYPE,
+            Detail: JSON.stringify(closed),
+            Time: new Date(closed.closedAt),
+          },
+        ],
+      }),
+    );
+    if ((put.FailedEntryCount ?? 0) > 0) {
+      console.error(JSON.stringify({ message: 'PutEvents failed', deliveryId, entries: put.Entries }));
+      return respond(500, { message: 'failed to publish PullRequestClosed' });
+    }
+    console.log(JSON.stringify({ message: 'pull request closed', deliveryId, repository: closed.repository, number: closed.number, merged: closed.merged }));
+    return respond(202, { pullRequest: closed.number, merged: closed.merged });
   }
 
   const { workItem } = decision;

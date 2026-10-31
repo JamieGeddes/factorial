@@ -9,6 +9,7 @@ import { addressedRequest, decidePullRequestEvent, type PullRequestDecideOptions
 /** The work item a decision emits; fails the test when it ignores the event. */
 function work(decision: PullRequestDecision): WorkItem {
   if (decision.kind === 'ignore') assert.fail(`expected a work item, got ignore: ${decision.reason}`);
+  if (decision.kind !== 'emit') assert.fail(`expected a work item, got ${decision.kind}`);
   return decision.workItem;
 }
 
@@ -252,5 +253,73 @@ describe('addressedRequest', () => {
   it('does not match a longer login that starts with the slug', () => {
     assert.equal(addressedRequest(`@${SLUG}-other do it`, SLUG), undefined);
     assert.equal(addressedRequest(`@${SLUG}x do it`, SLUG), undefined);
+  });
+});
+
+describe('a closed pull request', () => {
+  const MERGE = 'b'.repeat(40);
+  const closedEvent = (pr: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) => ({
+    action: 'closed',
+    pull_request: pullRequest({ state: 'closed', closed_at: '2026-10-31T09:12:40Z', merged: false, merged_at: null, merge_commit_sha: MERGE, merged_by: null, ...pr }),
+    repository,
+    sender: stranger,
+    ...overrides,
+  });
+  const merged = { merged: true, merged_at: '2026-10-31T09:12:40Z', merged_by: owner };
+
+  it('records a merge with who merged it and the merge commit', () => {
+    assert.deepEqual(decidePullRequestEvent('pull_request', closedEvent(merged), options), {
+      kind: 'closed',
+      closed: {
+        schemaVersion: 1,
+        repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
+        number: 26,
+        url: 'https://github.com/JamieGeddes/factorial/pull/26',
+        headBranch: BRANCH,
+        merged: true,
+        closedAt: '2026-10-31T09:12:40Z',
+        mergedAt: '2026-10-31T09:12:40Z',
+        mergeCommit: MERGE,
+        by: 'owner',
+      },
+    });
+  });
+
+  it('records a close without merging, by whoever closed it, without the test merge commit', () => {
+    const decision = decidePullRequestEvent('pull_request', closedEvent(), options);
+    assert.equal(decision.kind, 'closed');
+    if (decision.kind !== 'closed') return;
+    assert.equal(decision.closed.merged, false);
+    assert.equal(decision.closed.by, 'stranger');
+    assert.equal(decision.closed.mergedAt, undefined);
+    assert.equal(decision.closed.mergeCommit, undefined);
+  });
+
+  it('is the same fact on every delivery', () => {
+    const first = decidePullRequestEvent('pull_request', closedEvent(merged), options);
+    const again = decidePullRequestEvent('pull_request', closedEvent(merged), { ...options, deliveryId: '00000000-0000-4000-8000-000000000000', now: new Date() });
+    assert.deepEqual(again, first);
+  });
+
+  it('ignores a pull request Factorial did not open', () => {
+    assert.deepEqual(decidePullRequestEvent('pull_request', closedEvent({ user: owner }), options), { kind: 'ignore', reason: 'pull request #26 was not opened by Factorial' });
+  });
+
+  it('ignores a pull request from another branch or repository', () => {
+    assert.equal(decidePullRequestEvent('pull_request', closedEvent({ head: { ref: 'feature/x', sha: HEAD, repo: { id: 42 } } }), options).kind, 'ignore');
+    assert.deepEqual(decidePullRequestEvent('pull_request', closedEvent({ head: { ref: BRANCH, sha: HEAD, repo: { id: 43 } } }), options), {
+      kind: 'ignore',
+      reason: 'pull request #26 comes from another repository',
+    });
+  });
+
+  it('ignores every other action', () => {
+    for (const action of ['opened', 'reopened', 'synchronize', 'edited', 'labeled']) {
+      assert.deepEqual(decidePullRequestEvent('pull_request', closedEvent({}, { action }), options), { kind: 'ignore', reason: `ignored pull request action "${action}"` });
+    }
+  });
+
+  it('rejects a closed payload without its close time', () => {
+    assert.throws(() => decidePullRequestEvent('pull_request', closedEvent({ closed_at: undefined }), options), BadPayloadError);
   });
 });
