@@ -396,20 +396,17 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
+          # CloudFormation's AppSync handler creates an API or a namespace
+          # with no tags and tags it afterwards (CloudTrail, 2026-10-31), so
+          # a create can be scoped by name at most, never by request tag.
           - Sid: CreateEventApis
             Effect: Allow
             Action: appsync:CreateApi
             Resource: '*'
-            Condition:
-              StringEquals:
-                aws:RequestTag/Project: Factorial
           - Sid: CreateChannelNamespaces
             Effect: Allow
             Action: appsync:CreateChannelNamespace
-            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*/channelNamespace/*
-            Condition:
-              StringEquals:
-                aws:RequestTag/Project: Factorial
+            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*/channelNamespace/factorial
           # Only the stack tag and CloudFormation's own may be applied.
           - Sid: TagOnCreate
             Effect: Allow
@@ -424,17 +421,22 @@ Resources:
                   - aws:cloudformation:stack-name
                   - aws:cloudformation:stack-id
                   - aws:cloudformation:logical-id
-          - Sid: ManageFactorialEventApis
+          # Reads may come before the tags are on, so they are not scoped by tag.
+          - Sid: ReadEventApis
             Effect: Allow
             Action:
               - appsync:GetApi
-              - appsync:UpdateApi
-              - appsync:DeleteApi
               - appsync:GetChannelNamespace
-              - appsync:UpdateChannelNamespace
-              - appsync:DeleteChannelNamespace
               - appsync:ListChannelNamespaces
               - appsync:ListTagsForResource
+            Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*
+          - Sid: ManageFactorialEventApis
+            Effect: Allow
+            Action:
+              - appsync:UpdateApi
+              - appsync:DeleteApi
+              - appsync:UpdateChannelNamespace
+              - appsync:DeleteChannelNamespace
               - appsync:TagResource
               - appsync:UntagResource
             Resource: !Sub arn:${AWS::Partition}:appsync:${AWS::Region}:${AWS::AccountId}:apis/*
