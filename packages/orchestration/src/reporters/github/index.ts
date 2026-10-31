@@ -1,39 +1,72 @@
 /**
- * The notifier seam: progress events, dispatched on `source.type` to one
- * notifier per source type. A source type with no notifier is ignored. To
- * notify another kind of source, add a module and one line to `notifiers`.
+ * The GitHub reporter (#165): tells requesters on GitHub what became of
+ * their work. One reporter per source type, each its own Lambda selected by
+ * EventBridge rules on `source.type`; this one serves every `github-*`
+ * source. It takes two kinds of event from the work bus:
  *
- * The `factorial-progress-notify` rule (templates/orchestration.yml) sends the
- * notifier only the events a notifier acts on, today a round-1 Build start. A
- * notifier that acts on other events widens that rule's pattern in the same
- * change; the modules still decide for themselves.
+ * - `Outcome` (`contracts/outcome/v1/`): the turn's end, delivered as one
+ *   comment where the request came from (`deliver.ts`).
+ * - `WorkItemProgress` (`contracts/progress/v1/`): the started notice on a
+ *   labelled issue (`started.ts`), so "started" and "finished" come from one
+ *   place.
+ *
+ * Its rules (templates/orchestration.yml) send it only the events it acts
+ * on; it still checks each event itself. An invalid event, or one from a
+ * source type it does not serve, is logged and ignored.
  */
-import { progressEventErrors, type ProgressEvent } from '@factorial/progress';
-import { TRIGGER_TYPES } from '@factorial/workitem';
+import { OUTCOME_DETAIL_TYPE, validateOutcome } from '@factorial/outcome';
+import { PROGRESS_DETAIL_TYPE, progressEventErrors, type ProgressEvent } from '@factorial/progress';
 
-import type { Logger } from '../lib/log.ts';
-import { githubIssueNotifier } from './github-issue.ts';
-import type { Notifier, NotifierDeps } from './types.ts';
+import { deliverOutcome } from './deliver.ts';
+import { noticeStarted } from './started.ts';
+import type { ReporterDeps } from './types.ts';
 
-export type { Notifier, NotifierDeps } from './types.ts';
+export type { ReporterDeps } from './types.ts';
 
-export const notifiers: Readonly<Record<string, Notifier>> = {
-  [TRIGGER_TYPES.githubIssue]: githubIssueNotifier,
+/** The source types this reporter serves. */
+export const servesSource = (type: string): boolean => type.startsWith('github-');
+
+/** One EventBridge event from the work bus. */
+export interface BusEvent {
+  'detail-type'?: unknown;
+  detail?: unknown;
+}
+
+const idOf = (detail: unknown): string | undefined => {
+  const id = (detail as { workItemId?: unknown } | null | undefined)?.workItemId;
+  return typeof id === 'string' ? id : undefined;
 };
 
-/** Handle one `WorkItemProgress` event's detail. An invalid event or an unknown source type is logged and ignored. */
-export async function handleProgress(detail: unknown, deps: Omit<NotifierDeps, 'log'> & { log: Logger }): Promise<void> {
-  const errors = progressEventErrors(detail);
-  if (errors.length > 0) {
-    deps.log.error('progress event ignored', { errors: errors.slice(0, 5) });
+export async function handleEvent(event: BusEvent, deps: ReporterDeps): Promise<void> {
+  const workItemId = idOf(event.detail);
+  const log = deps.log.with(workItemId ? { workItemId } : {});
+  if (event['detail-type'] === OUTCOME_DETAIL_TYPE) {
+    const checked = validateOutcome(event.detail);
+    if (!checked.ok) {
+      log.error('outcome ignored', { errors: checked.errors.slice(0, 5) });
+      return;
+    }
+    const outcome = checked.value;
+    if (!servesSource(outcome.source.type)) {
+      log.info('not a GitHub source', { sourceType: outcome.source.type });
+      return;
+    }
+    await deliverOutcome(outcome, { ...deps, log: log.with({ attempt: outcome.attempt }) });
     return;
   }
-  const event = detail as ProgressEvent;
-  const log = deps.log.with({ workItemId: event.workItemId, ...(event.attempt !== undefined ? { attempt: event.attempt } : {}) });
-  const notifier = Object.hasOwn(notifiers, event.source.type) ? notifiers[event.source.type] : undefined;
-  if (!notifier) {
-    log.info('no notifier for source type', { sourceType: event.source.type });
+  if (event['detail-type'] === PROGRESS_DETAIL_TYPE) {
+    const errors = progressEventErrors(event.detail);
+    if (errors.length > 0) {
+      log.error('progress event ignored', { errors: errors.slice(0, 5) });
+      return;
+    }
+    const progress = event.detail as ProgressEvent;
+    if (!servesSource(progress.source.type)) {
+      log.info('not a GitHub source', { sourceType: progress.source.type });
+      return;
+    }
+    await noticeStarted(progress, { ...deps, log: log.with(progress.attempt !== undefined ? { attempt: progress.attempt } : {}) });
     return;
   }
-  await notifier(event, { ...deps, log });
+  log.error('event ignored: unknown detail type', { detailType: String(event['detail-type']) });
 }

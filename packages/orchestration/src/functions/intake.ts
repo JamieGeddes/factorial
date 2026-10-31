@@ -25,7 +25,9 @@ import { branchFor, type ReworkTurn } from '../lib/context.ts';
 import { botLogin, repositoryClient } from '../lib/github.ts';
 import { assertIntakeRecord, type IntakeRecord, type RefusalStatus } from '../lib/intake-record.ts';
 import { unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
+import { emitOutcome } from '../lib/outcome.ts';
 import { staged, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
+import { REPORT_ARTEFACT, type ReportFile } from '../lib/report-file.ts';
 import { nextAttempt, resumableAttempt, sourceKey, type Attempt } from '../lib/resume.ts';
 import { commentToAcknowledge, inlineCommentIdFromUrl } from '../lib/rework-points.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
@@ -222,7 +224,7 @@ async function pullRequestTurn(repo: Repo, workItem: WorkItem, pr: { number: num
   };
 }
 
-/** The intake record for a decision, validated before anything acts on it. */
+/** The intake record for a decision, validated before anything acts on it. `replied`: a reply on the pull request is due, which the reporter posts. */
 export function intakeRecord(workItemId: string, decision: Decision, replied = false): IntakeRecord {
   const thread = decision.thread;
   const record: IntakeRecord = {
@@ -266,18 +268,6 @@ async function acknowledge(repo: Repo, workItem: WorkItem, log: Logger): Promise
   }
 }
 
-/** Answer a refusal on the pull request when a person asked. Never fatal: the refusal is recorded either way. */
-async function reply(repo: Repo, number: number, text: string, log: Logger): Promise<boolean> {
-  try {
-    const client = await repositoryClient(repo, { issues: 'write', pull_requests: 'write' });
-    await client.commentOnIssue(repo, number, text);
-    return true;
-  } catch (error) {
-    log.error('refusal not posted on the pull request', { error });
-    return false;
-  }
-}
-
 const intakeKey = (input: IntakeInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
 /** Intake's stage starts once the ledger row exists; a refusal ends the work item here. */
@@ -308,8 +298,9 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
   const threadKey = decision.thread?.threadKey;
 
   if (decision.route === 'refuse') {
-    const replied = decision.reply !== undefined && decision.prNumber !== undefined ? await reply(repo, decision.prNumber, decision.reply, log) : false;
-    const record = intakeRecord(workItem.id, decision, replied);
+    // A person who asked is answered on the pull request, by the reporter.
+    const reply = decision.reply !== undefined && decision.prNumber !== undefined ? decision.reply : undefined;
+    const record = intakeRecord(workItem.id, decision, reply !== undefined);
     await recordProgress(workItem.id, decision.status, {
       route: 'refuse',
       threadKey,
@@ -317,8 +308,28 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
       ...(decision.prNumber !== undefined ? { reworkOf: { previousWorkItemId: record.previousWorkItemId, prNumber: decision.prNumber } } : {}),
     });
     await putJsonArtefact(prefix, 'intake/intake.json', record);
-    await putJsonArtefact(prefix, 'report.json', { outcome: decision.status, reason: decision.reason });
-    log.info('refused', { status: decision.status, reason: decision.reason, threadKey, replied });
+    await putJsonArtefact(prefix, REPORT_ARTEFACT, {
+      outcome: decision.status,
+      reason: decision.reason,
+      delivery: { kind: 'refusal', ...(reply !== undefined ? { reply } : {}) },
+    } satisfies ReportFile);
+    try {
+      await emitOutcome({
+        workItem,
+        attempt,
+        artefactPrefix: prefix,
+        result: 'refused',
+        reason: decision.status,
+        route: 'refuse',
+        threadKey,
+        pullRequest: decision.prNumber !== undefined ? pr : undefined,
+        branch: decision.thread?.branch,
+      });
+    } catch (error) {
+      // The refusal is recorded either way; only the reply is lost.
+      log.error('outcome not emitted', { error });
+    }
+    log.info('refused', { status: decision.status, reason: decision.reason, threadKey, replyDue: reply !== undefined });
     return { route: 'refuse', attempt, artefactPrefix: prefix, status: decision.status, reason: decision.reason };
   }
 

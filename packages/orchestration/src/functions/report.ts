@@ -1,38 +1,50 @@
 /**
- * Report: close the loop with the requester when no pull request will follow,
- * whether because the agent made no changes, tests failed, or a step errored.
+ * Report: end a turn that opens or updates no pull request, whether because
+ * the agent made no changes, tests failed, the plan was invalid, or a step
+ * errored. It records the status on the ledger, writes `report.json` with
+ * what delivery needs and emits the outcome (#165); the reporter for the
+ * item's source type tells the requester. Report itself speaks to no one.
  */
 import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
-import { issueNumber, type WorkContext } from '../lib/context.ts';
+import type { WorkContext } from '../lib/context.ts';
 import { builderIncomplete } from '../lib/incomplete.ts';
-import { repositoryClient } from '../lib/github.ts';
 import { runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
+import { emitOutcome, type OutcomeFacts } from '../lib/outcome.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
-import { attemptRecord, recordProgress } from '../lib/table.ts';
+import { REPORT_ARTEFACT, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
+import { attemptRecord, recordProgress, type AttemptRecord } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 import { continuedPullRequest } from '../lib/turn.ts';
 
-interface ReportInput extends ProgressInput {
-  status: 'no-changes' | 'tests-failed' | 'failed' | 'invalid-plan';
+export interface ReportInput extends ProgressInput {
+  status: ReportStatus;
   /** Present once Prepare has run. */
   ctx?: WorkContext;
   /** The raw WorkItem, for failures before Prepare completed. */
   workItem?: unknown;
   summary?: string;
   error?: { Error?: string | undefined; Cause?: string };
-  sessionIdHint?: string | undefined;
   /** What Collect pushed, if it ran: after a failed build, the saved work in progress. */
   saved?: { pushed?: boolean; commitCount?: number; itemCommitCount?: number } | null;
   /** The build round that failed, when the build ran in rounds. */
   buildRound?: number | null;
 }
 
+function resolveWorkItem(input: Pick<ReportInput, 'ctx' | 'workItem'>): WorkItem | undefined {
+  if (input.ctx) return input.ctx.workItem;
+  try {
+    assertWorkItem(input.workItem);
+    return input.workItem;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Whether the item reworks an open pull request. Its branch already backs
- * that pull request, so anything pushed is on the pull request at once, and
- * the requester is told there rather than on an issue.
+ * that pull request, so anything pushed is on the pull request at once.
  */
 function isRework(input: Pick<ReportInput, 'ctx' | 'workItem'>): boolean {
   if (input.ctx) return input.ctx.rework !== undefined;
@@ -40,107 +52,13 @@ function isRework(input: Pick<ReportInput, 'ctx' | 'workItem'>): boolean {
   return workItem !== undefined && continuedPullRequest(workItem) !== undefined;
 }
 
-/** The work item's commits over every round, when Collect gave them: a round's own count says nothing about what the branch holds. */
-function commitsNote(saved: { itemCommitCount?: number }): string {
-  const count = saved.itemCommitCount;
-  return count === 1 ? ' (1 commit)' : count ? ` (${count} commits)` : '';
-}
-
-/** A sentence pointing at the pushed branch, when there is one. */
-export function savedWorkNote(input: Pick<ReportInput, 'ctx' | 'saved' | 'workItem'>): string {
-  if (!input.saved?.pushed || !input.ctx) return '';
-  if (isRework(input)) {
-    const commits = commitsNote(input.saved);
-    return ` Work in progress${commits} was saved to this pull request's branch, so the pull request now includes it untested. Do not merge until it is finished and its checks pass.`;
-  }
-  const { owner, name } = input.ctx.workItem.repository;
-  const branch = input.ctx.branch;
-  const url = `https://github.com/${owner}/${name}/tree/${branch.split('/').map(encodeURIComponent).join('/')}`;
-  const commits = commitsNote(input.saved);
-  return ` Work in progress${commits} was saved to [\`${branch}\`](${url}); it is untested and no pull request was opened. Adding the label again resumes from that branch.`;
-}
-
-export function reportMessage(input: ReportInput): string {
-  const rework = isRework(input);
-  const notOpened = rework ? 'the pull request was not updated' : 'no pull request was opened';
-  switch (input.status) {
-    case 'no-changes':
-      return [
-        `Factorial ran but made no changes, so ${notOpened}.`,
-        input.summary?.trim() ? `\n**The agent said:**\n\n${input.summary.trim()}` : '',
-      ].join('\n');
-    case 'tests-failed': {
-      const cause = safeJson(input.error?.Cause);
-      const runUrl = typeof cause?.runUrl === 'string' ? cause.runUrl : undefined;
-      const run = runUrl ? ` ([run](${runUrl}))` : '';
-      if (rework) {
-        return `Factorial's rework did not pass the repository's checks${run}. Its commits are on this pull request's branch, so the pull request now includes them. Do not merge until they are fixed or reverted.`;
-      }
-      return `Factorial's change did not pass the repository's checks${run}, so no pull request was opened. The branch \`${input.ctx?.branch ?? ''}\` is left for inspection.`;
-    }
-    case 'invalid-plan': {
-      // The problems are the validator's messages about the builder's plan
-      // files, redacted with the cause, and useful to whoever relabels.
-      const problems = invalidPlanProblems(input.error?.Cause);
-      return [
-        `Factorial's builder did not produce a valid plan, so nothing was pushed. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.`,
-        ...(problems.length > 0 ? ['', '**Problems with the last plan:**', '', ...problems.map((p) => `- ${p}`)] : []),
-      ].join('\n');
-    }
-    case 'failed':
-      if (builderIncomplete(input.error)) {
-        const rounds = typeof input.buildRound === 'number' && input.buildRound > 1 ? ` in ${input.buildRound} sessions` : '';
-        return `Factorial's builder reached its iteration or time limit${rounds} before finishing, so the change was not tested and ${notOpened}. Session \`${input.ctx?.sessionId ?? 'unknown'}\`.${savedWorkNote(input)}`;
-      }
-      // Deliberately generic: causes can contain command output. Details stay
-      // in the execution history and the ledger, both inside the account.
-      return `Factorial could not complete this work item (\`${input.error?.Error ?? 'unknown error'}\`). Session \`${input.ctx?.sessionId ?? input.sessionIdHint ?? 'unknown'}\`; see the Factorial execution log.${savedWorkNote(input)}`;
-  }
-}
-
-/** `report.json`: the outcome and a short reason. Causes are kept, redacted, for the reviewer. */
-export function reportArtefact(input: Pick<ReportInput, 'status' | 'error' | 'saved'>): Record<string, unknown> {
-  const reasons = {
-    'no-changes': 'The agent made no changes.',
-    'tests-failed': "The change did not pass the repository's checks.",
-    failed: builderIncomplete(input.error)
-      ? 'The builder reached its iteration or time limit before finishing.'
-      : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
-    'invalid-plan': 'The builder did not produce a valid plan.',
-  };
-  return {
-    outcome: input.status,
-    reason: reasons[input.status],
-    ...(input.error ? { error: { Error: input.error.Error, Cause: input.error.Cause?.slice(0, 4000) } } : {}),
-    ...(input.saved?.pushed ? { savedWork: true } : {}),
-  };
-}
-
-/**
- * The attempt's prefix: from the context once Prepare has run, otherwise from
- * the ledger row if Prepare got that far, otherwise attempt 1.
- */
-async function prefixFor(input: ReportInput, workItem: WorkItem, log: Logger): Promise<string> {
-  if (input.ctx) return input.ctx.artefactPrefix;
+function safeJson(text: string | undefined): Record<string, unknown> | undefined {
+  if (!text) return undefined;
   try {
-    const record = await attemptRecord(workItem.id);
-    if (record?.artefactPrefix) return record.artefactPrefix;
-  } catch (error) {
-    log.error('no ledger row for artefacts', { error });
-  }
-  return artefactPrefix(workItem.id, 1);
-}
-
-/** Store the outcome, and for failed tests their result. Never stops the requester being told. */
-async function storeArtefacts(input: ReportInput, workItem: WorkItem, log: Logger): Promise<void> {
-  try {
-    const prefix = await prefixFor(input, workItem, log);
-    if (input.status === 'tests-failed') {
-      await putJsonArtefact(prefix, 'test/result.json', testResultArtefact(safeJson(input.error?.Cause) ?? {}));
-    }
-    await putJsonArtefact(prefix, 'report.json', reportArtefact(input));
-  } catch (error) {
-    log.error('artefacts not stored', { error });
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -166,29 +84,92 @@ export function invalidPlanProblems(cause: string | undefined): string[] {
     .slice(0, 10);
 }
 
-function safeJson(text: string | undefined): Record<string, unknown> | undefined {
-  if (!text) return undefined;
+/** The work pushed to the branch after a failed build, when Collect ran and pushed. */
+function savedWork(input: Pick<ReportInput, 'ctx' | 'saved'>): { branch: string; commits?: number } | undefined {
+  if (!input.saved?.pushed || !input.ctx) return undefined;
+  const commits = input.saved.itemCommitCount;
+  return { branch: input.ctx.branch, ...(commits ? { commits } : {}) };
+}
+
+/** What the requester is told, as facts: the reporter words them. Nothing from an error's cause beyond what is shown here. */
+export function reportFacts(input: ReportInput, workItemId?: string): ReportFacts {
+  const rework = isRework(input);
+  const branch = input.ctx?.branch;
+  const sessionId = input.ctx?.sessionId;
+  const base = { status: input.status, rework, ...(branch ? { branch } : {}) };
+  switch (input.status) {
+    case 'no-changes':
+      return { ...base, ...(sessionId ? { sessionId } : {}), ...(input.summary?.trim() ? { agentSaid: input.summary } : {}) };
+    case 'tests-failed': {
+      const runUrl = safeJson(input.error?.Cause)?.runUrl;
+      return { ...base, ...(sessionId ? { sessionId } : {}), ...(typeof runUrl === 'string' ? { testRunUrl: runUrl } : {}) };
+    }
+    case 'invalid-plan': {
+      const problems = invalidPlanProblems(input.error?.Cause);
+      return { ...base, ...(sessionId ? { sessionId } : {}), ...(problems.length > 0 ? { planProblems: problems } : {}) };
+    }
+    case 'failed': {
+      const incomplete = builderIncomplete(input.error);
+      // A step that failed before Prepare has no session; the work item id finds the run.
+      const session = incomplete ? sessionId : (sessionId ?? workItemId);
+      const saved = savedWork(input);
+      const round = typeof input.buildRound === 'number' && Number.isInteger(input.buildRound) && input.buildRound > 0 ? input.buildRound : undefined;
+      return {
+        ...base,
+        ...(session ? { sessionId: session } : {}),
+        ...(incomplete ? { incomplete: true } : { errorName: input.error?.Error ?? 'unknown error' }),
+        ...(incomplete && round !== undefined ? { buildRound: round } : {}),
+        ...(saved ? { savedWork: saved } : {}),
+      };
+    }
+  }
+}
+
+/** `report.json`: the outcome, a short reason, the redacted cause for the reviewer, and what delivery needs. */
+export function reportArtefact(input: ReportInput, workItemId?: string): ReportFile {
+  const reasons = {
+    'no-changes': 'The agent made no changes.',
+    'tests-failed': "The change did not pass the repository's checks.",
+    failed: builderIncomplete(input.error) ? 'The builder reached its iteration or time limit before finishing.' : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
+    'invalid-plan': 'The builder did not produce a valid plan.',
+  };
+  return {
+    outcome: input.status,
+    reason: reasons[input.status],
+    ...(input.error ? { error: { Error: input.error.Error, Cause: input.error.Cause?.slice(0, 4000) } } : {}),
+    ...(input.saved?.pushed ? { savedWork: true } : {}),
+    delivery: { kind: 'report', facts: reportFacts(input, workItemId) },
+  };
+}
+
+/** The ledger row's view of the attempt when Prepare did not finish; never fatal. */
+async function recordFor(input: ReportInput, workItem: WorkItem, log: Logger): Promise<AttemptRecord | undefined> {
+  if (input.ctx) return undefined;
   try {
-    const parsed: unknown = JSON.parse(text);
-    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : undefined;
-  } catch {
+    return await attemptRecord(workItem.id);
+  } catch (error) {
+    log.error('no ledger row for the attempt', { error });
     return undefined;
   }
 }
 
-/** Where the requester is told: the pull request for rework, otherwise the source issue, if any. */
-export function commentTarget(workItem: WorkItem): number | undefined {
-  return continuedPullRequest(workItem)?.number ?? issueNumber(workItem);
-}
-
-function resolveWorkItem(input: Pick<ReportInput, 'ctx' | 'workItem'>): WorkItem | undefined {
-  if (input.ctx) return input.ctx.workItem;
-  try {
-    assertWorkItem(input.workItem);
-    return input.workItem;
-  } catch {
-    return undefined;
-  }
+/** The outcome's facts: from the context once Prepare has run, otherwise from what Intake recorded on the row. */
+export function outcomeFacts(input: ReportInput, workItem: WorkItem, record: AttemptRecord | undefined): OutcomeFacts {
+  const { ctx } = input;
+  const attempt = ctx?.attempt ?? record?.attempt ?? 1;
+  const saved = savedWork(input);
+  const pr = ctx?.rework?.pullRequest ?? continuedPullRequest(workItem);
+  return {
+    workItem,
+    attempt,
+    artefactPrefix: ctx?.artefactPrefix ?? record?.artefactPrefix ?? artefactPrefix(workItem.id, attempt),
+    result: input.status,
+    threadKey: ctx?.threadKey ?? record?.threadKey,
+    route: ctx ? 'change' : record?.route === 'change' ? 'change' : undefined,
+    pullRequest: pr,
+    branch: ctx?.branch ?? record?.branch,
+    savedWork: saved,
+  };
 }
 
 /** The run key from the context, or from the raw WorkItem when Prepare did not finish. */
@@ -209,19 +190,21 @@ const reportStage: StagePolicy<ReportInput, void> = {
 
 export const handler = staged('report', reportKey, reportStage, async (input: ReportInput, log): Promise<void> => {
   const workItem = resolveWorkItem(input);
-  const message = reportMessage({ ...input, sessionIdHint: workItem?.id });
-  const error = input.error
-    ? { Error: input.error.Error, Cause: redactSecrets(input.error.Cause ?? '').slice(0, 4000) }
-    : undefined;
+  const error = input.error ? { Error: input.error.Error, Cause: redactSecrets(input.error.Cause ?? '').slice(0, 4000) } : undefined;
   log.info('reporting', { status: input.status, error });
   if (!workItem) return;
-
   await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
-  await storeArtefacts({ ...input, ...(error ? { error } : {}) }, workItem, log);
-  const target = commentTarget(workItem);
-  if (target === undefined) return;
-
-  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const client = await repositoryClient(repo, { issues: 'write', ...(continuedPullRequest(workItem) ? { pull_requests: 'write' } : {}) });
-  await client.commentOnIssue(repo, target, message);
+  const facts = outcomeFacts(input, workItem, await recordFor(input, workItem, log));
+  const redacted = { ...input, ...(error ? { error } : {}) };
+  if (input.status === 'tests-failed') {
+    try {
+      await putJsonArtefact(facts.artefactPrefix, 'test/result.json', testResultArtefact(safeJson(error?.Cause) ?? {}));
+    } catch (storeError) {
+      log.error('test result not stored', { error: storeError });
+    }
+  }
+  // The reporter reads report.json, so it is written before the outcome that points at it.
+  await putJsonArtefact(facts.artefactPrefix, REPORT_ARTEFACT, reportArtefact(redacted, workItem.id));
+  const outcome = await emitOutcome(facts);
+  log.info('outcome emitted', { result: outcome.result });
 });

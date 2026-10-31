@@ -166,6 +166,29 @@ export class GitHubClient {
     await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}/reactions`, { content });
   }
 
+  /**
+   * The conversation comments on an issue or pull request, oldest first,
+   * updated at or after `since` when given, at most `maxPages` pages of 100.
+   */
+  async listIssueComments(
+    repo: Repo,
+    issueNumber: number,
+    options: { since?: string; maxPages?: number } = {},
+  ): Promise<Array<{ authorLogin: string; body: string }>> {
+    const maxPages = options.maxPages ?? 10;
+    const since = options.since ? `&since=${encodeURIComponent(options.since)}` : '';
+    const all: Array<{ authorLogin: string; body: string }> = [];
+    for (let page = 1; page <= maxPages; page += 1) {
+      const comments = await this.#request<Array<{ user: { login: string } | null; body?: string | null }>>(
+        'GET',
+        `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}/comments?per_page=100&page=${page}${since}`,
+      );
+      all.push(...comments.map((c) => ({ authorLogin: c.user?.login ?? 'ghost', body: c.body ?? '' })));
+      if (comments.length < 100) break;
+    }
+    return all;
+  }
+
   /** The inline comments submitted with one review, at most 100. */
   async listReviewComments(repo: Repo, pullNumber: number, reviewId: number): Promise<ReviewComment[]> {
     const comments = await this.#request<

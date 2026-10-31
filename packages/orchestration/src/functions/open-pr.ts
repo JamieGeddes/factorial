@@ -1,30 +1,36 @@
 /**
- * Open the pull request for human approval and tell the requester where it is.
- * Before opening it, confirm that the branch still points at the commit that
- * was tested, so the PR cannot present untested code.
+ * Open the pull request for human approval. Before opening it, confirm that
+ * the branch still points at the commit that was tested, so the PR cannot
+ * present untested code.
  *
  * A rework item's branch already has a pull request. Instead of opening
- * another, the same checks run and Factorial replies on that pull request,
- * answering each point, and re-requests review from whoever asked for the
- * changes. The state machine takes the same path for both.
+ * another, the same checks run and the pull request is recorded as updated.
+ * The state machine takes the same path for both.
+ *
+ * Either way the turn ends with an outcome (#165): `report.json` carries
+ * what the reply needs, and the reporter for the item's source tells the
+ * requester (the issue's "opened" comment; on a rework, the reply answering
+ * each point and the review re-request). Opening the pull request is a
+ * repository operation and stays here; telling anyone is not.
  */
 import { getTextArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
-import type { GitHubClient, Repo } from '@factorial/github-app';
 import { parsePlanJson, type Plan } from '@factorial/plan';
-import { issueNumber, type ReworkTurn, type WorkContext } from '../lib/context.ts';
+import type { ReworkTurn, WorkContext } from '../lib/context.ts';
 import { repositoryClient } from '../lib/github.ts';
 import { runKey, type Logger } from '../lib/log.ts';
+import { emitOutcome } from '../lib/outcome.ts';
 import { staged, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import type { PlanDigest } from '../lib/plan-files.ts';
 import type { PrFacts } from '../lib/pr-facts.ts';
+import { REPORT_ARTEFACT, type ReportFile } from '../lib/report-file.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import type { ReworkPoint } from '../lib/rework-points.ts';
 import { pullRequestKey, recordProgress } from '../lib/table.ts';
 import { recordThreadPullRequest } from '../lib/thread.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 
-import { pullRequestBody, reworkComment, safeLogin, type ReviewOutcome, type TestResult } from './pr-body.ts';
+import { pullRequestBody, reworkReplyFacts, safeLogin, type ReviewOutcome, type TestResult } from './pr-body.ts';
 
 interface OpenPrInput extends ProgressInput {
   ctx: WorkContext;
@@ -75,40 +81,44 @@ export function reviewersToRequest(rework: Pick<ReworkTurn, 'cause'>, points: re
   return [...new Set(logins)];
 }
 
-/** Reply on the rework's pull request and ask its reviewers to look again. The reply must land; the re-request may fail. */
-async function replyToRework(
-  input: OpenPrInput,
-  rework: ReworkTurn,
-  client: GitHubClient,
-  repo: Repo,
-  headSha: string,
-  log: Logger,
-): Promise<OpenPrResult> {
+/**
+ * Write `report.json`, then emit the outcome that points at it. The pull
+ * request is open (or updated) by now, so a failure here must not turn the
+ * turn into a reported failure: it is logged, and the outcome on the ledger
+ * row and in the artefact store says what happened.
+ */
+async function endTurn(ctx: WorkContext, report: ReportFile, outcome: Parameters<typeof emitOutcome>[0], log: Logger): Promise<void> {
+  try {
+    await putJsonArtefact(ctx.artefactPrefix, REPORT_ARTEFACT, report);
+    const emitted = await emitOutcome(outcome);
+    log.info('outcome emitted', { result: emitted.result });
+  } catch (error) {
+    log.error('outcome not emitted', { error });
+  }
+}
+
+/** Record the rework on its pull request; the reporter replies there and asks its reviewers to look again. */
+async function recordRework(input: OpenPrInput, rework: ReworkTurn, headSha: string, log: Logger): Promise<OpenPrResult> {
   const { ctx } = input;
   const pr = rework.pullRequest;
-  await client.commentOnIssue(
-    repo,
-    pr.number,
-    reworkComment(ctx, rework, redactSecrets(input.collect.summary), input.test, headSha, { review: input.review, facts: input.prFacts }),
-  );
-  const reviewers = reviewersToRequest(rework, ctx.reworkPoints);
-  if (reviewers.length > 0) {
-    try {
-      await client.requestReviewers(repo, pr.number, reviewers);
-    } catch (error) {
-      // A reviewer who has lost access, or the requester themselves, is
-      // refused by GitHub; the reply already names them.
-      log.error('review not re-requested', { error, reviewers });
-    }
-  }
   await recordProgress(ctx.workItem.id, 'pr-updated', { prUrl: pr.url, prNumber: pr.number, testRunUrl: input.test.runUrl });
   try {
     await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.url, headSha, rework: true });
-    await putJsonArtefact(ctx.artefactPrefix, 'report.json', { outcome: 'pr-updated', reason: `Pull request #${pr.number} updated with the rework.` });
   } catch (error) {
     log.error('artefacts not stored', { error });
   }
-  log.info('pull request updated', { prUrl: pr.url, reviewers });
+  const reply = reworkReplyFacts(ctx, rework, redactSecrets(input.collect.summary), input.test, headSha, { review: input.review, facts: input.prFacts });
+  await endTurn(
+    ctx,
+    {
+      outcome: 'pr-updated',
+      reason: `Pull request #${pr.number} updated with the rework.`,
+      delivery: { kind: 'rework-reply', reply, reviewers: reviewersToRequest(rework, ctx.reworkPoints) },
+    },
+    { workItem: ctx.workItem, attempt: ctx.attempt, artefactPrefix: ctx.artefactPrefix, result: 'pr-updated', route: 'change', threadKey: ctx.threadKey, pullRequest: pr, branch: ctx.branch, testedSha: headSha },
+    log,
+  );
+  log.info('pull request updated', { prUrl: pr.url });
   return { prNumber: pr.number, prUrl: pr.url };
 }
 
@@ -124,14 +134,14 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
   }
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
-  const client = await repositoryClient(repo, { contents: 'read', pull_requests: 'write', issues: 'write' });
+  const client = await repositoryClient(repo, { contents: 'read', pull_requests: 'write' });
 
   const remoteHead = await client.getBranchSha(repo, ctx.branch);
   if (remoteHead !== headSha) {
     throw new UntestedHeadError(`branch ${ctx.branch} now points at ${remoteHead}, not the tested ${headSha}`);
   }
 
-  if (ctx.rework) return replyToRework(input, ctx.rework, client, repo, headSha, log);
+  if (ctx.rework) return recordRework(input, ctx.rework, headSha, log);
 
   const fullPlan = await storedPlan(ctx, log);
   const pr = await client.createPullRequest(repo, {
@@ -145,11 +155,6 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
     head: ctx.branch,
     base: ctx.baseBranch,
   });
-
-  const issue = issueNumber(ctx.workItem);
-  if (issue !== undefined) {
-    await client.commentOnIssue(repo, issue, `Factorial has opened ${pr.htmlUrl} for review.`);
-  }
 
   await recordProgress(ctx.workItem.id, 'pr-opened', {
     prUrl: pr.htmlUrl,
@@ -167,10 +172,25 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
   }
   try {
     await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.htmlUrl, headSha });
-    await putJsonArtefact(ctx.artefactPrefix, 'report.json', { outcome: 'pr-opened', reason: `Pull request #${pr.number} opened for review.` });
   } catch (error) {
     log.error('artefacts not stored', { error });
   }
+  await endTurn(
+    ctx,
+    { outcome: 'pr-opened', reason: `Pull request #${pr.number} opened for review.`, delivery: { kind: 'pr-opened' } },
+    {
+      workItem: ctx.workItem,
+      attempt: ctx.attempt,
+      artefactPrefix: ctx.artefactPrefix,
+      result: 'pr-opened',
+      route: 'change',
+      threadKey: ctx.threadKey,
+      pullRequest: { number: pr.number, url: pr.htmlUrl },
+      branch: ctx.branch,
+      testedSha: headSha,
+    },
+    log,
+  );
   log.info('pull request opened', { prUrl: pr.htmlUrl });
   return { prNumber: pr.number, prUrl: pr.htmlUrl };
 });

@@ -16,7 +16,7 @@ It is internal to Factorial, not part of the `WorkItem` API, but the orchestrato
 | `threadKey`, `branch` | The thread, `<owner>/<name>#<branch>`, and its branch. Absent only when the item was refused before its thread was found. |
 | `pullRequest`, `cause`, `previousWorkItemId` | For a `rework` turn: the pull request, why it needs rework (derived from what happened) and the item that opened it, from the thread. |
 | `resumedFrom` | For a `resume` turn, the attempt it continues. |
-| `refusal` | For `refuse`: the ledger `status` (`not-eligible`, `busy`, `rework-limit`, `covered-by-review`) and whether the refusal was answered on the pull request. |
+| `refusal` | For `refuse`: the ledger `status` (`not-eligible`, `busy`, `rework-limit`, `covered-by-review`) and whether the refusal is answered on the pull request (`replied`; the GitHub reporter posts it from the refused outcome, `contracts/outcome/`). |
 
 `additionalProperties` is `false` at every level.
 
@@ -27,3 +27,4 @@ The route enum is short and fixed: a route is which stages run, not a different 
 ## Change log
 
 - **2026-10: v1.** `change` and `refuse`, for new requests, resumed attempts and turns on pull requests (#163).
+- **2026-10: v1, wording.** `refusal.replied` says an answer is due rather than that Intake posted it: the GitHub reporter posts it from the refused outcome (#165). Same values, same field.

@@ -1,5 +1,6 @@
 /**
- * The notifier's idempotency guard: `startedNotifiedAt` on the ledger row,
+ * The started notice's idempotency guard (the GitHub reporter's
+ * `started.ts`; outcomes have their own, `delivery-ledger.ts`): `startedNotifiedAt` on the ledger row,
  * written with a condition before the "started" comment is posted, so a
  * work item gets at most one comment however often its event is delivered.
  */

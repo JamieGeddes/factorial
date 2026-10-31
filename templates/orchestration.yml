@@ -302,6 +302,23 @@ Resources:
               StringEquals:
                 events:source: factorial.progress
 
+  # The terminal states' outcomes (#165): Intake (a refusal), Report and
+  # OpenPullRequest put one Outcome event per work item. No other source.
+  OutcomeEventsPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-outcome-events
+      Description: Put Outcome events on the work bus. No other source.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: events:PutEvents
+            Resource: !ImportValue Factorial-WorkBusArn
+            Condition:
+              StringEquals:
+                events:source: factorial.outcome
+
   # ---------------------------------------------------------------------------
   # Network for the Fargate invoker: public subnets, no NAT, egress only.
   # ---------------------------------------------------------------------------
@@ -625,10 +642,10 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-report
       RetentionInDays: !Ref LogRetentionDays
-  NotifyLogGroup:
+  ReportGitHubLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/factorial-notify
+      LogGroupName: /aws/lambda/factorial-report-github
       RetentionInDays: !Ref LogRetentionDays
   ThreadOutcomeLogGroup:
     Type: AWS::Logs::LogGroup
@@ -636,8 +653,9 @@ Resources:
       LogGroupName: /aws/lambda/factorial-thread-outcome
       RetentionInDays: !Ref LogRetentionDays
 
-  # Reads GitHub with read-only tokens, and answers a refusal on the pull
-  # request when a person asked. Touches no session.
+  # Reads GitHub with read-only tokens and acknowledges a comment turn with a
+  # reaction. A refusal ends the turn with an outcome, which the reporter
+  # answers. Touches no session.
   IntakeFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -678,6 +696,7 @@ Resources:
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
+        - !Ref OutcomeEventsPolicy
 
   PrepareFunction:
     Type: AWS::Serverless::Function
@@ -826,7 +845,7 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: factorial-open-pr
-      Description: Open the pull request for human approval and notify the requester.
+      Description: Open the pull request for human approval and emit the turn's outcome.
       CodeUri: ../packages/orchestration/dist/open-pr/
       Handler: index.handler
       Timeout: 60
@@ -851,12 +870,13 @@ Resources:
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
+        - !Ref OutcomeEventsPolicy
 
   ReportFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: factorial-report
-      Description: Tell the requester when no pull request will follow.
+      Description: End a turn that opens no pull request, and emit its outcome.
       CodeUri: ../packages/orchestration/dist/report/
       Handler: index.handler
       Timeout: 60
@@ -870,37 +890,44 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-        - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
+        - !Ref OutcomeEventsPolicy
 
-  # The notifier seam (#205): reached by ProgressNotifyRule, it dispatches on
-  # the event's source type to one notifier per type. It records that a notice
-  # was sent on the ledger row and speaks through the App token (issues: write,
-  # one repository). It reads no artefact and puts no event.
-  NotifyFunction:
+  # The GitHub reporter (#165): one reporter per source type, each selected
+  # by rules on `source.type`. Reached by ReportGitHubOutcomeRule (the turn's
+  # outcome) and ReportGitHubProgressRule (the started notice), it reads the
+  # attempt's report.json and nothing else of the artefact store, records
+  # each delivery on the ledger row and speaks through the App token (issues
+  # and pull requests: write, one repository). It puts no event.
+  ReportGitHubFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: factorial-notify
-      Description: Tell the requester that their work has started.
-      CodeUri: ../packages/orchestration/dist/notify/
+      FunctionName: factorial-report-github
+      Description: Tell requesters on GitHub that their work started, and how it ended.
+      CodeUri: ../packages/orchestration/dist/report-github/
       Handler: index.handler
       Timeout: 60
       LoggingConfig:
-        LogGroup: !Ref NotifyLogGroup
+        LogGroup: !Ref ReportGitHubLogGroup
       Policies:
         - Statement:
             - Sid: Ledger
               Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
+            # What delivery needs: the one key every terminal state writes.
+            - Sid: ReadReports
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/report.json
         - !Ref GitHubAppPolicy
-        # Where a failed invocation's event goes (NotifyFunctionInvokeConfig).
+        # Where a failed invocation's event goes (ReportGitHubFunctionInvokeConfig).
         - Statement:
-            - Sid: FailedNotices
+            - Sid: FailedDeliveries
               Effect: Allow
               Action: sqs:SendMessage
-              Resource: !GetAtt NotifyFailedQueue.Arn
+              Resource: !GetAtt ReportGitHubFailedQueue.Arn
 
   # What became of a pull request Factorial opened (#204): reached by
   # PullRequestClosedRule, it sets `outcome` on the pull request's thread,
@@ -1190,7 +1217,7 @@ Resources:
             },
             "Intake": {
               "Type": "Task",
-              "Comment": "Accept the WorkItem once, resolve its thread and choose its route. A refusal is recorded, and answered on the pull request when a person asked.",
+              "Comment": "Accept the WorkItem once, resolve its thread and choose its route. A refusal is recorded and ends the turn with an outcome, which the reporter answers when a person asked.",
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${IntakeFunctionAlias}",
@@ -1260,7 +1287,7 @@ Resources:
               "Next": "Build"
             },
             "Duplicate": { "Type": "Succeed", "Comment": "This WorkItem was already accepted; nothing to do." },
-            "NotAdmitted": { "Type": "Succeed", "Comment": "Intake refused the item: its pull request is not Factorial's or no longer on its branch, another turn holds the thread, or failed checks reached their limit. Intake recorded why and replied on the pull request when a person asked." },
+            "NotAdmitted": { "Type": "Succeed", "Comment": "Intake refused the item: its pull request is not Factorial's or no longer on its branch, another turn holds the thread, or failed checks reached their limit. Intake recorded why and emitted the outcome; the reporter answers on the pull request when a person asked." },
             "Build": {
               "Type": "Task",
               "Resource": "arn:aws:states:::ecs:runTask.sync",
@@ -1475,7 +1502,7 @@ Resources:
             },
             "OpenPullRequest": {
               "Type": "Task",
-              "Comment": "Opens the pull request; for a rework item, replies on its existing pull request instead.",
+              "Comment": "Opens the pull request, or for a rework item records its existing pull request as updated, and emits the outcome the reporter delivers.",
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
@@ -1498,7 +1525,7 @@ Resources:
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "no-changes" },
               "Next": "NoChanges"
             },
-            "NoChanges": { "Type": "Succeed", "Comment": "The agent made no changes; the requester was told." },
+            "NoChanges": { "Type": "Succeed", "Comment": "The agent made no changes; the outcome tells the requester." },
             "ReportTestsFailed": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
@@ -1521,7 +1548,7 @@ Resources:
               "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "invalid-plan", "error": "{% $states.errorOutput %}" }, "Next": "InvalidPlan" } ],
               "Next": "InvalidPlan"
             },
-            "InvalidPlan": { "Type": "Fail", "Error": "InvalidPlan", "Cause": "The builder did not produce a valid plan; the requester was told." },
+            "InvalidPlan": { "Type": "Fail", "Error": "InvalidPlan", "Cause": "The builder did not produce a valid plan; the outcome tells the requester." },
             "ReportFailure": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
@@ -1610,16 +1637,40 @@ Resources:
           RoleArn: !GetAtt WorkStarterRole.Arn
           InputPath: $.detail
 
-  # Only the events a notifier acts on go to it: today a round-1 Build start
-  # (`round` is recorded from round 2), the one event githubIssueNotifier acts
-  # on. The rule is a filter for cost; the notifier module stays the decision
-  # and keeps the same checks. A notifier that acts on other events widens
-  # this pattern in the same change (see notifiers/index.ts).
-  ProgressNotifyRule:
+  # Every outcome from a GitHub source goes to the GitHub reporter. A
+  # reporter for another source type is its own function and rule.
+  ReportGitHubOutcomeRule:
     Type: AWS::Events::Rule
     Properties:
-      Name: factorial-progress-notify
-      Description: Route the round-1 Build start of each work item to the notifier.
+      Name: factorial-report-github-outcome
+      Description: Route the outcome of each turn from a GitHub source to the GitHub reporter.
+      EventBusName: !ImportValue Factorial-WorkBusName
+      State: ENABLED
+      EventPattern:
+        source:
+          - factorial.outcome
+        detail-type:
+          - Outcome
+        detail:
+          source:
+            type:
+              - prefix: github-
+      Targets:
+        - Id: report-github
+          Arn: !Ref ReportGitHubFunction.Alias
+          DeadLetterConfig:
+            Arn: !GetAtt ReportGitHubFailedQueue.Arn
+
+  # Only the progress events the reporter acts on go to it: today a round-1
+  # Build start (`round` is recorded from round 2) of an item from a GitHub
+  # source, for the started notice. The rule is a filter for cost; the
+  # reporter stays the decision and keeps the same checks. A notice on other
+  # events widens this pattern in the same change (see reporters/github/).
+  ReportGitHubProgressRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-report-github-progress
+      Description: Route the round-1 Build start of each work item from a GitHub source to the GitHub reporter.
       EventBusName: !ImportValue Factorial-WorkBusName
       State: ENABLED
       EventPattern:
@@ -1628,6 +1679,9 @@ Resources:
         detail-type:
           - WorkItemProgress
         detail:
+          source:
+            type:
+              - prefix: github-
           stage:
             - Build
           transition:
@@ -1635,36 +1689,47 @@ Resources:
           round:
             - exists: false
       Targets:
-        - Id: notify
-          Arn: !Ref NotifyFunction.Alias
+        - Id: report-github
+          Arn: !Ref ReportGitHubFunction.Alias
           DeadLetterConfig:
-            Arn: !GetAtt NotifyFailedQueue.Arn
+            Arn: !GetAtt ReportGitHubFailedQueue.Arn
 
-  NotifyFunctionRulePermission:
+  ReportGitHubOutcomeRulePermission:
     Type: AWS::Lambda::Permission
     Properties:
       Action: lambda:InvokeFunction
-      FunctionName: !Ref NotifyFunction.Alias
+      FunctionName: !Ref ReportGitHubFunction.Alias
       Principal: events.amazonaws.com
-      SourceArn: !GetAtt ProgressNotifyRule.Arn
+      SourceArn: !GetAtt ReportGitHubOutcomeRule.Arn
 
-  # Notices that failed: the function erred after Lambda's retries, or
-  # EventBridge could not deliver to it. Each message is the progress event
-  # (metadata only; no content). Nothing reads the queue yet; alarms are #16.
-  NotifyFailedQueue:
+  ReportGitHubProgressRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ReportGitHubFunction.Alias
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ReportGitHubProgressRule.Arn
+
+  # Deliveries that failed: the function erred after Lambda's retries (GitHub
+  # down, a deleted pull request, an unreadable report), or EventBridge could
+  # not deliver to it. Each message is the event (metadata only; no content),
+  # which can be put on the bus again once the cause is fixed: delivery is
+  # idempotent. A failed delivery never changes the turn's status.
+  ReportGitHubFailedQueue:
     Type: AWS::SQS::Queue
     Properties:
-      QueueName: factorial-notify-failed
+      QueueName: factorial-report-github-failed
       SqsManagedSseEnabled: true
       MessageRetentionPeriod: 1209600
 
-  # Only the rule may put delivery failures here. The function's role carries
-  # its own sqs:SendMessage for the invoke config's OnFailure destination.
-  NotifyFailedQueuePolicy:
+  # Only the two rules may put delivery failures here. The function's role
+  # carries its own sqs:SendMessage for the invoke config's OnFailure
+  # destination.
+  ReportGitHubFailedQueuePolicy:
     Type: AWS::SQS::QueuePolicy
     Properties:
       Queues:
-        - !Ref NotifyFailedQueue
+        - !Ref ReportGitHubFailedQueue
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -1673,24 +1738,48 @@ Resources:
             Principal:
               Service: events.amazonaws.com
             Action: sqs:SendMessage
-            Resource: !GetAtt NotifyFailedQueue.Arn
+            Resource: !GetAtt ReportGitHubFailedQueue.Arn
             Condition:
               ArnEquals:
-                aws:SourceArn: !GetAtt ProgressNotifyRule.Arn
+                aws:SourceArn:
+                  - !GetAtt ReportGitHubOutcomeRule.Arn
+                  - !GetAtt ReportGitHubProgressRule.Arn
 
   # EventBridge invokes the function asynchronously: after two retries, or an
-  # event older than an hour, the event goes to the failed-notice queue.
-  NotifyFunctionInvokeConfig:
+  # event older than an hour, the event goes to the failed-delivery queue. A
+  # delivery that meets another attempt's live claim fails and is retried
+  # here; the claim's lease (lib/delivery-ledger.ts) is longer than the
+  # function's timeout and shorter than the retries take.
+  ReportGitHubFunctionInvokeConfig:
     Type: AWS::Lambda::EventInvokeConfig
-    DependsOn: NotifyFunctionAliaslive
+    DependsOn: ReportGitHubFunctionAliaslive
     Properties:
-      FunctionName: !Ref NotifyFunction
+      FunctionName: !Ref ReportGitHubFunction
       Qualifier: live
       MaximumRetryAttempts: 2
       MaximumEventAgeInSeconds: 3600
       DestinationConfig:
         OnFailure:
-          Destination: !GetAtt NotifyFailedQueue.Arn
+          Destination: !GetAtt ReportGitHubFailedQueue.Arn
+
+  # A delivery that failed for good means a requester was not told. No
+  # action yet: the alerts topic comes with #16.
+  ReportGitHubFailedAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: factorial-report-github-failed
+      AlarmDescription: A GitHub delivery failed after its retries. See the factorial-report-github-failed queue and docs/finding-a-run.md.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt ReportGitHubFailedQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
 
   # A pull request Factorial opened was closed, merged or not: the trigger
   # adapter's PullRequestClosed event (contracts/pull-request-closed/v1/).
