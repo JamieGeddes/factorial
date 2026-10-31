@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:pull-request-closed:v1",
+  "title": "PullRequestClosed",
+  "description": "A pull request Factorial opened was closed, merged or not: the detail of a PullRequestClosed event (source factorial.triggers) on the factorial-work bus. Emitted by a trigger adapter, as the fact the source system reported. It is not a WorkItem: nothing is asked of Factorial, and it never reaches Intake. Metadata only, never content.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "repository", "number", "url", "headBranch", "merged", "closedAt", "by"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "owner", "name"],
+      "properties": {
+        "provider": { "enum": ["github"] },
+        "owner": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 100 }
+      }
+    },
+    "number": { "description": "The pull request number.", "type": "integer", "minimum": 1 },
+    "url": { "description": "The pull request's page.", "type": "string", "format": "uri", "maxLength": 2048 },
+    "headBranch": { "description": "The branch the pull request was opened from: one of Factorial's work branches.", "type": "string", "pattern": "^factorial/[0-9a-fA-F-]{36}$" },
+    "merged": { "description": "Whether the pull request was merged when it closed.", "type": "boolean" },
+    "closedAt": { "type": "string", "format": "date-time" },
+    "mergedAt": { "description": "When merged: when.", "type": "string", "format": "date-time" },
+    "mergeCommit": { "description": "When merged: the commit the merge made on the base branch.", "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "by": { "description": "Who merged it, or who closed it without merging: a source-system login.", "type": "string", "minLength": 1, "maxLength": 100 }
+  },
+  "allOf": [
+    { "if": { "properties": { "merged": { "const": true } } }, "then": { "required": ["mergedAt"], "properties": { "mergedAt": true } } },
+    { "if": { "properties": { "merged": { "const": false } } }, "then": { "properties": { "mergedAt": false, "mergeCommit": false } } }
+  ]
+}

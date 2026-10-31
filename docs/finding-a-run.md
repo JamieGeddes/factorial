@@ -12,7 +12,7 @@ Note `attempt`, `artefactPrefix`, `executionArn`, `status`, `route`, `threadKey`
 
 **Stage timings.** `stages` holds one entry per stage that ran (`Build#2` for the second build round), each with `startedAt`, `endedAt`, `outcome` and any `error`; `stages.Build.run` and `stages.Review.run` summarise each agent run (Runtime version, model, effort, turns, tokens, cost estimate, record keys). `endedAt` on the row says when the item ended. Items accepted before #15 have no `stages`, and items that ended before its second part keep the run on interim fields instead: the builder's at the top level (`stopReason`, `toolCalls`, `usage`, `buildError`, `buildRounds`, `buildSessionId`, `build.usageKey`, ...) and the reviewer's under `review`. The same transitions went to the `factorial-work` bus as `WorkItemProgress` events (`contracts/progress/v1/`), and the Lambdas log `progress not recorded` when one could not be written.
 
-**The thread.** Table **factorial-threads** → **Query**, partition key `threadKey` = the row's `threadKey` → **Run**: the branch, the pull request (`prNumber`, `prOpenedBy`), the turn holding it (`inFlight`) and the automatic rework count. To list every turn on the thread: table **factorial-work-items** → **Query** → **Select a table or index**: `threadKey-createdAt-index`, partition key `threadKey` = the same value → **Run**. To start from a pull request instead: table **factorial-threads** → **Query** → index `pullRequestKey-index`, partition key `<owner>/<name>#<number>` in lower case → **Run**.
+**The thread.** Table **factorial-threads** → **Query**, partition key `threadKey` = the row's `threadKey` → **Run**: the branch, the pull request (`prNumber`, `prOpenedBy`) and, once it has closed, `outcome` (`merged` or `closed`, when, by whom and the merge commit; #204), the turn holding it (`inFlight`) and the automatic rework count. To list every turn on the thread: table **factorial-work-items** → **Query** → **Select a table or index**: `threadKey-createdAt-index`, partition key `threadKey` = the same value → **Run**. To start from a pull request instead: table **factorial-threads** → **Query** → index `pullRequestKey-index`, partition key `<owner>/<name>#<number>` in lower case → **Run**.
 
 ## 2. The execution
 
@@ -45,6 +45,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 - `/aws/lambda/factorial-open-pr`
 - `/aws/lambda/factorial-report`
 - `/aws/lambda/factorial-notify` (the "started" comment on a labelled issue; the ledger row's `startedNotifiedAt` says it was sent)
+- `/aws/lambda/factorial-thread-outcome` (the pull request's outcome on its thread; lines carry the id of the item that opened the pull request, and one the function ignored names the pull request, `<owner>/<name>#<number>`, instead)
 
 Set the time range to cover the run, then run:
 
@@ -57,7 +58,7 @@ fields @timestamp, stage, attempt, level, message, @log
 
 Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`.
 
-A notice that failed (the function erred after its retries, or EventBridge could not deliver to it) is not in the log group alone: it is in the SQS queue `factorial-notify-failed`. In the console go to **SQS** → **Queues** → `factorial-notify-failed` → **Send and receive messages** → **Poll for messages**, then search the message bodies for the work item id. A body is the progress event, with no content. Messages are kept 14 days; nothing reads the queue yet (alarms are #16).
+A notice that failed (the function erred after its retries, or EventBridge could not deliver to it) is not in the log group alone: it is in the SQS queue `factorial-notify-failed`. In the console go to **SQS** → **Queues** → `factorial-notify-failed` → **Send and receive messages** → **Poll for messages**, then search the message bodies for the work item id. A body is the progress event, with no content. Messages are kept 14 days; nothing reads the queue yet (alarms are #16). An outcome that failed to record is in `factorial-thread-outcome-failed` the same way, as the `PullRequestClosed` event: search for the pull request number.
 
 ## 4. The artefacts
 

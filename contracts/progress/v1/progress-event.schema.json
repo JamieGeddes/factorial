@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:factorial:contracts:progress:v1",
   "title": "WorkItemProgress",
-  "description": "One stage transition of a work item, or its end: the detail of a WorkItemProgress event (source factorial.progress) on the factorial-work bus. Emitted only by the orchestrator (its Lambdas and the invoker), after the same transition is recorded on the ledger row. At least once: every copy of a transition carries the same eventId. Metadata only, never content. Internal to Factorial, not part of the WorkItem API.",
+  "description": "One stage transition of a work item, its end, or what became of the pull request it opened: the detail of a WorkItemProgress event (source factorial.progress) on the factorial-work bus. Emitted only by the orchestrator (its Lambdas, the invoker and factorial-thread-outcome), after the same transition is recorded on the ledger row (for the pull request's outcome, on its thread). At least once: every copy of a transition carries the same eventId. Metadata only, never content. Internal to Factorial, not part of the WorkItem API.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "eventId", "workItemId", "source", "repository", "stage", "transition", "at"],
@@ -14,7 +14,7 @@
     "eventId": {
       "description": "<workItemId>:<stage key>:<transition>, the same for every copy of one transition, so a subscriber can drop repeats.",
       "type": "string",
-      "pattern": "^[0-9a-f-]{36}:[A-Za-z]+(#[0-9]+)?:(started|succeeded|failed|ended)$"
+      "pattern": "^[0-9a-f-]{36}:[A-Za-z]+(#[0-9]+)?:(started|succeeded|failed|ended|merged|closed)$"
     },
     "workItemId": { "type": "string", "format": "uuid" },
     "attempt": { "type": "integer", "minimum": 1 },
@@ -40,7 +40,7 @@
       }
     },
     "stage": {
-      "description": "The state machine's state name (Intake, Build, Test, ReportFailure, ...), or WorkItem for the work item's end.",
+      "description": "The state machine's state name (Intake, Build, Test, ReportFailure, ...), WorkItem for the work item's end, or PullRequest for what became of the pull request it opened.",
       "type": "string",
       "pattern": "^[A-Z][A-Za-z]*$",
       "maxLength": 64
@@ -50,7 +50,7 @@
       "type": "integer",
       "minimum": 2
     },
-    "transition": { "enum": ["started", "succeeded", "failed", "ended"] },
+    "transition": { "enum": ["started", "succeeded", "failed", "ended", "merged", "closed"] },
     "at": { "description": "When the transition was recorded on the ledger.", "type": "string", "format": "date-time" },
     "status": { "description": "For ended: the ledger status the work item ended with.", "type": "string", "pattern": "^[a-z][a-z-]*$", "maxLength": 64 },
     "error": {
@@ -63,13 +63,27 @@
         "message": { "type": "string", "maxLength": 1000 }
       }
     },
-    "run": { "$ref": "#/$defs/run" }
+    "run": { "$ref": "#/$defs/run" },
+    "pullRequest": {
+      "description": "For merged and closed: the pull request the work item opened, and who merged or closed it.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["number", "by"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "by": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "mergeCommit": { "description": "For merged: the commit the merge made on the base branch.", "type": "string", "pattern": "^[0-9a-f]{40}$" }
+      }
+    }
   },
   "allOf": [
-    { "if": { "properties": { "transition": { "const": "ended" } } }, "then": { "required": ["status"], "properties": { "stage": { "const": "WorkItem" }, "status": true, "error": false, "run": false } } },
+    { "if": { "properties": { "transition": { "const": "ended" } } }, "then": { "required": ["status"], "properties": { "stage": { "const": "WorkItem" }, "status": true, "error": false, "run": false, "pullRequest": false } } },
     { "if": { "properties": { "stage": { "const": "WorkItem" } } }, "then": { "properties": { "transition": { "const": "ended" } } } },
-    { "if": { "properties": { "transition": { "const": "started" } } }, "then": { "properties": { "status": false, "error": false, "run": false } } },
-    { "if": { "properties": { "transition": { "enum": ["succeeded", "failed"] } } }, "then": { "properties": { "status": false } } }
+    { "if": { "properties": { "transition": { "const": "started" } } }, "then": { "properties": { "status": false, "error": false, "run": false, "pullRequest": false } } },
+    { "if": { "properties": { "transition": { "enum": ["succeeded", "failed"] } } }, "then": { "properties": { "status": false, "pullRequest": false } } },
+    { "if": { "properties": { "transition": { "enum": ["merged", "closed"] } } }, "then": { "required": ["pullRequest"], "properties": { "stage": { "const": "PullRequest" }, "pullRequest": true, "status": false, "error": false, "run": false } } },
+    { "if": { "properties": { "stage": { "const": "PullRequest" } } }, "then": { "properties": { "transition": { "enum": ["merged", "closed"] } } } },
+    { "if": { "properties": { "transition": { "const": "closed" } } }, "then": { "properties": { "pullRequest": { "type": "object", "properties": { "mergeCommit": false } } } } }
   ],
   "$defs": {
     "count": { "type": "integer", "minimum": 0 },

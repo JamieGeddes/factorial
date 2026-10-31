@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "eventId": "84c2d660-d3ec-11f1-92c7-34ac6b750765:PullRequest:merged",
+  "workItemId": "84c2d660-d3ec-11f1-92c7-34ac6b750765",
+  "attempt": 1,
+  "threadKey": "jamiegeddes/factorial#factorial/84c2d660-d3ec-11f1-92c7-34ac6b750765",
+  "source": { "type": "github-issue", "url": "https://github.com/JamieGeddes/factorial/issues/15" },
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "stage": "PullRequest",
+  "transition": "merged",
+  "at": "2026-10-31T09:12:40Z",
+  "pullRequest": { "number": 209, "by": "JamieGeddes", "mergeCommit": "3c9d1e2f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d" }
+}
