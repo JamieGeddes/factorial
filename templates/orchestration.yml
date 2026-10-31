@@ -1479,8 +1479,19 @@ Resources:
             },
             "HasChanges": {
               "Type": "Choice",
-              "Choices": [ { "Condition": "{% $collect.pushed = true %}", "Next": "Test" } ],
+              "Comment": "A pushed change is tested, unless the target's base branch has no test workflow to dispatch (Collect's testSkipReason): then it goes to review unverified, and its pull request says so.",
+              "Choices": [
+                { "Condition": "{% $collect.pushed = true and $exists($collect.testSkipReason) %}", "Next": "SkipTest" },
+                { "Condition": "{% $collect.pushed = true %}", "Next": "Test" }
+              ],
               "Default": "ReportNoChanges"
+            },
+            "SkipTest": {
+              "Type": "Pass",
+              "Comment": "No test workflow on the target's base branch: nothing is dispatched, and the test result records why, for the pull request and the reply.",
+              "Assign": { "test": "{% { 'skipped': $collect.testSkipReason } %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "test": "{% { 'skipped': $collect.testSkipReason } %}" },
+              "Next": "PrepareReview"
             },
             "Test": {
               "Type": "Task",

@@ -15,6 +15,7 @@ import {
   leftoverMessage,
   parseInspection,
   roundStartFor,
+  testSkipReason,
   touchesWorkflows,
 } from './collect.ts';
 import type { WorkContext } from '../lib/context.ts';
@@ -222,6 +223,34 @@ describe('roundStartFor', () => {
   });
 });
 
+describe('testSkipReason', () => {
+  const repo = { owner: 'JamieGeddes', name: 'other' };
+  let saved: string | undefined;
+  beforeEach(() => {
+    saved = process.env.TEST_WORKFLOW_FILE;
+    process.env.TEST_WORKFLOW_FILE = 'test.yml';
+  });
+  afterEach(() => {
+    if (saved === undefined) delete process.env.TEST_WORKFLOW_FILE;
+    else process.env.TEST_WORKFLOW_FILE = saved;
+  });
+
+  it("is undefined when the base branch has the test workflow, so Test runs", async () => {
+    const asked: string[] = [];
+    assert.equal(await testSkipReason(repo, 'main', async (_r, path, ref) => (asked.push(`${ref}:${path}`), true)), undefined);
+    // The base branch, never the work branch: the builder cannot remove the gate.
+    assert.deepEqual(asked, ['main:.github/workflows/test.yml']);
+  });
+
+  it('names the missing workflow and the branch when there is none, so Test is skipped', async () => {
+    assert.equal(await testSkipReason(repo, 'main', async () => false), 'JamieGeddes/other has no .github/workflows/test.yml on main');
+  });
+
+  it('fails Collect rather than skipping when GitHub cannot say', async () => {
+    await assert.rejects(testSkipReason(repo, 'main', async () => { throw new Error('GitHub GET failed: 403'); }), /403/);
+  });
+});
+
 describe('collect stops the sessions it has finished with', () => {
   const WORK_ITEM_ID = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
   const pushed = 'c'.repeat(40);
@@ -285,6 +314,13 @@ describe('collect stops the sessions it has finished with', () => {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+  });
+
+  it('does not look for the test workflow when salvaging: saved work goes to ContinueBuild or a report, never to Test', async () => {
+    let asked = 0;
+    const result = await collect({ ...ctx, salvage: true }, log, { ...deps, fileExists: async () => (asked += 1) > 0 });
+    assert.equal(asked, 0);
+    assert.equal(result.testSkipReason, undefined);
   });
 
   it('stops the clean room after the push and the builder session before returning', async () => {

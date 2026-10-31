@@ -39,6 +39,8 @@ describe('parseReportFile', () => {
     assert.equal(errorOf(report({ kind: 'report', facts: { status: 'failed', rework: false, planProblems: [1] } })), 'facts.planProblems is not a list of strings');
     assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, cause: 'other' }, reviewers: [] })), 'reply.cause is not a rework cause');
     assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, points: [{}] }, reviewers: [] })), 'reply.points is malformed');
+    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, test: { skipped: 1 } }, reviewers: [] })), 'reply.test.skipped is not a string');
+    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, test: { skipped: 'no test workflow' } }, reviewers: [] })), undefined);
     assert.equal(errorOf(report({ kind: 'rework-reply', reply, reviewers: 'a' })), 'reviewers is not a list of logins');
     assert.equal(errorOf(report({ kind: 'refusal', reply: 1 })), 'reply is not a string');
   });

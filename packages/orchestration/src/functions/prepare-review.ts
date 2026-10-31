@@ -46,9 +46,10 @@ import { sectionText, type SeedProvider } from '../lib/seed.ts';
 
 import { cloneSession, placeSeed } from './prepare.ts';
 
-interface PrepareReviewInput extends ProgressInput {
+export interface PrepareReviewInput extends ProgressInput {
   ctx: WorkContext;
-  collect: { headSha: string; summary: string };
+  /** `testSkipReason` is set when Test was skipped (no test workflow on the base branch). */
+  collect: { headSha: string; summary: string; testSkipReason?: string };
 }
 
 export interface PrepareReviewResult {
@@ -78,7 +79,10 @@ async function planArtefact(ctx: WorkContext, path: string): Promise<string> {
 }
 
 // The state machine reaches PrepareReview only when the tests passed, so it ends the Test stage.
-const prepareReviewStage: StagePolicy<PrepareReviewInput, PrepareReviewResult> = { closes: () => [{ stage: 'Test', outcome: 'succeeded' }] };
+/** Reaching review ends a Test that ran; a skipped Test never started, so the ledger records no Test stage for it. */
+export const prepareReviewStage: StagePolicy<PrepareReviewInput, PrepareReviewResult> = {
+  closes: (input) => (input.collect.testSkipReason ? [] : [{ stage: 'Test', outcome: 'succeeded' }]),
+};
 
 export const handler = staged('prepare-review', (input: PrepareReviewInput) => runKey(input.ctx), prepareReviewStage, async (input, log): Promise<PrepareReviewResult> => {
   const { ctx } = input;

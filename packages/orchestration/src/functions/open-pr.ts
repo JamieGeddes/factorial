@@ -101,7 +101,7 @@ async function endTurn(ctx: WorkContext, report: ReportFile, outcome: Parameters
 async function recordRework(input: OpenPrInput, rework: ReworkTurn, headSha: string, log: Logger): Promise<OpenPrResult> {
   const { ctx } = input;
   const pr = rework.pullRequest;
-  await recordProgress(ctx.workItem.id, 'pr-updated', { prUrl: pr.url, prNumber: pr.number, testRunUrl: input.test.runUrl });
+  await recordProgress(ctx.workItem.id, 'pr-updated', { prUrl: pr.url, prNumber: pr.number, testRunUrl: input.test.runUrl, testSkipped: input.test.skipped });
   try {
     await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.url, headSha, rework: true });
   } catch (error) {
@@ -115,11 +115,16 @@ async function recordRework(input: OpenPrInput, rework: ReworkTurn, headSha: str
       reason: `Pull request #${pr.number} updated with the rework.`,
       delivery: { kind: 'rework-reply', reply, reviewers: reviewersToRequest(rework, ctx.reworkPoints) },
     },
-    { workItem: ctx.workItem, attempt: ctx.attempt, artefactPrefix: ctx.artefactPrefix, result: 'pr-updated', route: 'change', threadKey: ctx.threadKey, pullRequest: pr, branch: ctx.branch, testedSha: headSha },
+    { workItem: ctx.workItem, attempt: ctx.attempt, artefactPrefix: ctx.artefactPrefix, result: 'pr-updated', route: 'change', threadKey: ctx.threadKey, pullRequest: pr, branch: ctx.branch, ...testedOf(input, headSha) },
     log,
   );
   log.info('pull request updated', { prUrl: pr.url });
   return { prNumber: pr.number, prUrl: pr.url };
+}
+
+/** The outcome's `testedSha`: the head, unless Test was skipped and nothing was tested. */
+function testedOf(input: OpenPrInput, headSha: string): { testedSha?: string } {
+  return input.test.skipped ? {} : { testedSha: headSha };
 }
 
 /** A pull request opened or answered ends the work item; a failure goes on to ReportFailure, which ends it. */
@@ -160,6 +165,7 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
     prUrl: pr.htmlUrl,
     prNumber: pr.number,
     testRunUrl: input.test.runUrl,
+    testSkipped: input.test.skipped,
   });
   // The pull request is open, so a failure to record it must not turn the run
   // into a reported failure. The thread is how a later turn on the pull
@@ -187,7 +193,7 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
       threadKey: ctx.threadKey,
       pullRequest: { number: pr.number, url: pr.htmlUrl },
       branch: ctx.branch,
-      testedSha: headSha,
+      ...testedOf(input, headSha),
     },
     log,
   );

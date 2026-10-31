@@ -18,6 +18,10 @@ describe('testResultArtefact', () => {
     );
   });
 
+  it('records why Test was skipped, and nothing else', () => {
+    assert.deepEqual(testResultArtefact({ skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main' }), { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main' });
+  });
+
   it('leaves out what the callback did not carry', () => {
     assert.deepEqual(testResultArtefact({ outcome: 'failure' }), { conclusion: 'failure' });
   });

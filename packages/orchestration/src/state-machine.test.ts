@@ -9,6 +9,10 @@ import { test } from 'node:test';
 
 interface State {
   Type: string;
+  Next?: string;
+  Default?: string;
+  Choices?: Array<{ Condition: string; Next: string }>;
+  Assign?: Record<string, unknown>;
   Output?: Record<string, unknown> | string;
   Catch?: Array<{ ErrorEquals: string[]; Output?: Record<string, unknown> }>;
   Resource?: string;
@@ -82,4 +86,18 @@ test('every task tells its Lambda or invoker the state it runs in, for the progr
       );
     }
   }
+});
+
+test('a pushed change skips Test when the base branch has no test workflow, and its result says so', () => {
+  const machine = definition().States;
+  const choices = machine.HasChanges?.Choices ?? [];
+  // The skip is checked first: a pushed change with a reason never reaches Test.
+  assert.deepEqual(choices.map((c) => c.Next), ['SkipTest', 'Test']);
+  assert.match(choices[0]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.testSkipReason\)/);
+  assert.equal(machine.HasChanges?.Default, 'ReportNoChanges');
+  const skip = machine.SkipTest;
+  assert.equal(skip?.Type, 'Pass');
+  assert.equal(skip?.Next, 'PrepareReview');
+  assert.equal(skip?.Assign?.test, "{% { 'skipped': $collect.testSkipReason } %}");
+  assert.equal(machine.Test?.Next, 'PrepareReview');
 });

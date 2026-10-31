@@ -9,7 +9,7 @@ import type { PrFacts } from '../lib/pr-facts.ts';
 
 import type { ReworkContext } from '@factorial/workitem';
 
-import { agentText, closingReference, noMentions, pullRequestBody, reworkComment, reworkReplyFacts, safeLogin, type BodyExtras } from './pr-body.ts';
+import { agentText, closingReference, noMentions, pullRequestBody, reworkComment, reworkReplyFacts, safeLogin, type BodyExtras, type TestResult } from './pr-body.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -33,7 +33,7 @@ const ctx: WorkContext = {
 };
 
 const HEAD = 'f'.repeat(40);
-const PASS: { runUrl?: string; outcome?: string } = { runUrl: 'https://x/run/1', outcome: 'success' };
+const PASS: TestResult = { runUrl: 'https://x/run/1', outcome: 'success' };
 
 const SECTIONS = ['## Summary', '## Impact', '## Review focus', '## Automated review', '## Tests', '## Plan', '<summary>Run details</summary>'];
 
@@ -119,6 +119,13 @@ describe('pullRequestBody: a plain code change', () => {
     assert.match(tests, /- \*\*Test files added or changed:\*\* none among the changed files/);
     assert.match(tests, /- \*\*Not tested:\*\* The live deploy\./);
     assert.match(tests, /Planned tests \(from the plan, not a report of what was added\)/);
+  });
+
+  it('says plainly that a change was not verified when Test was skipped, keeping the reason as text', () => {
+    const skipped = render(summaryMd(), { fullPlan: plan, facts: noFacts, review: undefined }, { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main <b>`x`</b>' });
+    const tests = section(skipped, '## Tests');
+    assert.match(tests, /- \*\*Result:\*\* \*\*not verified\*\*: JamieGeddes\/other has no \.github\/workflows\/test\.yml on main  b  x  \/b , so no automated tests ran on this change\. Check it before merging\./);
+    assert.ok(!tests.includes('<b>'));
   });
 
   it('says every step was done and lists the steps once, untruncated, in details', () => {
@@ -425,6 +432,14 @@ describe('reworkComment', () => {
     const text = reworkComment(reworkReplyFacts(reworkCtx, rework, summary, PASS, HEAD, {}));
     assert.match(text, /^Factorial has reworked this pull request after the review\. The branch is now at `ffffffffffff`, and the \[tests\]\(https:\/\/x\/run\/1\) passed on it\./);
     assert.match(text, /description above still describes the change as first opened/);
+  });
+
+  it('says the rework was not verified when Test was skipped, never that tests passed', () => {
+    const facts = reworkReplyFacts(reworkCtx, rework, summary, { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main' }, HEAD, {});
+    assert.deepEqual(facts.test, { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main' });
+    const text = reworkComment(facts);
+    assert.match(text, /The branch is now at `ffffffffffff`, and it was \*\*not verified\*\*: no automated tests ran \(see Tests below\)\./);
+    assert.ok(!/passed on it|its tests passed/.test(text));
   });
 
   it('carries the summary, review, tests and run details, but no closing reference or plan', () => {
