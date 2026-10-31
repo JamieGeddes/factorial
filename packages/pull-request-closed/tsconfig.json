@@ -1,0 +1,7 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "../../contracts/pull-request-closed/v1/*.json", "../../contracts/pull-request-closed/v1/examples/*.json"]
+}

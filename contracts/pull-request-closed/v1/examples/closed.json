@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "number": 199,
+  "url": "https://github.com/JamieGeddes/factorial/pull/199",
+  "headBranch": "factorial/5b1e2f30-d3a1-11f1-8a6e-1f2e3d4c5b6a",
+  "merged": false,
+  "closedAt": "2026-10-29T17:03:11Z",
+  "by": "JamieGeddes"
+}
