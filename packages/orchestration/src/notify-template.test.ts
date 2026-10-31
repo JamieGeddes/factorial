@@ -7,48 +7,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
-import { parse } from 'yaml';
-
-type Json = Record<string, unknown>;
-
-/** Resources of the template; CloudFormation short-form tags parse to `{ Tag: value }`. */
-function resources(): Record<string, Json> {
-  const tags = ['Ref', 'GetAtt', 'Sub', 'ImportValue', 'Join', 'Select', 'If', 'Equals', 'Not', 'And', 'Or', 'FindInMap', 'Split', 'GetAZs', 'Base64', 'Condition'].map((name) => ({
-    tag: `!${name}`,
-    resolve: (value: unknown) => ({ [name === 'Ref' || name === 'Condition' ? name : `Fn::${name}`]: value }),
-  }));
-  const template = parse(readFileSync(new URL('../../../templates/orchestration.yml', import.meta.url), 'utf8'), { customTags: tags }) as {
-    Resources: Record<string, Json>;
-  };
-  return template.Resources;
-}
-
-/** One resource's definition; fails when it is missing. */
-function resource(name: string): Json {
-  const found = resources()[name];
-  assert.ok(found, `${name} not found`);
-  return found;
-}
+import { matches, resource, type Json } from './template-checks.ts';
 
 const rule = (): { EventPattern: Json; Targets: Array<Json> } => resource('ProgressNotifyRule').Properties as never;
-
-/** EventBridge matching for the operators the rule uses: an array is any-of, `{ exists: false }` is absence, an object nests. */
-function matches(pattern: Json, event: Json): boolean {
-  return Object.entries(pattern).every(([key, expected]) => {
-    const actual = event[key];
-    if (Array.isArray(expected)) {
-      return expected.some((item) => {
-        if (item !== null && typeof item === 'object') {
-          const { exists } = item as { exists?: boolean };
-          assert.notEqual(exists, undefined, `unsupported operator in ${JSON.stringify(item)}`);
-          return (actual !== undefined) === exists;
-        }
-        return item === actual;
-      });
-    }
-    return actual !== null && typeof actual === 'object' && matches(expected as Json, actual as Json);
-  });
-}
 
 const example = JSON.parse(readFileSync(new URL('../../../contracts/progress/v1/examples/stage-started.json', import.meta.url), 'utf8')) as Json;
 const buildStarted = (): Json => ({ ...example, stage: 'Build' });

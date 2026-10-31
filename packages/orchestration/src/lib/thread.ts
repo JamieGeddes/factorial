@@ -8,7 +8,10 @@
  * are conditional on the version read, so two turns cannot both claim it.
  */
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, type UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
+import { unmarshall } from '@aws-sdk/util-dynamodb';
+
+import type { PullRequestOutcome } from '@factorial/progress';
 
 import { requireEnv } from './env.ts';
 import type { ThreadState } from './thread-policy.ts';
@@ -32,6 +35,8 @@ export interface Thread extends ThreadState {
   prNumber?: number;
   /** The work item that opened the pull request: the previous item a rework continues. */
   prOpenedBy?: string;
+  /** What became of the pull request (#204): merged, or closed without merging; the latest close. */
+  outcome?: PullRequestOutcome;
   /** Incremented by every admission write, which is conditional on it. */
   version: number;
   createdAt: string;
@@ -52,8 +57,8 @@ export async function getThread(threadKey: string): Promise<Thread | undefined> 
   return result.Item as Thread | undefined;
 }
 
-/** The thread of a pull request Factorial opened, if one records it. */
-export async function threadForPullRequest(pullRequestKey: string): Promise<Thread | undefined> {
+/** The key of the thread that records a pull request Factorial opened, if one does. */
+export async function threadKeyForPullRequest(pullRequestKey: string): Promise<string | undefined> {
   const result = await documents.send(
     new QueryCommand({
       TableName: tableName(),
@@ -63,7 +68,12 @@ export async function threadForPullRequest(pullRequestKey: string): Promise<Thre
       Limit: 1,
     }),
   );
-  const key = (result.Items?.[0] as { threadKey?: string } | undefined)?.threadKey;
+  return (result.Items?.[0] as { threadKey?: string } | undefined)?.threadKey;
+}
+
+/** The thread of a pull request Factorial opened, if one records it. */
+export async function threadForPullRequest(pullRequestKey: string): Promise<Thread | undefined> {
+  const key = await threadKeyForPullRequest(pullRequestKey);
   return key === undefined ? undefined : getThread(key);
 }
 
@@ -159,4 +169,48 @@ export async function recordThreadPullRequest(threadKey: string, pr: { pullReque
       ExpressionAttributeValues: { ':key': pr.pullRequestKey, ':number': pr.number, ':by': pr.openedBy, ':now': new Date().toISOString() },
     }),
   );
+}
+
+/** Where an outcome is recorded: the thread, the pull request it records and the branch it was opened from. */
+export interface OutcomeTarget {
+  threadKey: string;
+  prNumber: number;
+  branch: string;
+}
+
+/**
+ * The write that records a pull request's outcome on its thread: only if the
+ * thread records that pull request from that branch, and holds no later
+ * close. A repeat of the same close sets the same values. It leaves
+ * `version` alone: the outcome is not an admission.
+ */
+export function outcomeUpdate(table: string, target: OutcomeTarget, outcome: PullRequestOutcome): UpdateCommandInput {
+  return {
+    TableName: table,
+    Key: { threadKey: target.threadKey },
+    UpdateExpression: 'SET #outcome = :outcome, updatedAt = :now',
+    ConditionExpression: 'prNumber = :number AND #branch = :branch AND (attribute_not_exists(#outcome) OR #outcome.#at <= :at)',
+    ExpressionAttributeNames: { '#outcome': 'outcome', '#branch': 'branch', '#at': 'at' },
+    ExpressionAttributeValues: { ':outcome': outcome, ':number': target.prNumber, ':branch': target.branch, ':at': outcome.at, ':now': new Date().toISOString() },
+    ReturnValues: 'ALL_NEW',
+    ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
+  };
+}
+
+/** Whether the outcome was recorded, and the thread after the write, or as it was when the condition failed. */
+export interface OutcomeResult {
+  recorded: boolean;
+  thread?: Partial<Thread>;
+}
+
+export async function recordThreadOutcome(target: OutcomeTarget, outcome: PullRequestOutcome): Promise<OutcomeResult> {
+  try {
+    const result = await documents.send(new UpdateCommand(outcomeUpdate(tableName(), target, outcome)));
+    return { recorded: true, thread: result.Attributes as Partial<Thread> };
+  } catch (error) {
+    if (!(error instanceof ConditionalCheckFailedException)) throw error;
+    // lib-dynamodb does not unmarshall the item an exception carries.
+    const item = (error as { Item?: Parameters<typeof unmarshall>[0] }).Item;
+    return { recorded: false, ...(item ? { thread: unmarshall(item) as Partial<Thread> } : {}) };
+  }
 }

@@ -630,6 +630,11 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-notify
       RetentionInDays: !Ref LogRetentionDays
+  ThreadOutcomeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-thread-outcome
+      RetentionInDays: !Ref LogRetentionDays
 
   # Reads GitHub with read-only tokens, and answers a refusal on the pull
   # request when a person asked. Touches no session.
@@ -896,6 +901,42 @@ Resources:
               Effect: Allow
               Action: sqs:SendMessage
               Resource: !GetAtt NotifyFailedQueue.Arn
+
+  # What became of a pull request Factorial opened (#204): reached by
+  # PullRequestClosedRule, it sets `outcome` on the pull request's thread,
+  # then announces it as a progress event for the item that opened the pull
+  # request, built from that item's ledger row (its source and repository
+  # only). No GitHub access, no artefacts.
+  ThreadOutcomeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-thread-outcome
+      Description: Record whether a Factorial pull request was merged or closed on its thread.
+      CodeUri: ../packages/orchestration/dist/thread-outcome/
+      Handler: index.handler
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref ThreadOutcomeLogGroup
+      Policies:
+        - Statement:
+            - Sid: ThreadIndex
+              Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Sub ${ThreadsTable.Arn}/index/pullRequestKey-index
+            - Sid: ThreadOutcome
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt ThreadsTable.Arn
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt WorkItemsTable.Arn
+            # Where a failed invocation's event goes (ThreadOutcomeFunctionInvokeConfig).
+            - Sid: FailedOutcomes
+              Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt ThreadOutcomeFailedQueue.Arn
+        - !Ref ProgressEventsPolicy
 
   # Covers the reviewer's sessions as well as the builder's. The description
   # still names only the builder: changing a managed policy's description
@@ -1650,6 +1691,78 @@ Resources:
       DestinationConfig:
         OnFailure:
           Destination: !GetAtt NotifyFailedQueue.Arn
+
+  # A pull request Factorial opened was closed, merged or not: the trigger
+  # adapter's PullRequestClosed event (contracts/pull-request-closed/v1/).
+  # Never a WorkItem, so WorkItemRule never matches it.
+  PullRequestClosedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-pull-request-closed
+      Description: Route each closed Factorial pull request to the thread outcome function.
+      EventBusName: !ImportValue Factorial-WorkBusName
+      State: ENABLED
+      EventPattern:
+        source:
+          - factorial.triggers
+        detail-type:
+          - PullRequestClosed
+      Targets:
+        - Id: thread-outcome
+          Arn: !Ref ThreadOutcomeFunction.Alias
+          DeadLetterConfig:
+            Arn: !GetAtt ThreadOutcomeFailedQueue.Arn
+
+  ThreadOutcomeFunctionRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ThreadOutcomeFunction.Alias
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PullRequestClosedRule.Arn
+
+  # Outcomes that failed to record: the function erred after Lambda's
+  # retries, or EventBridge could not deliver to it. Each message is the
+  # PullRequestClosed event (metadata only), which can be sent to the bus
+  # again once the cause is fixed. Nothing reads the queue yet; alarms are #16.
+  ThreadOutcomeFailedQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: factorial-thread-outcome-failed
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+
+  # Only the rule may put delivery failures here. The function's role carries
+  # its own sqs:SendMessage for the invoke config's OnFailure destination.
+  ThreadOutcomeFailedQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ThreadOutcomeFailedQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RuleDeadLetters
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ThreadOutcomeFailedQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt PullRequestClosedRule.Arn
+
+  ThreadOutcomeFunctionInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: ThreadOutcomeFunctionAliaslive
+    Properties:
+      FunctionName: !Ref ThreadOutcomeFunction
+      Qualifier: live
+      MaximumRetryAttempts: 2
+      MaximumEventAgeInSeconds: 3600
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt ThreadOutcomeFailedQueue.Arn
 
 Outputs:
   WorkStateMachineArn:
