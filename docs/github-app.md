@@ -33,7 +33,7 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    | Actions | Read and write | Dispatch the test workflow and read its result. Rework of failed checks also reads the failing jobs' logs (the orchestrator's token is narrowed to `actions: read` for that). |
    | Workflows | Read and write | Push branches that change files under `.github/workflows/`. GitHub rejects such pushes otherwise. The orchestrator requests this permission on a token only when the change edits a workflow file. |
 
-6. Under **Subscribe to events**, tick **Issues**, **Issue comment**, **Pull request review**, **Pull request review comment** and **Workflow run**. The last four let Factorial rework its own pull requests (see **Pull request events** below).
+6. Under **Subscribe to events**, tick **Issues**, **Issue comment**, **Pull request**, **Pull request review**, **Pull request review comment** and **Workflow run**. **Pull request** records whether Factorial's pull requests were merged; the other four let Factorial rework them (see **Pull request events** below).
 7. Under **Where can this GitHub App be installed?**, choose **Only on this account**.
 8. Click **Create GitHub App**.
 
@@ -85,12 +85,15 @@ Until the orchestration stack exists, nothing consumes the event. That is expect
 
 Factorial reworks a pull request it opened when a trusted user (the triggers stack's `AllowedGitHubUserIds`) submits a review with **Request changes**, or writes a comment whose first word is `@<slug>` (for example `@factorial-jamiegeddes please add a test`), either in the conversation or inline on the diff; and, at most twice in a row without a person asking, when a workflow run fails on the pull request's head. `<slug>` is the App's slug, the triggers stack's `GitHubAppSlug` parameter. GitHub does not offer the App in mention autocompletion, so type it in full. Comments without the mention, from anyone else, or from bots do nothing. An inline comment is a review point; a comment in the conversation is a request of its own (`comment`), and no review is re-requested after it. Factorial reacts with eyes to a comment it has taken, and replies on the pull request when the rework finishes or cannot start. It acts only on pull requests its ledger records opening, so not on ones opened before this was deployed.
 
-An App created before these events were added needs them subscribed. No permission changes, so the installation needs no re-approval.
+When one of Factorial's pull requests closes, merged or not, the **Pull request** event records the outcome on its thread (#204): the adapter emits a `PullRequestClosed` event (`contracts/pull-request-closed/`), never a work item. Every other pull request action (opened, edited, synchronised, ...) is answered `202` and ignored.
+
+An App created before these events were added needs them subscribed. Each event is covered by a permission the App already holds (**Pull request** by **Pull requests**), so the installation needs no re-approval: if GitHub ever shows "This app has requested new permissions" on the installation after this, a permission changed by mistake.
 
 1. Click your profile photo, then **Settings**, then **Developer settings** at the bottom of the left nav, then **GitHub Apps**, then **Edit** next to the Factorial App.
-2. In the left nav click **Permissions & events**. Scroll to **Subscribe to events** and tick **Issue comment**, **Pull request review**, **Pull request review comment** and **Workflow run**. Leave **Issues** ticked.
+2. In the left nav click **Permissions & events**. Scroll to **Subscribe to events** and tick **Pull request**, **Issue comment**, **Pull request review**, **Pull request review comment** and **Workflow run**. Leave **Issues** ticked.
 3. Scroll down and click **Save changes**.
-4. Check it: in the left nav click **Advanced**. Comment on a Factorial pull request without the mention; **Recent Deliveries** shows an `issue_comment` delivery answered `202` with "comment does not address Factorial".
+4. Check the rework events: in the left nav click **Advanced**. Comment on a Factorial pull request without the mention; **Recent Deliveries** shows an `issue_comment` delivery answered `202` with "comment does not address Factorial".
+5. Check the **Pull request** event: merge or close a Factorial pull request. **Recent Deliveries** shows a `pull_request` delivery answered `202` with `{"pullRequest":<number>,"merged":true}` (or `false`). Within a minute its thread records `outcome` (`docs/finding-a-run.md`). A `pull_request` delivery for any other action is answered `202` with "ignored pull request action".
 
 ## Adding a permission later
 
