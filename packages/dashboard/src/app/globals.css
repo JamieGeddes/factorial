@@ -132,6 +132,8 @@ tr:last-child td { border-bottom: 0; }
 tbody tr.row-link { cursor: pointer; }
 tbody tr.row-link:hover td { background: var(--raised); }
 td .sub { display: block; color: var(--ink-3); font-size: 11px; margin-top: 1px; }
+.run-line .stop.waiting { color: var(--warn); }
+.run-line .stop.failed { color: #f08a8a; }
 .right { text-align: right; }
 
 /* Meters */

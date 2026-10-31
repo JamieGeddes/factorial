@@ -97,7 +97,7 @@ Each message is `{ kind: 'event', channel, envelope }`, `{ kind: 'progress', cha
 | Status bar: bus rate | CloudWatch `AWS/Events` `Invocations` summed over every rule on `factorial-work`, per minute over the last ten. |
 | Status bar: alarms | CloudWatch alarms named `factorial-*`: how many are in `ALARM`, or "none set up, #16" when there are none. |
 | Work items: every column | The ledger row (`workItem`, `status`, `result`, `route`, `refusedReason`, `branch`, `prNumber`, `savedWork`, `stages`, `live`, `reviewVerdict`, `reviewScores`, `attempt`, `createdAt`, `endedAt`) and its thread's `outcome` (merged or closed). Cost sums `stages.*.run.costUsd`, plus `live.costUsd` for a run not yet recorded. Refreshed on every message on `/factorial/work-items`, and every 20 seconds. |
-| Work item detail | The row, its thread and the artefact listing. Rows open it until #58 adds the Run & transcript view. |
+| Work item detail | The row, its thread and the artefact listing. Rows open it until #58 adds the Run & transcript view. The header shows an `<n> build rounds` tag (`buildRounds`) when an item took more than one round; the Stages table shows under each stage with a `run` one line of runtime, turns, tool calls and stop reason (`runLine`), the stop reason amber for an incomplete run and red for a failed one. All from the same row, no extra call; the text is sanitised as untrusted. |
 | Overview, Run & transcript | Not set up: #58. |
 | Metrics & cost, Health | Not set up: #59. |
 

@@ -1,9 +1,11 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
+import { BuildRoundsTag } from '../../../components/BuildRoundsTag.tsx';
 import { Elapsed } from '../../../components/Elapsed.tsx';
 import { MeterRow } from '../../../components/Meter.tsx';
 import { Pill } from '../../../components/Pill.tsx';
+import { RunLine } from '../../../components/RunLine.tsx';
 import { Tag } from '../../../components/Tag.tsx';
 import { fmtDur, fmtK, fmtUsd, shortId } from '../../../lib/format.ts';
 import { branchUrl } from '../../../lib/links.ts';
@@ -43,6 +45,7 @@ export default async function WorkItemPage({ params }: { params: Promise<{ id: s
           <div className="ids">
             <Tag>{id}</Tag>
             <Tag>{`attempt ${summary.attempt}`}</Tag>
+            <BuildRoundsTag row={row} />
             {summary.branch ? <Tag>{summary.branch}</Tag> : null}
             {summary.repository ? <Tag>{`${summary.repository.owner}/${summary.repository.name}`}</Tag> : null}
             {links.execution ? (
@@ -102,6 +105,7 @@ export default async function WorkItemPage({ params }: { params: Promise<{ id: s
                       <td>
                         {stage}
                         {round ? <span className="sub">{`round ${round}`}</span> : null}
+                        <RunLine entry={entry} />
                       </td>
                       <td className="mono">{entry.startedAt?.replace('T', ' ').slice(0, 19) ?? ''}</td>
                       <td className="right num">{d !== undefined ? fmtDur(d) : entry.startedAt ? <Elapsed start={entry.startedAt} /> : ''}</td>
