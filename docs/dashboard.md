@@ -11,6 +11,8 @@ AWS_PROFILE=<your profile> npm run dashboard
 
 It builds the app on first run, starts it on `127.0.0.1:4757` and prints a URL with a token that is new on every start. Open that URL; nothing is served without it. `npm run dashboard -- --dev` runs the development server instead.
 
+Ctrl-C stops it, within 5 seconds at most. The server ends every tab's live stream and exits; if it is still running 5 seconds after the first Ctrl-C (or `SIGTERM`) the launcher kills it, and a second Ctrl-C kills it at once. The command centre is read-only and holds no state, so a forced stop loses nothing. Browsers see the stream end and the status bar shows the feed as down.
+
 | Variable | Default |
 |---|---|
 | `DASHBOARD_PORT` | `4757` |
