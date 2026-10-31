@@ -114,6 +114,7 @@ function replyProblem(reply: unknown): string | undefined {
     if (!isString(reply[key])) return `reply.${key} is not a string`;
   }
   if (!isObject(reply.test)) return 'reply.test is not an object';
+  if (reply.test.skipped !== undefined && !isString(reply.test.skipped)) return 'reply.test.skipped is not a string';
   if (!Array.isArray(reply.points) || !reply.points.every((p) => isObject(p) && isString(p.author))) return 'reply.points is malformed';
   const details = reply.runDetails;
   if (!isObject(details) || !isObject(details.source)) return 'reply.runDetails is malformed';

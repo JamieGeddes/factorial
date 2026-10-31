@@ -211,6 +211,21 @@ export class GitHubClient {
     await this.#request<unknown>('POST', `/repos/${repo.owner}/${repo.name}/pulls/${pullNumber}/requested_reviewers`, { reviewers });
   }
 
+  /**
+   * Whether a file exists at `path` on `ref`, through the contents API (needs
+   * `contents: read`). A missing file or ref is false; any other failure throws.
+   */
+  async fileExists(repo: Repo, path: string, ref: string): Promise<boolean> {
+    const encoded = path.split('/').map(encodeURIComponent).join('/');
+    try {
+      await this.#request<unknown>('GET', `/repos/${repo.owner}/${repo.name}/contents/${encoded}?ref=${encodeURIComponent(ref)}`);
+      return true;
+    } catch (error) {
+      if (error instanceof GitHubApiError && error.status === 404) return false;
+      throw error;
+    }
+  }
+
   async getDefaultBranch(repo: Repo): Promise<string> {
     const info = await this.#request<{ default_branch: string }>('GET', `/repos/${repo.owner}/${repo.name}`);
     return info.default_branch;

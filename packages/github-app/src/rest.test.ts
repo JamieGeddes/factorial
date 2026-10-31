@@ -186,6 +186,17 @@ describe('GitHubClient', () => {
     assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/git/ref/heads/factorial/abc');
   });
 
+  it('says whether a file exists on a ref, and throws on anything but found or not found', async () => {
+    const seen: Seen[] = [];
+    const found = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { type: 'file' }, seen) });
+    assert.equal(await found.fileExists(repo, '.github/workflows/test.yml', 'main'), true);
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/contents/.github/workflows/test.yml?ref=main');
+    const missing = new GitHubClient({ token: 't', fetchImpl: fakeFetch(404, { message: 'Not Found' }, []) });
+    assert.equal(await missing.fileExists(repo, '.github/workflows/test.yml', 'main'), false);
+    const denied = new GitHubClient({ token: 't', fetchImpl: fakeFetch(403, { message: 'Forbidden' }, []) });
+    await assert.rejects(denied.fileExists(repo, '.github/workflows/test.yml', 'main'), (e: unknown) => e instanceof GitHubApiError && e.status === 403);
+  });
+
   it('throws a GitHubApiError carrying the status on failure', async () => {
     const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(422, { message: 'Validation Failed' }, []) });
     await assert.rejects(

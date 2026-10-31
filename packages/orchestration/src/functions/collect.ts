@@ -26,7 +26,8 @@ import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '
 
 import type { WorkContext } from '../lib/context.ts';
 import { LIMIT_COMMIT_MESSAGE } from '../lib/continue-files.ts';
-import { commitIdentity, repositoryToken } from '../lib/github.ts';
+import { requireEnv } from '../lib/env.ts';
+import { commitIdentity, repositoryClient, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { runKey, type Logger } from '../lib/log.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
@@ -57,6 +58,12 @@ export interface CollectResult {
   incomplete: boolean;
   /** The validated plan, as the state machine carries it to the pull request; absent when the plan was not valid. */
   plan?: PlanDigest;
+  /**
+   * Why the Test stage is skipped: the target's base branch has no test
+   * workflow to dispatch, so the change opens a pull request that says it was
+   * not verified (decided 2026-10-31). Absent when Test runs.
+   */
+  testSkipReason?: string;
 }
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
@@ -299,6 +306,25 @@ const collectStage: StagePolicy<CollectInput, CollectResult> = {
 export interface CollectDeps {
   commitIdentity: typeof commitIdentity;
   repositoryToken: typeof repositoryToken;
+  /** Whether a file exists on a branch of the repository; read with a `contents: read` token. */
+  fileExists?: (repo: { owner: string; name: string }, path: string, ref: string) => Promise<boolean>;
+}
+
+const repoOf = (ctx: WorkContext) => ({ owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name });
+
+const fileOnBranch = async (repo: { owner: string; name: string }, path: string, ref: string): Promise<boolean> =>
+  (await repositoryClient(repo, { contents: 'read' })).fileExists(repo, path, ref);
+
+/**
+ * Why Test is skipped for this target, or undefined when it runs. Test
+ * dispatches `TEST_WORKFLOW_FILE` on the base branch, so a base branch
+ * without that workflow has nothing to verify the change with. The check
+ * reads the base branch, never the work branch, so the builder cannot
+ * remove the gate.
+ */
+export async function testSkipReason(repo: { owner: string; name: string }, baseBranch: string, exists: NonNullable<CollectDeps['fileExists']>): Promise<string | undefined> {
+  const path = `.github/workflows/${requireEnv('TEST_WORKFLOW_FILE')}`;
+  return (await exists(repo, path, baseBranch)) ? undefined : `${repo.owner}/${repo.name} has no ${path} on ${baseBranch}`;
 }
 
 export async function collect(input: CollectInput, log: Logger, deps: CollectDeps = { commitIdentity, repositoryToken }): Promise<CollectResult> {
@@ -336,7 +362,9 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
     // pushed head is what is tested.
     log.info('no new commits this round; the branch keeps the earlier rounds\' work', { incomplete, headSha: start.commit });
     await stopSessionQuietly(agentSession, log);
-    return { pushed: true, commitCount, itemCommitCount, headSha: start.commit, summary, incomplete, ...digest };
+    const skip = salvage ? undefined : await testSkipReason(repoOf(ctx), ctx.baseBranch, deps.fileExists ?? fileOnBranch);
+    if (skip) log.info('test skipped', { reason: skip });
+    return { pushed: true, commitCount, itemCommitCount, headSha: start.commit, summary, incomplete, ...digest, ...(skip ? { testSkipReason: skip } : {}) };
   }
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary, ...planFields });
@@ -408,7 +436,9 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
   });
   // Nothing reads the agent's session after this.
   await stopSessionQuietly(agentSession, log);
-  return { pushed: true, commitCount, itemCommitCount, headSha: pushedSha, summary, incomplete, ...digest };
+  const skip = salvage ? undefined : await testSkipReason(repo, ctx.baseBranch, deps.fileExists ?? fileOnBranch);
+  if (skip) log.info('test skipped', { reason: skip });
+  return { pushed: true, commitCount, itemCommitCount, headSha: pushedSha, summary, incomplete, ...digest, ...(skip ? { testSkipReason: skip } : {}) };
 }
 
 export const handler = staged('collect', (input: CollectInput) => runKey(input), collectStage, (input, log) => collect(input, log));

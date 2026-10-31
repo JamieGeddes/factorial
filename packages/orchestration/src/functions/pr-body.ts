@@ -21,7 +21,12 @@ import type { ReworkPoint } from '../lib/rework-points.ts';
 export interface TestResult {
   runUrl?: string;
   outcome?: string;
+  /** Why Test was skipped (Collect's `testSkipReason`): the change was not verified. */
+  skipped?: string;
 }
+
+/** The skip reason as the body shows it: one line of text, never markup. */
+const skipText = (reason: string): string => reason.replace(/[\r\n`<>]/g, ' ').slice(0, 300);
 
 const GITHUB_ISSUE_URL = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+)\/issues\/([1-9][0-9]*)\/?$/;
 
@@ -278,7 +283,11 @@ const listPaths = (paths: readonly string[]): string => {
  * is what was planned, so it is labelled as that and collapsed.
  */
 export function testsSection(test: TestResult, summary: BuilderSummary | undefined, facts: PrFacts | null | undefined, plan: PlanView | undefined): string {
-  const result = test.runUrl ? `[${test.outcome ?? 'run'}](${test.runUrl})` : 'not run';
+  const result = test.skipped
+    ? `**not verified**: ${skipText(test.skipped)}, so no automated tests ran on this change. Check it before merging.`
+    : test.runUrl
+      ? `[${test.outcome ?? 'run'}](${test.runUrl})`
+      : 'not run';
   const files = facts ? (facts.testFiles.length ? listPaths(facts.testFiles) : 'none among the changed files') : 'not determined (the review stage did not run)';
   const notTested = summary?.notTested === undefined
     ? NOT_REPORTED
@@ -448,7 +457,7 @@ export function reworkReplyFacts(
     cause: rework.cause,
     requestedBy: ctx.workItem.requestedBy,
     headSha,
-    test: { ...(test.runUrl ? { runUrl: test.runUrl } : {}), ...(test.outcome ? { outcome: test.outcome } : {}) },
+    test: { ...(test.runUrl ? { runUrl: test.runUrl } : {}), ...(test.outcome ? { outcome: test.outcome } : {}), ...(test.skipped ? { skipped: test.skipped } : {}) },
     points: ctx.reworkPoints ?? [],
     summaryText,
     ...(extras.review !== undefined ? { review: extras.review } : {}),
@@ -472,8 +481,8 @@ export function reworkComment(reply: ReworkReplyFacts): string {
     'checks-failed': 'the failing checks',
     comment: requester ? `the request from @${requester}` : 'the request in the conversation',
   }[reply.cause];
-  // Only a run whose tests passed reaches this reply.
-  const tested = test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
+  // Only a run whose tests passed, or skipped them for want of a test workflow, reaches this reply.
+  const tested = test.skipped ? 'it was **not verified**: no automated tests ran (see Tests below)' : test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
   const body = [
     `Factorial has reworked this pull request after ${why}. The branch is now at \`${headSha.slice(0, 12)}\`, and ${tested}. The description above still describes the change as first opened; this comment covers the rework.`,
     reworkPointsSection(reply, reply.points, summary),
