@@ -890,6 +890,12 @@ Resources:
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
         - !Ref GitHubAppPolicy
+        # Where a failed invocation's event goes (NotifyFunctionInvokeConfig).
+        - Statement:
+            - Sid: FailedNotices
+              Effect: Allow
+              Action: sqs:SendMessage
+              Resource: !GetAtt NotifyFailedQueue.Arn
 
   # Covers the reviewer's sessions as well as the builder's. The description
   # still names only the builder: changing a managed policy's description
@@ -1563,13 +1569,16 @@ Resources:
           RoleArn: !GetAtt WorkStarterRole.Arn
           InputPath: $.detail
 
-  # Every progress event goes to the notifier, which ignores all but the few
-  # a notifier for the event's source type acts on.
+  # Only the events a notifier acts on go to it: today a round-1 Build start
+  # (`round` is recorded from round 2), the one event githubIssueNotifier acts
+  # on. The rule is a filter for cost; the notifier module stays the decision
+  # and keeps the same checks. A notifier that acts on other events widens
+  # this pattern in the same change (see notifiers/index.ts).
   ProgressNotifyRule:
     Type: AWS::Events::Rule
     Properties:
       Name: factorial-progress-notify
-      Description: Route WorkItemProgress events to the notifier.
+      Description: Route the round-1 Build start of each work item to the notifier.
       EventBusName: !ImportValue Factorial-WorkBusName
       State: ENABLED
       EventPattern:
@@ -1577,9 +1586,18 @@ Resources:
           - factorial.progress
         detail-type:
           - WorkItemProgress
+        detail:
+          stage:
+            - Build
+          transition:
+            - started
+          round:
+            - exists: false
       Targets:
         - Id: notify
           Arn: !Ref NotifyFunction.Alias
+          DeadLetterConfig:
+            Arn: !GetAtt NotifyFailedQueue.Arn
 
   NotifyFunctionRulePermission:
     Type: AWS::Lambda::Permission
@@ -1588,6 +1606,50 @@ Resources:
       FunctionName: !Ref NotifyFunction.Alias
       Principal: events.amazonaws.com
       SourceArn: !GetAtt ProgressNotifyRule.Arn
+
+  # Notices that failed: the function erred after Lambda's retries, or
+  # EventBridge could not deliver to it. Each message is the progress event
+  # (metadata only; no content). Nothing reads the queue yet; alarms are #16.
+  NotifyFailedQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: factorial-notify-failed
+      SqsManagedSseEnabled: true
+      MessageRetentionPeriod: 1209600
+
+  # Only the rule may put delivery failures here. The function's role carries
+  # its own sqs:SendMessage for the invoke config's OnFailure destination.
+  NotifyFailedQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref NotifyFailedQueue
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RuleDeadLetters
+            Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt NotifyFailedQueue.Arn
+            Condition:
+              ArnEquals:
+                aws:SourceArn: !GetAtt ProgressNotifyRule.Arn
+
+  # EventBridge invokes the function asynchronously: after two retries, or an
+  # event older than an hour, the event goes to the failed-notice queue.
+  NotifyFunctionInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: NotifyFunctionAliaslive
+    Properties:
+      FunctionName: !Ref NotifyFunction
+      Qualifier: live
+      MaximumRetryAttempts: 2
+      MaximumEventAgeInSeconds: 3600
+      DestinationConfig:
+        OnFailure:
+          Destination: !GetAtt NotifyFailedQueue.Arn
 
 Outputs:
   WorkStateMachineArn:

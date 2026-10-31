@@ -2,6 +2,11 @@
  * The notifier seam: progress events, dispatched on `source.type` to one
  * notifier per source type. A source type with no notifier is ignored. To
  * notify another kind of source, add a module and one line to `notifiers`.
+ *
+ * The `factorial-progress-notify` rule (templates/orchestration.yml) sends the
+ * notifier only the events a notifier acts on, today a round-1 Build start. A
+ * notifier that acts on other events widens that rule's pattern in the same
+ * change; the modules still decide for themselves.
  */
 import { progressEventErrors, type ProgressEvent } from '@factorial/progress';
 import { TRIGGER_TYPES } from '@factorial/workitem';

@@ -57,6 +57,8 @@ fields @timestamp, stage, attempt, level, message, @log
 
 Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`.
 
+A notice that failed (the function erred after its retries, or EventBridge could not deliver to it) is not in the log group alone: it is in the SQS queue `factorial-notify-failed`. In the console go to **SQS** → **Queues** → `factorial-notify-failed` → **Send and receive messages** → **Poll for messages**, then search the message bodies for the work item id. A body is the progress event, with no content. Messages are kept 14 days; nothing reads the queue yet (alarms are #16).
+
 ## 4. The artefacts
 
 **S3** → **Buckets** → `factorial-work-artefacts-<account id>` → open the folder `<id>/` → `<attempt>/` (the ledger's `artefactPrefix`).
