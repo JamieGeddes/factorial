@@ -9,6 +9,8 @@
  */
 import { RUN_CONTRACT, outcomeOfReason, validateRunEvent, type RunEnded, type RunEvent, type RunOutcome, type RunStarted, type RunStatus, type TokenUsage } from '@factorial/run';
 
+import { redactSecrets } from '@factorial/artefacts';
+
 import { roundUsd } from './run-record.ts';
 import { addCallUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
 
@@ -63,6 +65,14 @@ export function subagentsOf(runs: SubagentRun[]): { runs: SubagentRun[]; totals:
   return { runs, totals: [...byType.values()] };
 }
 
+/**
+ * Text cut for a log line, redacted first. The logger redacts each whole line
+ * too, but a cut that keeps the end can drop a credential's prefix and leave
+ * its tail unrecognised; redacting before the cut cannot.
+ */
+const head = (text: string): string => redactSecrets(text).slice(0, 4000);
+const tail = (text: string): string => redactSecrets(text).slice(-4000);
+
 export interface LogLine {
   message: string;
   fields: Record<string, unknown>;
@@ -80,6 +90,11 @@ export class RunTally {
   invalidEvents = 0;
   /** Set when the first event shows the host speaks another contract. */
   contractMismatch: string | undefined;
+  /** The sum of the hosts' per-call cost estimates, over the calls that carried one. */
+  callCostUsd = 0;
+  costedCalls = 0;
+  /** The summed calls so far, for the `model call` lines. */
+  private callTotal = emptyRunUsage();
   private events = 0;
   /** Each subagent's model calls so far, by agent id. */
   private readonly subagentCalls = new Map<string, RunUsage>();
@@ -112,16 +127,42 @@ export class RunTally {
       case 'model.call': {
         const call = callUsageOf(event.usage);
         this.calls.push(call);
+        this.callTotal = addCallUsage(this.callTotal, call);
         if (event.agentId !== undefined) this.subagentCalls.set(event.agentId, addCallUsage(this.subagentCalls.get(event.agentId) ?? emptyRunUsage(), call));
-        return [];
+        if (event.cost !== undefined) {
+          this.callCostUsd += event.cost.usd;
+          this.costedCalls += 1;
+        }
+        return [
+          {
+            message: 'model call',
+            fields: {
+              agent,
+              model: event.model?.id,
+              usage: call,
+              ...(event.cost !== undefined ? { costUsd: roundUsd(event.cost.usd) } : {}),
+              total: this.callTotal,
+              ...(this.costedCalls > 0 ? { totalCostUsd: roundUsd(this.callCostUsd) } : {}),
+            },
+          },
+        ];
       }
       case 'tool.call': {
         this.toolCalls += 1;
         const input = JSON.stringify(event.input ?? {});
-        return [{ message: 'tool use', fields: { tool: event.tool, agent, input: input.slice(0, 4000), bytes: Buffer.byteLength(input) } }];
+        return [{ message: 'tool use', fields: { tool: event.tool, agent, input: head(input), bytes: Buffer.byteLength(input) } }];
       }
+      case 'tool.result':
+        return [
+          {
+            message: 'tool result',
+            fields: { callId: event.callId, agent, isError: event.isError ?? false, content: head(event.content), bytes: Buffer.byteLength(event.content) },
+          },
+        ];
       case 'text':
-        return event.text.trim() ? [{ message: 'assistant text', fields: { agent, model: event.model?.id, text: event.text.slice(-4000) } }] : [];
+        return event.text.trim() ? [{ message: 'assistant text', fields: { agent, model: event.model?.id, text: tail(event.text) } }] : [];
+      case 'reasoning':
+        return event.text.trim() ? [{ message: 'reasoning', fields: { agent, model: event.model?.id, text: tail(event.text) } }] : [];
       case 'subagent.ended': {
         const usage = this.subagentCalls.get(event.agentId) ?? emptyRunUsage();
         this.subagentRuns.push({

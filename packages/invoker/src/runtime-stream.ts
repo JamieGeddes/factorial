@@ -65,13 +65,13 @@ export function isConflict(error: unknown): boolean {
 
 /**
  * Runs the session's one run to its end, delivering every message once and
- * in order. Returns how many times it re-attached. `ended` says whether the
+ * in order, with its number. Returns how many times it re-attached. `ended` says whether the
  * messages so far include the run's end.
  */
 export async function streamRun(
   invoke: InvokeSession,
   run: object,
-  onMessage: (message: unknown) => void,
+  onMessage: (message: unknown, seq: number) => void,
   ended: () => boolean,
   options: StreamOptions,
 ): Promise<number> {
@@ -89,7 +89,7 @@ export async function streamRun(
         if (event.id !== undefined && Number.isInteger(event.id) && event.id <= lastSeq) continue;
         if (event.id !== lastSeq + 1) throw new Error(`expected message ${lastSeq + 1}, got ${String(event.id)}`);
         lastSeq = event.id;
-        onMessage(event.data);
+        onMessage(event.data, event.id);
       }
       if (ended()) return reconnects;
     } catch (error) {

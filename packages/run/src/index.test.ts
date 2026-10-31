@@ -36,6 +36,14 @@ describe('run events', () => {
     assert.equal(validateRunEvent({ type: 'run.started', contract: 1, harness: { name: 'x' }, role: 'builder', models: [{ id: 'm' }] }).ok, false);
   });
 
+  it("takes a model call's cost as an optional estimate in dollars (#194)", () => {
+    const call = { type: 'model.call', usage: { inputTokens: 10, outputTokens: 2 } };
+    assert.ok(validateRunEvent(call).ok);
+    assert.ok(validateRunEvent({ ...call, cost: { usd: 0.0012 } }).ok);
+    assert.equal(validateRunEvent({ ...call, cost: { usd: -1 } }).ok, false);
+    assert.equal(validateRunEvent({ ...call, cost: {} }).ok, false);
+  });
+
   it('closes the outcome and leaves the reason open', () => {
     assert.ok(validateRunEvent({ ...ended, outcome: 'incomplete', reason: 'context_exhausted' }).ok);
     const result = validateRunEvent({ ...ended, outcome: 'partly' });

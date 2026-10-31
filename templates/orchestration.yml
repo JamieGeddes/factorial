@@ -320,6 +320,59 @@ Resources:
                 events:source: factorial.outcome
 
   # ---------------------------------------------------------------------------
+  # The live feed (#194): an AppSync Events API whose channels carry each
+  # agent run's events while it runs, and each work item's progress. IAM
+  # alone authorises connecting, publishing and subscribing: no API key.
+  # Only the invoker and factorial-live-forward may publish; a person
+  # subscribes with their own credentials (docs/finding-a-run.md, section 6).
+  # No agent role can reach it: the agent boundary denies appsync:*. Here,
+  # not in a later template, because the invoker's task role needs its ARN.
+  # ---------------------------------------------------------------------------
+  LiveApi:
+    Type: AWS::AppSync::Api
+    Properties:
+      Name: factorial-live
+      EventConfig:
+        AuthProviders:
+          - AuthType: AWS_IAM
+        ConnectionAuthModes:
+          - AuthType: AWS_IAM
+        DefaultPublishAuthModes:
+          - AuthType: AWS_IAM
+        DefaultSubscribeAuthModes:
+          - AuthType: AWS_IAM
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # Channels: /factorial/work-items, /factorial/work-items/<workItemId> and
+  # /factorial/runs/<workItemId>/<stage>/<round>.
+  LiveNamespace:
+    Type: AWS::AppSync::ChannelNamespace
+    Properties:
+      ApiId: !GetAtt LiveApi.ApiId
+      Name: factorial
+      PublishAuthModes:
+        - AuthType: AWS_IAM
+      SubscribeAuthModes:
+        - AuthType: AWS_IAM
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  LivePublishPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-live-publish
+      Description: Publish to the live feed's namespace. No connecting or subscribing.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: appsync:EventPublish
+            Resource: !GetAtt LiveNamespace.ChannelNamespaceArn
+
+  # ---------------------------------------------------------------------------
   # Network for the Fargate invoker: public subnets, no NAT, egress only.
   # ---------------------------------------------------------------------------
   Vpc:
@@ -488,6 +541,7 @@ Resources:
       ManagedPolicyArns:
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
+        - !Ref LivePublishPolicy
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -584,6 +638,11 @@ Resources:
               Value: !ImportValue Factorial-WorkBusName
             - Name: ARTEFACT_BUCKET
               Value: !Ref WorkArtefactsBucket
+            # The live feed (#194); without these the invoker publishes nothing.
+            - Name: LIVE_HTTP_DOMAIN
+              Value: !GetAtt LiveApi.Dns.Http
+            - Name: LIVE_REGION
+              Value: !Ref AWS::Region
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -651,6 +710,11 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/factorial-thread-outcome
+      RetentionInDays: !Ref LogRetentionDays
+  LiveForwardLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-live-forward
       RetentionInDays: !Ref LogRetentionDays
 
   # Reads GitHub with read-only tokens and acknowledges a comment turn with a
@@ -964,6 +1028,27 @@ Resources:
               Action: sqs:SendMessage
               Resource: !GetAtt ThreadOutcomeFailedQueue.Arn
         - !Ref ProgressEventsPolicy
+
+  # Work-item progress on the live feed (#194): reached by LiveExecutionRule
+  # (the state machine's execution status changes, on the default bus) and
+  # LiveProgressRule (WorkItemProgress events), it publishes each to the
+  # work-item channels. It holds the publish policy and nothing else: no
+  # ledger, no artefacts, no GitHub.
+  LiveForwardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-live-forward
+      Description: Publish work-item progress to the live feed.
+      CodeUri: ../packages/orchestration/dist/live-forward/
+      Handler: index.handler
+      Timeout: 30
+      LoggingConfig:
+        LogGroup: !Ref LiveForwardLogGroup
+      Environment:
+        Variables:
+          LIVE_HTTP_DOMAIN: !GetAtt LiveApi.Dns.Http
+      Policies:
+        - !Ref LivePublishPolicy
 
   # Covers the reviewer's sessions as well as the builder's. The description
   # still names only the builder: changing a managed policy's description
@@ -1853,6 +1938,70 @@ Resources:
         OnFailure:
           Destination: !GetAtt ThreadOutcomeFailedQueue.Arn
 
+  # AWS sends Step Functions' execution status changes to the default bus
+  # only, so this rule is there, matching only this state machine. Executions
+  # start from the live alias; the event names the state machine itself.
+  LiveExecutionRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-live-execution
+      Description: Route the work state machine's execution status changes to the live forwarder.
+      State: ENABLED
+      EventPattern:
+        source:
+          - aws.states
+        detail-type:
+          - Step Functions Execution Status Change
+        detail:
+          stateMachineArn:
+            - !Ref WorkStateMachine
+      Targets:
+        - Id: live-forward
+          Arn: !Ref LiveForwardFunction.Alias
+
+  LiveProgressRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-live-progress
+      Description: Route every WorkItemProgress event to the live forwarder.
+      EventBusName: !ImportValue Factorial-WorkBusName
+      State: ENABLED
+      EventPattern:
+        source:
+          - factorial.progress
+        detail-type:
+          - WorkItemProgress
+      Targets:
+        - Id: live-forward
+          Arn: !Ref LiveForwardFunction.Alias
+
+  LiveForwardExecutionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LiveForwardFunction.Alias
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LiveExecutionRule.Arn
+
+  LiveForwardProgressPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref LiveForwardFunction.Alias
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt LiveProgressRule.Arn
+
+  # The feed is a view: a notice still failing after two retries, or older
+  # than five minutes, is dropped. Nothing queues it.
+  LiveForwardInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: LiveForwardFunctionAliaslive
+    Properties:
+      FunctionName: !Ref LiveForwardFunction
+      Qualifier: live
+      MaximumRetryAttempts: 2
+      MaximumEventAgeInSeconds: 300
+
 Outputs:
   WorkStateMachineArn:
     Value: !Ref WorkStateMachine
@@ -1877,3 +2026,15 @@ Outputs:
     Value: !Ref WorkArtefactsBucket
     Export:
       Name: Factorial-WorkArtefactsBucketName
+  LiveHttpDomain:
+    Description: The live feed's HTTP domain, for publishing and for signing a subscription.
+    Value: !GetAtt LiveApi.Dns.Http
+  LiveRealtimeDomain:
+    Description: The live feed's WebSocket domain, for subscribing.
+    Value: !GetAtt LiveApi.Dns.Realtime
+  LiveApiArn:
+    Description: For a subscriber's appsync:EventConnect.
+    Value: !GetAtt LiveApi.ApiArn
+  LiveNamespaceArn:
+    Description: For a subscriber's appsync:EventSubscribe.
+    Value: !GetAtt LiveNamespace.ChannelNamespaceArn

@@ -23,7 +23,7 @@ Each server-sent event is `id: <n>` and `data: <one run event as JSON>`, numbere
 | Type | Carries |
 |---|---|
 | `run.started` | `contract`, the `harness` (`name`, `version`), the `role`, the `models` the version names (each with `purpose`, `provider` and `id`) and the `tools`. |
-| `model.call` | One model call's `usage`, once however the harness splits the response; optional `model`, and `exact: false` when the output count is a lower bound. |
+| `model.call` | One model call's `usage`, once however the harness splits the response; optional `model`, `exact: false` when the output count is a lower bound, and `cost` (`usd`, the harness's estimate for the call). |
 | `model.retry` | A retried model call: `attempt`, and optionally `maxRetries`, `delayMs`, `status` and `error`. |
 | `text`, `reasoning` | The model's text, or its visible reasoning. |
 | `tool.call`, `tool.result` | A tool call (`callId`, `tool`, `input`) and its result (`callId`, `content` as text, `isError`). |
@@ -38,7 +38,7 @@ Events from a subagent carry its `agentId`; events without one are the role's ow
 
 **Usage.** `inputTokens` is the whole prompt, cache reads and writes included, as `usage.json` has always counted it. `cacheReadInputTokens`, `cacheWriteInputTokens` and `reasoningTokens` (inside `outputTokens`) are subsets, absent when a provider does not report them. `run.ended`'s `models` are the run's totals when present; otherwise the invoker sums the `model.call` events.
 
-**Cost.** Optional, in US dollars, with its `basis`. `harness-estimate` is the harness's figure at list prices, not a bill.
+**Cost.** Optional, in US dollars. On `run.ended` it carries its `basis`: `harness-estimate` is the harness's figure at list prices, not a bill. A `model.call`'s `cost` is the same kind of estimate for that call alone; the sum over a run's calls can fall short of `run.ended`'s figure, which also counts calls the harness makes outside the loop, such as compaction.
 
 **Outcome and reason.** The outcome is closed and decides what happens next: `complete` (the role finished), `incomplete` (a turn, budget or time limit stopped it: the builder's rounds path) or `failed`. The reason says why, and is open so that a new harness can add one; a consumer that does not know a reason goes by the outcome. The known reasons:
 
@@ -77,3 +77,4 @@ A run that crosses the deploy of a breaking change fails cleanly and is relabell
 ## Change log
 
 - **2026-10: v1.** The invocation bodies, run events and status, replacing the Claude Agent SDK's raw messages on the stream.
+- **2026-10-31: v1, additive.** Optional `cost` on `model.call`, so a run's spend can be shown while it runs (#194).

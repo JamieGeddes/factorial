@@ -12,7 +12,7 @@ import { validateRunEvent, type RunEvent } from '@factorial/run';
 import { readConfig } from '../config.ts';
 import { runAsAgent, type AgentRunner } from './as-agent.ts';
 import { shellEnvironment } from './environment.ts';
-import { PiEvents, runStarted, usageOf } from './events.ts';
+import { PiEvents, costOf, runStarted, usageOf } from './events.ts';
 import { pageText } from './fetch.ts';
 import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
 import { PI_SETTINGS, RG_WRAPPER, firstOnPath } from './harness.ts';
@@ -160,6 +160,7 @@ describe('PiEvents', () => {
       model: { provider: 'bedrock', id: 'eu.anthropic.claude-sonnet-5-5' },
       usage: { inputTokens: 9304, outputTokens: 120, cacheReadInputTokens: 9000, cacheWriteInputTokens: 300, reasoningTokens: 20 },
       exact: true,
+      cost: { usd: 0.0123 },
     });
     assert.equal((events[5] as { agentId?: string }).agentId, 'call_task');
     assert.equal(pi.lastInput.get('call_task'), 9304);
@@ -182,6 +183,12 @@ describe('PiEvents', () => {
     assert.ok(validateRunEvent(started).ok);
     assert.deepEqual(started.harness, { name: 'pi', version: '1.4.0' });
     assert.deepEqual(started.models.map((m) => m.purpose), ['main', 'explore', 'background']);
+  });
+
+  it("leaves a call's cost out when pi has no price for it", () => {
+    assert.deepEqual(costOf(undefined), {});
+    assert.deepEqual(costOf({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }), {});
+    assert.deepEqual(costOf({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 } }), { cost: { usd: 0.5 } });
   });
 
   it('counts missing usage as zero', () => {

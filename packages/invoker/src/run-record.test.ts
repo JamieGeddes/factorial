@@ -40,6 +40,12 @@ describe('usageRecord', () => {
     assert.equal(record.error, 'interrupted');
   });
 
+  it('records what the live feed published, dropped and stored (#194)', () => {
+    const live = { published: 280, dropped: 4, chunks: { count: 2, lastSeq: 284, failed: 0 } };
+    assert.deepEqual(usageRecord({ ...base, stopReason: 'completed', interrupted: false, live }).live, live);
+    assert.equal('live' in usageRecord({ ...base, stopReason: 'completed', interrupted: false }), false);
+  });
+
   it('says error when the stream failed before a stop reason arrived', () => {
     assert.equal(usageRecord({ ...base, stopReason: undefined, interrupted: false, error: 'boom' }).stopReason, 'error');
   });

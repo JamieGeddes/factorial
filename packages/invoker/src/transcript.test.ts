@@ -34,6 +34,23 @@ describe('TranscriptBuffer', () => {
     assert.equal(summary.bytes, readFileSync(transcript.path).length);
   });
 
+  it('numbers each stream event and returns the line it wrote, for the live chunks', () => {
+    const transcript = buffer();
+    const line = transcript.append({ type: 'text', text: 'hi' }, at, 3);
+    assert.equal(line, '{"at":"2026-10-19T09:00:00.000Z","seq":3,"type":"text","text":"hi"}\n');
+    transcript.close();
+    assert.deepEqual(lines(transcript.path), [{ at: '2026-10-19T09:00:00.000Z', seq: 3, type: 'text', text: 'hi' }]);
+    assert.equal(transcript.append({ type: 'text', text: 'late' }, at, 4), undefined);
+  });
+
+  it('returns no line past the cap, so the chunks stop where the transcript does', () => {
+    const transcript = buffer(2048);
+    const written = Array.from({ length: 30 }, (_, i) => transcript.append({ type: 'text', text: 'x'.repeat(100) }, at, i + 1));
+    const kept = written.filter((line) => line !== undefined);
+    assert.ok(kept.length > 0 && kept.length < 30);
+    assert.equal(transcript.close().events, kept.length);
+  });
+
   it('redacts a planted token before it reaches the disk', () => {
     const transcript = buffer();
     const token = `ghs_${'A'.repeat(36)}`;

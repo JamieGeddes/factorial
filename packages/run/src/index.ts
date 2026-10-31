@@ -77,6 +77,8 @@ export interface ModelCall {
   usage: TokenUsage;
   /** False when outputTokens is a lower bound. */
   exact?: boolean;
+  /** The harness's estimate for this call at list prices (#194). */
+  cost?: { usd: number };
 }
 
 export interface ModelRetry {

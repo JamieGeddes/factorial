@@ -3,9 +3,9 @@
  * and each subagent's, which carry its agentId. The only place pi's event
  * shapes are read. pi reports each model call once, at message_end, with its
  * final usage, so a call's figures are exact; its input count excludes cache
- * reads and writes, which the contract's inputTokens includes. The totals per
- * model and the cost (pi's estimate at the provider's list prices) become
- * run.ended's figures.
+ * reads and writes, which the contract's inputTokens includes. Each call
+ * carries pi's cost estimate at the provider's list prices; the totals per
+ * model and the cost become run.ended's figures.
  */
 import type { AssistantMessage, Usage } from '@earendil-works/pi-ai';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
@@ -49,6 +49,12 @@ export function usageOf(usage: Usage | undefined): TokenUsage {
   };
 }
 
+/** pi's estimate for one call at the provider's list prices, for the live view (#194); none when pi has no price. */
+export function costOf(usage: Usage | undefined): { cost?: { usd: number } } {
+  const usd = usage?.cost?.total;
+  return typeof usd === 'number' && Number.isFinite(usd) && usd > 0 ? { cost: { usd } } : {};
+}
+
 function resultText(result: unknown): string {
   const content = (result as { content?: unknown } | null)?.content;
   if (!Array.isArray(content)) return typeof result === 'string' ? result : '';
@@ -76,7 +82,7 @@ export class PiEvents {
     const agent = agentId ? { agentId } : {};
     const model = { provider: PROVIDER, id: message.model };
     const usage = usageOf(message.usage);
-    this.emit({ type: 'model.call', ...agent, model, usage, exact: true });
+    this.emit({ type: 'model.call', ...agent, model, usage, exact: true, ...costOf(message.usage) });
     this.add(message.model, usage, message.usage?.cost?.total);
     this.lastInput.set(agentId ?? '', usage.inputTokens);
     for (const block of message.content ?? []) {
@@ -88,7 +94,7 @@ export class PiEvents {
   /** A model call outside a session (the fetch tool's answer), counted like any other. */
   sideCall(message: AssistantMessage, agentId?: string): void {
     const usage = usageOf(message.usage);
-    this.emit({ type: 'model.call', ...(agentId ? { agentId } : {}), model: { provider: PROVIDER, id: message.model }, usage, exact: true });
+    this.emit({ type: 'model.call', ...(agentId ? { agentId } : {}), model: { provider: PROVIDER, id: message.model }, usage, exact: true, ...costOf(message.usage) });
     this.add(message.model, usage, message.usage?.cost?.total);
   }
 

@@ -1,6 +1,7 @@
 /**
- * A run's transcript: every SDK message, one JSON line each, buffered to
- * local disk while the run goes on and uploaded when it ends. Lines are
+ * A run's transcript: every run event, one JSON line each with its stream
+ * number (`seq`), buffered to local disk while the run goes on and uploaded
+ * when it ends. Lines are
  * redacted as they are written, so no credential the agent echoed reaches the
  * disk or the store. The host sends whole messages, never partial ones, so a
  * credential cannot be split across lines. Past the size cap, events are
@@ -37,26 +38,32 @@ export class TranscriptBuffer {
     this.fd = openSync(path, 'w');
   }
 
-  append(event: object, at: Date = new Date()): void {
-    if (this.closed) return;
-    this.write(event, at);
+  /**
+   * Write one event, with its stream number when it has one. Returns the line
+   * written, the one the live chunks (#194) take, or undefined when the
+   * transcript is closed or past its cap.
+   */
+  append(event: object, at: Date = new Date(), seq?: number): string | undefined {
+    if (this.closed) return undefined;
+    return this.write(event, at, seq);
   }
 
-  private write(event: object, at: Date): void {
+  private write(event: object, at: Date, seq: number | undefined): string | undefined {
     if (this.truncated) {
       this.droppedEvents += 1;
-      return;
+      return undefined;
     }
-    const line = `${redactSecrets(JSON.stringify({ at: at.toISOString(), ...event }))}\n`;
+    const line = `${redactSecrets(JSON.stringify({ at: at.toISOString(), ...(seq !== undefined ? { seq } : {}), ...event }))}\n`;
     const size = Buffer.byteLength(line);
     if (this.bytes + size > this.maxBytes - MARKER_RESERVE_BYTES) {
       this.truncated = true;
       this.droppedEvents += 1;
-      return;
+      return undefined;
     }
     writeSync(this.fd, line);
     this.bytes += size;
     this.events += 1;
+    return line;
   }
 
   /** Stop writing, add the truncation marker if events were dropped, and say what was kept. */
