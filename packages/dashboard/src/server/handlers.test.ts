@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { stubServices } from '../../test/services.ts';
 import { ID, ID2 } from '../../test/stubs.ts';
 import type { LedgerRow } from '../lib/records.ts';
-import { getArtefact, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
+import { getArtefact, getLive, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
 
 const item = (id: string, fields: Partial<LedgerRow>): LedgerRow => ({
   workItemId: id,
@@ -139,4 +139,22 @@ test('/api/runs/{id}/{stage}/{round}: the stored plan, else the builder\'s write
   assert.equal((await getRun(services, 'nope', 'build', '1')).status, 400);
   assert.equal((await getRun(services, ID, 'Build', '1')).status, 404);
   assert.equal((await getRun(services, '00000000-0000-0000-0000-000000000000', 'build', '1')).status, 404);
+});
+
+test('the live stream ends when the hub is closed, and its heartbeat stops', async () => {
+  const services = stubServices();
+  const response = getLive(new Request('http://127.0.0.1/api/live'), services, 10);
+  const reader = (response.body as ReadableStream<Uint8Array>).getReader();
+  const first = await reader.read();
+  assert.equal(first.done, false);
+  assert.match(new TextDecoder().decode(first.value), /"kind":"hello"/);
+  services.live.close();
+  for (;;) {
+    const next = await reader.read();
+    if (next.done) break;
+  }
+  // A stream opened after the hub closed ends at once.
+  const late = getLive(new Request('http://127.0.0.1/api/live'), services, 10);
+  const lateReader = (late.body as ReadableStream<Uint8Array>).getReader();
+  assert.equal((await lateReader.read()).done, true);
 });

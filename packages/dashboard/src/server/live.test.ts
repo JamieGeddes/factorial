@@ -42,9 +42,10 @@ function setup(chunks: Record<string, string> = {}, over = false) {
   });
   const tab = () => {
     const messages: LiveMessage[] = [];
-    const handle = hub.open({ send: (m) => messages.push(m) });
+    const ended = { count: 0 };
+    const handle = hub.open({ send: (m) => messages.push(m), close: () => (ended.count += 1) });
     const seqs = () => messages.flatMap((m) => (m.kind === 'event' ? [m.envelope.seq] : []));
-    return { messages, handle, seqs };
+    return { messages, handle, seqs, ended };
   };
   return { timers, hub, tab, chunks, upstream: () => upstream as FakeUpstream };
 }
@@ -119,4 +120,82 @@ test('a tab may ask only for the feed’s own channels', () => {
   assert.deepEqual(parseChannel(RUN), { kind: 'run', workItemId: ID, stage: 'build', round: 1 });
   assert.deepEqual(parseChannel(`/factorial/work-items/${ID}`), { kind: 'progress' });
   for (const bad of ['/factorial/runs/x/build/1', `/factorial/runs/${ID}/Build/1`, `/factorial/runs/${ID}/build/0`, '/other', `/factorial/runs/${ID}/build/1/x`, 7]) assert.equal(parseChannel(bad), undefined);
+});
+
+test('closing the hub ends every stream, removes every upstream channel and leaves no timer pending', async () => {
+  const { timers, hub, tab, upstream } = setup();
+  const a = tab();
+  const b = tab();
+  const c = tab();
+  a.handle.setChannels([RUN, '/factorial/work-items']);
+  b.handle.setChannels([RUN]);
+  c.handle.setChannels(['/factorial/work-items']);
+  await timers.advance(1000);
+  // A channel in its grace period (drop timer) and a state flush (flush timer) are pending too.
+  c.handle.setChannels([]);
+  upstream().handlers.onData(RUN, [envelope(1)]);
+  assert.ok(timers.pending > 0);
+  assert.equal(hub.subscriptions, 2);
+  const before = a.messages.length + b.messages.length + c.messages.length;
+
+  hub.close();
+
+  assert.deepEqual([a.ended.count, b.ended.count, c.ended.count], [1, 1, 1]);
+  assert.deepEqual([...upstream().channels], []);
+  assert.equal(hub.subscriptions, 0);
+  assert.equal(timers.pending, 0);
+  await timers.advance(60_000);
+  assert.equal(timers.pending, 0);
+  assert.equal(a.messages.length + b.messages.length + c.messages.length, before);
+
+  hub.close();
+  assert.deepEqual([a.ended.count, b.ended.count, c.ended.count], [1, 1, 1]);
+});
+
+test('after the hub is closed late work starts nothing: a poll in flight, upstream data, a new stream', async () => {
+  const chunks: Record<string, string> = {};
+  let release: (() => void) | undefined;
+  const timers = new ManualTimers();
+  let upstream: FakeUpstream | undefined;
+  const hub = new LiveHub({
+    upstream: (handlers) => (upstream = new FakeUpstream(handlers)),
+    chunk: async (key) => {
+      await new Promise<void>((resolve) => (release = resolve));
+      return chunks[key];
+    },
+    attemptOf: async () => 1,
+    runOver: async () => false,
+    timers,
+    firstPollMs: 1000,
+  });
+  const messages: LiveMessage[] = [];
+  const handle = hub.open({ send: (m) => messages.push(m) });
+  handle.setChannels([RUN]);
+  await timers.advance(1000);
+  hub.close();
+  chunks[KEY(1)] = line(1);
+  release?.();
+  await timers.advance(60_000);
+  assert.equal(timers.pending, 0);
+  assert.deepEqual(messages.filter((m) => m.kind === 'event'), []);
+
+  upstream?.handlers.onData(RUN, [envelope(2)]);
+  upstream?.handlers.onState('connected');
+  assert.equal(timers.pending, 0);
+
+  let ended = 0;
+  const late = hub.open({ send: () => assert.fail('nothing is sent after close'), close: () => (ended += 1) });
+  assert.equal(ended, 1);
+  assert.deepEqual(late.setChannels([RUN]), []);
+  assert.equal(hub.subscriptions, 0);
+  assert.equal(timers.pending, 0);
+});
+
+test('a stream that fails to end does not stop the others being ended', () => {
+  const { hub } = setup();
+  let ended = 0;
+  hub.open({ send: () => {}, close: () => assert.fail('x') });
+  hub.open({ send: () => {}, close: () => (ended += 1) });
+  hub.close();
+  assert.equal(ended, 1);
 });

@@ -10,7 +10,7 @@ import { stageKeyOf } from '../lib/stages.ts';
 import { isPlanWrite, planSteps, type PlanStep } from '../lib/transcript.ts';
 import { compareItems, isFilter, matchesFilter, matchesSearch, sourceLabel, summarise, type Filter, type WorkItemSummary } from '../lib/work-items.ts';
 import { isWorkItemId, itemKey } from './artefacts.ts';
-import { parseChannel, type LiveMessage } from './live.ts';
+import { parseChannel, type LiveMessage, type StreamHandle } from './live.ts';
 import type { Services } from './services.ts';
 import type { LedgerRow } from '../lib/records.ts';
 
@@ -212,25 +212,29 @@ export function getLive(request: Request, services: Services, heartbeatMs = 15_0
         if (!open) throw new Error('stream closed');
         controller.enqueue(encoder.encode(text));
       };
-      const stream = services.live.open({ send: (message: LiveMessage) => write(`data: ${JSON.stringify(message)}\n\n`) });
-      const beat = setInterval(() => {
-        try {
-          write(': ping\n\n');
-        } catch {
-          close();
-        }
-      }, heartbeatMs);
+      let beat: ReturnType<typeof setInterval> | undefined;
+      let stream: StreamHandle | undefined;
       close = () => {
         if (!open) return;
         open = false;
         clearInterval(beat);
-        stream.close();
+        stream?.close();
         try {
           controller.close();
         } catch {
           // already closed by the client
         }
       };
+      // The hub ends the stream when the server is asked to stop.
+      stream = services.live.open({ send: (message: LiveMessage) => write(`data: ${JSON.stringify(message)}\n\n`), close: () => close() });
+      if (!open) return;
+      beat = setInterval(() => {
+        try {
+          write(': ping\n\n');
+        } catch {
+          close();
+        }
+      }, heartbeatMs);
       request.signal.addEventListener('abort', () => close());
       stream.setChannels(requested);
     },

@@ -100,15 +100,31 @@ export function createServices(clients: Clients, options: { env?: Env; upstream?
 
 const KEY = Symbol.for('factorial.dashboard.services');
 
+/**
+ * Ends the live streams when the process is asked to stop. `next start`
+ * stops accepting connections on a signal and waits for the open ones, and a
+ * tab's stream never ends by itself, so without this the server never exits.
+ * It does not exit the process: Next.js's own handlers do that once the
+ * streams have ended (and the launcher force-stops it after 5 seconds if not).
+ * The hub holds only read-only state, so closing it loses nothing.
+ */
+export function closeOnSignals(live: { close(): void }, proc: { once(event: 'SIGINT' | 'SIGTERM', listener: () => void): unknown }): void {
+  for (const signal of ['SIGINT', 'SIGTERM'] as const) proc.once(signal, () => live.close());
+}
+
 /** The process's services: one set however often Next.js loads this module. */
 export function services(): Services {
   const holder = globalThis as unknown as Record<symbol, Services | undefined>;
-  holder[KEY] ??= createServices({
-    cfn: new CloudFormationClient({ region: REGION }),
-    documents: DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION })),
-    s3: new S3Client({ region: REGION }),
-    control: new BedrockAgentCoreControlClient({ region: REGION }),
-    cw: new CloudWatchClient({ region: REGION }),
-  });
+  if (!holder[KEY]) {
+    const created = createServices({
+      cfn: new CloudFormationClient({ region: REGION }),
+      documents: DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION })),
+      s3: new S3Client({ region: REGION }),
+      control: new BedrockAgentCoreControlClient({ region: REGION }),
+      cw: new CloudWatchClient({ region: REGION }),
+    });
+    closeOnSignals(created.live, process);
+    holder[KEY] = created;
+  }
   return holder[KEY];
 }

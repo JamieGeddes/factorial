@@ -10,7 +10,8 @@ It binds to `127.0.0.1:4757` (`DASHBOARD_PORT`) and prints a URL with a fresh to
 
 | Path | Contents |
 |---|---|
-| `scripts/start.ts` | The launcher: token, build if needed, `next start` on 127.0.0.1. |
+| `scripts/start.ts` | The launcher: token, build if needed, `next start` on 127.0.0.1; on Ctrl-C it kills the server if it is still running 5 seconds later. |
+| `scripts/shutdown.ts` | The launcher's stop timing (grace period, second signal), with injected timers so it is tested without Next.js. |
 | `src/proxy.ts`, `src/server/guard.ts` | Host check, token-to-cookie exchange, CSP with nonces. |
 | `src/server/` | Server-only modules, one per source, and the route handlers' logic (`handlers.ts`). The only code that touches an AWS SDK. |
 | `src/lib/` | Pure modules shared with the browser: the status mapping, the Work items rows and filters, the Overview (`overview.ts`), the run view (`run-view.ts`), run events and the transcript (`transcript.ts`), stage durations, formats, links, sanitising. |
