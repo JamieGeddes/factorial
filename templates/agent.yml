@@ -278,7 +278,14 @@ Resources:
       NetworkConfiguration:
         NetworkMode: PUBLIC
       LifecycleConfiguration:
-        IdleRuntimeSessionTimeout: 900
+        # A fallback only: Collect and CollectReview stop each session as soon as
+        # they have finished with it, so an idle session is billed for memory
+        # only on paths that do not stop (a failed Collect, a stage that never
+        # ran). It must still cover the longest idle gap in a run, from
+        # Prepare's last command to the invoker's first call (the Fargate task
+        # start, not yet measured), plus the Lambda retries (2 s + 4 s).
+        # A session reporting HealthyBusy is not idle. AgentCore's minimum is 60.
+        IdleRuntimeSessionTimeout: 300
         MaxLifetime: 14400
       # Part of the immutable runtime version, read by the host at start and
       # never taken from a request (packages/agent-runtime/src/config.ts).
@@ -410,7 +417,8 @@ Resources:
       NetworkConfiguration:
         NetworkMode: PUBLIC
       LifecycleConfiguration:
-        IdleRuntimeSessionTimeout: 900
+        # As on BuilderRuntime: a fallback behind CollectReview's explicit stop.
+        IdleRuntimeSessionTimeout: 300
         MaxLifetime: 3600
       # As for the builder: part of the immutable runtime version, fixed here
       # rather than parameters. No FACTORIAL_EXPLORE_MODEL (no subagents) and
