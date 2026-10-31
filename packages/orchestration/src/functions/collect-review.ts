@@ -4,12 +4,16 @@
  * findings for sensitive changes, and store it under `review/`. A missing or
  * invalid review is stored as `review/error.json` and the run continues: the
  * review is advisory and never stops the pull request.
+ *
+ * The reviewer's session is stopped just before the stage returns, so it does
+ * not idle until the Runtime's timeout. A stage that throws leaves it running
+ * for the state's retry; a failed stop is logged and does not fail the stage.
  */
 import { putArtefact, putJsonArtefact } from '@factorial/artefacts';
 
 import type { WorkContext } from '../lib/context.ts';
 import type { StepFailure } from '../lib/incomplete.ts';
-import { runKey } from '../lib/log.ts';
+import { runKey, type Logger } from '../lib/log.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import {
   checkReviewFile,
@@ -20,10 +24,10 @@ import {
   type ReviewDigest,
   type SensitiveChange,
 } from '../lib/review-files.ts';
-import { asAgent, mustRun, sessionTarget } from '../lib/session.ts';
+import { asAgent, mustRun, sessionTarget, stopSessionQuietly } from '../lib/session.ts';
 import { recordProgress } from '../lib/table.ts';
 
-interface CollectReviewInput extends ProgressInput {
+export interface CollectReviewInput extends ProgressInput {
   ctx: WorkContext;
   /** From PrepareReview. */
   sensitive: SensitiveChange[];
@@ -38,7 +42,7 @@ const collectReviewStage: StagePolicy<CollectReviewInput, CollectReviewResult> =
   closes: (input) => (input.reviewError ? [{ stage: 'Review', outcome: 'failed', error: stepError(input.reviewError as StepFailure) ?? stageError('ReviewFailed') }] : []),
 };
 
-export const handler = staged('collect-review', (input: CollectReviewInput) => runKey(input.ctx), collectReviewStage, async (input, log): Promise<CollectReviewResult> => {
+export async function collectReview(input: CollectReviewInput, log: Logger): Promise<CollectReviewResult> {
   const { ctx } = input;
   // The model has had the workspace, so the file is read as the user it ran as.
   const target = sessionTarget(ctx.sessionId, 'reviewer');
@@ -51,6 +55,7 @@ export const handler = staged('collect-review', (input: CollectReviewInput) => r
     await putJsonArtefact(ctx.artefactPrefix, 'review/error.json', { errors });
     await recordProgress(ctx.workItem.id, 'review-failed', { reviewErrors: errors });
     log.error('review rejected', { errors });
+    await stopSessionQuietly(target, log);
     return { ok: false, errors };
   }
 
@@ -64,5 +69,8 @@ export const handler = staged('collect-review', (input: CollectReviewInput) => r
     reviewFindings: bySeverity,
   });
   log.info('review accepted', { verdict: review.verdict, findings: review.findings.length, guardFindings: added });
+  await stopSessionQuietly(target, log);
   return { ok: true, review: reviewDigest(review) };
-});
+}
+
+export const handler = staged('collect-review', (input: CollectReviewInput) => runKey(input.ctx), collectReviewStage, collectReview);

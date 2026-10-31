@@ -15,6 +15,12 @@
  * credential ever enters it. The new commits leave the session as a git
  * bundle (pure data), and the push happens in a separate clean-room session
  * from a pristine clone, with hooks disabled and the token sent as a header.
+ *
+ * Once Collect has finished with a session it stops it, so it does not idle
+ * until the Runtime's timeout: the clean room as soon as the push returns, the
+ * agent's just before Collect returns. A stop is never in a `finally`: the
+ * state's retry runs Collect again on the same session, so a failed attempt
+ * leaves it running. A failed stop is logged and does not fail the stage.
  */
 import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 
@@ -26,7 +32,7 @@ import { runKey, type Logger } from '../lib/log.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { InvalidPlanError, checkPlanFiles, parsePlanRead, planDigest, readPlanScript, type CheckedPlan, type PlanDigest } from '../lib/plan-files.ts';
 import { planSize } from '../lib/plan-size.ts';
-import { asAgent, cleanRoomTarget, mustRun, runCommand, sessionTarget, type SessionTarget } from '../lib/session.ts';
+import { asAgent, cleanRoomTarget, mustRun, runCommand, sessionTarget, stopSessionQuietly, type SessionTarget } from '../lib/session.ts';
 import { exportSessionFiles } from '../lib/session-files.ts';
 import {
   HARDENED_GIT_ENV,
@@ -289,7 +295,13 @@ const collectStage: StagePolicy<CollectInput, CollectResult> = {
   closes: (input) => (input.salvage ? [{ stage: 'Build', outcome: 'failed', error: stepError(input.failure) ?? stageError('BuildFailed') }] : []),
 };
 
-export const handler = staged('collect', (input: CollectInput) => runKey(input), collectStage, async (input, log): Promise<CollectResult> => {
+/** What Collect needs from GitHub; a parameter so that a test can run Collect without it. */
+export interface CollectDeps {
+  commitIdentity: typeof commitIdentity;
+  repositoryToken: typeof repositoryToken;
+}
+
+export async function collect(input: CollectInput, log: Logger, deps: CollectDeps = { commitIdentity, repositoryToken }): Promise<CollectResult> {
   const { salvage = false, builderSessionId, failure, roundStart, ...ctx } = input;
   const incomplete = salvage && builderIncomplete(failure);
   const start = roundStartFor(ctx, roundStart);
@@ -323,11 +335,13 @@ export const handler = staged('collect', (input: CollectInput) => runKey(input),
     // Nothing new this round, but earlier rounds' work is on the branch: that
     // pushed head is what is tested.
     log.info('no new commits this round; the branch keeps the earlier rounds\' work', { incomplete, headSha: start.commit });
+    await stopSessionQuietly(agentSession, log);
     return { pushed: true, commitCount, itemCommitCount, headSha: start.commit, summary, incomplete, ...digest };
   }
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary, ...planFields });
     log.info('agent made no commits', { incomplete });
+    await stopSessionQuietly(agentSession, log);
     return { pushed: false, commitCount, itemCommitCount, headSha, summary, incomplete, ...digest };
   }
 
@@ -339,12 +353,12 @@ export const handler = staged('collect', (input: CollectInput) => runKey(input),
   await storeBundle(ctx, bundleBase64, log);
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
-  const identity = await commitIdentity(repo);
+  const identity = await deps.commitIdentity(repo);
   // Least privilege per push: the workflows permission is requested only
   // when the change edits a workflow file, so an ordinary change never
   // carries it.
   const editsWorkflows = touchesWorkflows(changedPaths);
-  const token = await repositoryToken(repo, editsWorkflows ? { contents: 'write', workflows: 'write' } : { contents: 'write' }).catch(
+  const token = await deps.repositoryToken(repo, editsWorkflows ? { contents: 'write', workflows: 'write' } : { contents: 'write' }).catch(
     (error: unknown) => {
       if (editsWorkflows) {
         throw new Error(
@@ -373,6 +387,8 @@ export const handler = staged('collect', (input: CollectInput) => runKey(input),
   // The pushed head differs from the agent's: the commits were re-created
   // with the App's identity. Everything downstream tests and reviews this one.
   const pushedSha = assertCommitSha(push.stdout.trim().split('\n').pop() ?? '', 'pushed head');
+  // The push is done and the clean room is not used again.
+  await stopSessionQuietly(cleanRoomTarget(ctx.workItem.id), log);
 
   await recordProgress(ctx.workItem.id, salvage ? 'salvaged' : 'pushed', {
     headSha: pushedSha,
@@ -390,5 +406,9 @@ export const handler = staged('collect', (input: CollectInput) => runKey(input),
     agentHeadSha: headSha,
     commitCount,
   });
+  // Nothing reads the agent's session after this.
+  await stopSessionQuietly(agentSession, log);
   return { pushed: true, commitCount, itemCommitCount, headSha: pushedSha, summary, incomplete, ...digest };
-});
+}
+
+export const handler = staged('collect', (input: CollectInput) => runKey(input), collectStage, (input, log) => collect(input, log));
