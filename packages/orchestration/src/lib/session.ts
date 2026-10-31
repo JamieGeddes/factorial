@@ -5,13 +5,18 @@
  * otherwise it is a different microVM. Commands run as root. On a Runtime
  * the model runs as the `agent` user, so the workspace is handed to it after
  * seeding and git runs as it once the model has had the repository.
+ *
+ * A session is stopped explicitly once its work item has finished with it
+ * (stopSession), rather than left to idle until the Runtime's timeout: an
+ * idle session still holds its memory, which is billed.
  */
-import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand } from '@aws-sdk/client-bedrock-agentcore';
+import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand, StopRuntimeSessionCommand } from '@aws-sdk/client-bedrock-agentcore';
 
 import { redactSecrets } from '@factorial/artefacts';
 import { runtimeArnVariable, type RoleName } from '@factorial/roles';
 
 import { requireEnv } from './env.ts';
+import type { Logger } from './log.ts';
 import { shellQuote } from './shell.ts';
 
 export interface CommandResult {
@@ -128,4 +133,41 @@ export async function mustRun(target: SessionTarget, command: string, timeoutSec
  */
 export function cleanRoomTarget(workItemId: string): SessionTarget {
   return sessionTarget(`${workItemId}-push`);
+}
+
+/**
+ * Stop a session, with the same Runtime, qualifier and session id as the
+ * commands that ran in it. A session that is not found has already ended
+ * (timed out, or stopped by an earlier attempt), which is what was wanted.
+ */
+export async function stopSession(target: SessionTarget): Promise<void> {
+  try {
+    await client.send(
+      new StopRuntimeSessionCommand({
+        agentRuntimeArn: target.arn,
+        qualifier: target.qualifier,
+        runtimeSessionId: target.sessionId,
+      }),
+    );
+  } catch (error) {
+    if ((error as { name?: string } | null)?.name === 'ResourceNotFoundException') return;
+    throw error;
+  }
+}
+
+/**
+ * Stop a session whose work is finished, never failing the stage: a session
+ * that is not stopped ends at the Runtime's idle timeout instead. The log
+ * line carries the work item id through the stage's logger.
+ */
+export async function stopSessionQuietly(
+  target: SessionTarget,
+  log: Logger,
+  stop: (target: SessionTarget) => Promise<void> = stopSession,
+): Promise<void> {
+  try {
+    await stop(target);
+  } catch (error) {
+    log.error('session not stopped', { error, sessionId: target.sessionId });
+  }
 }
