@@ -92,6 +92,22 @@ describe('RunTally', () => {
     assert.equal(tally.costedCalls, 2);
   });
 
+  it("keeps each call's model and duration in the calls usage.json records, and counts retries (#59)", () => {
+    const tally = tallyWith();
+    const [line] = tally.add({ ...call({ inputTokens: 100, outputTokens: 10 }), model: { provider: 'bedrock', id: 'global.anthropic.claude-sonnet-5-5' }, durationMs: 9100 });
+    tally.add(call({ inputTokens: 5, outputTokens: 1 }));
+    const [retry] = tally.add({ type: 'model.retry', attempt: 1, status: 429 });
+    tally.add({ type: 'model.retry', attempt: 2, status: 429 });
+    assert.equal(retry?.fields.runModel, 'eu.anthropic.claude-sonnet-5-5');
+    assert.deepEqual(tally.calls[0], { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadInputTokens: 0, cacheWriteInputTokens: 0, model: 'global.anthropic.claude-sonnet-5-5', durationMs: 9100 });
+    assert.equal('model' in (tally.calls[1] ?? {}), false);
+    assert.equal('durationMs' in (tally.calls[1] ?? {}), false);
+    // The log line keeps its token-only usage and names the duration beside it.
+    assert.deepEqual(line?.fields.usage, { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadInputTokens: 0, cacheWriteInputTokens: 0 });
+    assert.equal(line?.fields.durationMs, 9100);
+    assert.equal(tally.retries, 2);
+  });
+
   it('logs a tool result cut at 4,000 characters with its size, and reasoning by its last 4,000', () => {
     const content = `${'r'.repeat(5000)}`;
     const tally = tallyWith();

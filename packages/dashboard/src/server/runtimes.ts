@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { GetAgentRuntimeEndpointCommand } from '@aws-sdk/client-bedrock-agentcore-control';
+import { GetAgentRuntimeEndpointCommand, ListAgentRuntimeVersionsCommand } from '@aws-sdk/client-bedrock-agentcore-control';
 
 import { memo } from './cache.ts';
 import type { Sender } from './aws.ts';
@@ -20,15 +20,47 @@ export function runtimeNameOf(runtimeId: string): string {
   return runtimeId.replace(/-[A-Za-z0-9]+$/, '');
 }
 
-export function createRuntimes(control: Sender, stacks: Stacks, ttlMs = 60_000): { live(): Promise<RuntimeVersion[]> } {
+/** When each version of a role's Runtime was created (a version never changes after), by role then version. */
+export type VersionTimes = Record<string, Record<string, string>>;
+
+export interface Runtimes {
+  live(): Promise<RuntimeVersion[]>;
+  versions(): Promise<VersionTimes>;
+}
+
+async function runtimeIds(stacks: Stacks): Promise<[string, string][]> {
+  const { outputs } = await stacks.agent();
+  return Object.entries(outputs)
+    .filter(([key]) => /^[A-Z][A-Za-z]*RuntimeId$/.test(key))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, id]) => [key.replace(/RuntimeId$/, '').toLowerCase(), id]);
+}
+
+export function createRuntimes(control: Sender, stacks: Stacks, ttlMs = 60_000): Runtimes {
+  const versions = memo(async () => {
+    const out: VersionTimes = {};
+    for (const [role, id] of await runtimeIds(stacks)) {
+      const times: Record<string, string> = {};
+      let token: string | undefined;
+      do {
+        const page = (await control.send(new ListAgentRuntimeVersionsCommand({ agentRuntimeId: id, maxResults: 100, ...(token ? { nextToken: token } : {}) }))) as {
+          agentRuntimes?: { agentRuntimeVersion?: string; lastUpdatedAt?: Date | string }[];
+          nextToken?: string;
+        };
+        for (const v of page.agentRuntimes ?? []) {
+          const at = v.lastUpdatedAt instanceof Date ? v.lastUpdatedAt.getTime() : Date.parse(String(v.lastUpdatedAt ?? ''));
+          if (v.agentRuntimeVersion && Number.isFinite(at)) times[v.agentRuntimeVersion] = new Date(at).toISOString();
+        }
+        token = page.nextToken;
+      } while (token);
+      out[role] = times;
+    }
+    return out;
+  }, 10 * ttlMs);
   const live = memo(async () => {
-    const { outputs } = await stacks.agent();
-    const ids = Object.entries(outputs)
-      .filter(([key]) => /^[A-Z][A-Za-z]*RuntimeId$/.test(key))
-      .sort(([a], [b]) => a.localeCompare(b));
+    const ids = await runtimeIds(stacks);
     return Promise.all(
-      ids.map(async ([key, id]): Promise<RuntimeVersion> => {
-        const role = key.replace(/RuntimeId$/, '').toLowerCase();
+      ids.map(async ([role, id]): Promise<RuntimeVersion> => {
         const name = runtimeNameOf(id);
         try {
           const endpoint = (await control.send(new GetAgentRuntimeEndpointCommand({ agentRuntimeId: id, endpointName: 'live' }))) as { liveVersion?: string; status?: string };
@@ -39,5 +71,5 @@ export function createRuntimes(control: Sender, stacks: Stacks, ttlMs = 60_000):
       }),
     );
   }, ttlMs);
-  return { live: () => live.get() };
+  return { live: () => live.get(), versions: () => versions.get() };
 }

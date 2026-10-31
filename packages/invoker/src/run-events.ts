@@ -14,8 +14,12 @@ import { redactSecrets } from '@factorial/artefacts';
 import { roundUsd } from './run-record.ts';
 import { addCallUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
 
-/** One model call's usage in the shape usage.json has always had. */
-export function callUsageOf(usage: TokenUsage): CallUsage {
+/**
+ * One model call's usage in the shape usage.json has always had, with the
+ * call's model and measured duration when the host reports them (#59), so
+ * latency and tokens by model are read from usage.json alone.
+ */
+export function callUsageOf(usage: TokenUsage, call: { model?: { id?: string } | undefined; durationMs?: number | undefined } = {}): CallUsage {
   const input = usage.inputTokens;
   const output = usage.outputTokens;
   return {
@@ -24,6 +28,8 @@ export function callUsageOf(usage: TokenUsage): CallUsage {
     totalTokens: input + output,
     cacheReadInputTokens: usage.cacheReadInputTokens ?? 0,
     cacheWriteInputTokens: usage.cacheWriteInputTokens ?? 0,
+    ...(call.model?.id ? { model: call.model.id } : {}),
+    ...(call.durationMs !== undefined ? { durationMs: call.durationMs } : {}),
   };
 }
 
@@ -88,6 +94,8 @@ export class RunTally {
   subagentRuns: SubagentRun[] = [];
   /** Events that did not meet the contract: logged and counted, never interpreted. */
   invalidEvents = 0;
+  /** model.retry events: model calls the harness retried (#59). */
+  retries = 0;
   /** Set when the first event shows the host speaks another contract. */
   contractMismatch: string | undefined;
   /** The sum of the hosts' per-call cost estimates, over the calls that carried one. */
@@ -125,7 +133,7 @@ export class RunTally {
         this.started = event;
         return [{ message: 'run started', fields: { harness: event.harness, models: event.models } }];
       case 'model.call': {
-        const call = callUsageOf(event.usage);
+        const call = callUsageOf(event.usage, event);
         this.calls.push(call);
         this.callTotal = addCallUsage(this.callTotal, call);
         if (event.agentId !== undefined) this.subagentCalls.set(event.agentId, addCallUsage(this.subagentCalls.get(event.agentId) ?? emptyRunUsage(), call));
@@ -133,13 +141,15 @@ export class RunTally {
           this.callCostUsd += event.cost.usd;
           this.costedCalls += 1;
         }
+        const { model: _model, durationMs, ...tokens } = call;
         return [
           {
             message: 'model call',
             fields: {
               agent,
               model: event.model?.id,
-              usage: call,
+              usage: tokens,
+              ...(durationMs !== undefined ? { durationMs } : {}),
               ...(event.cost !== undefined ? { costUsd: roundUsd(event.cost.usd) } : {}),
               total: this.callTotal,
               ...(this.costedCalls > 0 ? { totalCostUsd: roundUsd(this.callCostUsd) } : {}),
@@ -181,7 +191,10 @@ export class RunTally {
       case 'context.compacted':
         return [{ message: 'context compacted', fields: { agent, trigger: event.trigger, tokensBefore: event.tokensBefore, tokensAfter: event.tokensAfter } }];
       case 'model.retry':
-        return [{ message: 'model call retried', fields: { attempt: event.attempt, status: event.status, error: event.error } }];
+        this.retries += 1;
+        // The event names no model; the run's main model, from run.started,
+        // lets the command centre count retries per inference profile (#59).
+        return [{ message: 'model call retried', fields: { attempt: event.attempt, status: event.status, error: event.error, runModel: this.started?.models.find((m) => m.purpose === 'main')?.id } }];
       case 'run.ended':
         this.end = event;
         return [{ message: 'run ended', fields: { outcome: event.outcome, reason: event.reason, detail: event.detail, turns: event.turns, costUsd: roundUsd(event.cost?.usd) } }];

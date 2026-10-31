@@ -12,7 +12,7 @@ import { validateRunEvent, type RunEvent } from '@factorial/run';
 import { readConfig } from '../config.ts';
 import { runAsAgent, type AgentRunner } from './as-agent.ts';
 import { shellEnvironment } from './environment.ts';
-import { PiEvents, costOf, runStarted, usageOf } from './events.ts';
+import { PiEvents, costOf, durationOf, runStarted, usageOf } from './events.ts';
 import { pageText } from './fetch.ts';
 import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
 import { PI_SETTINGS, RG_WRAPPER, firstOnPath } from './harness.ts';
@@ -189,6 +189,15 @@ describe('PiEvents', () => {
     assert.deepEqual(costOf(undefined), {});
     assert.deepEqual(costOf({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }), {});
     assert.deepEqual(costOf({ input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0.5 } }), { cost: { usd: 0.5 } });
+  });
+
+  it("carries pi's measured duration on each model call (#59)", () => {
+    const { events, pi } = collect();
+    pi.modelCall(assistant({ durationMs: 8421.6 }));
+    assert.ok(validateRunEvent(events[0]).ok);
+    assert.equal((events[0] as { durationMs?: number }).durationMs, 8422);
+    assert.deepEqual(durationOf({}), {});
+    assert.deepEqual(durationOf({ durationMs: Number.NaN }), {});
   });
 
   it('counts missing usage as zero', () => {

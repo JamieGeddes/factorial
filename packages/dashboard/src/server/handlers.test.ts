@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { stubServices } from '../../test/services.ts';
 import { ID, ID2 } from '../../test/stubs.ts';
 import type { LedgerRow } from '../lib/records.ts';
-import { getArtefact, getLive, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
+import { getArtefact, getHealth, getLive, getMetrics, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
 
 const item = (id: string, fields: Partial<LedgerRow>): LedgerRow => ({
   workItemId: id,
@@ -157,4 +157,69 @@ test('the live stream ends when the hub is closed, and its heartbeat stops', asy
   const late = getLive(new Request('http://127.0.0.1/api/live'), services, 10);
   const lateReader = (late.body as ReadableStream<Uint8Array>).getReader();
   assert.equal((await lateReader.read()).done, true);
+});
+
+test('/api/metrics: the range and repository chosen, each run read from its usage.json (#59)', async () => {
+  const usageKey = `${ID}/1/build/usage.json`;
+  const services = stubServices({
+    rows: [item(ID, { result: 'pr-opened', endedAt: '2026-11-01T10:05:00Z', stages: { Build: { startedAt: '2026-11-01T10:01:00Z', endedAt: '2026-11-01T10:04:00Z', run: { role: 'builder', runtimeVersion: '45', costUsd: 1.5, usageKey } } } })],
+    objects: { [usageKey]: JSON.stringify({ calls: [{ inputTokens: 10, outputTokens: 2, model: 'global.anthropic.claude-sonnet-5-5', durationMs: 7000 }], retries: 0 }) },
+  });
+  const { status, body } = await read(await getMetrics(new Request('http://h/api/metrics?range=7&repository=JamieGeddes/factorial'), services));
+  assert.equal(status, 200);
+  assert.equal(body.range, 7);
+  assert.equal(body.repository, 'JamieGeddes/factorial');
+  const latency = body.latency as { series: { name: string; values: (number | null)[] }[] };
+  assert.equal(latency.series[0]?.values.at(-1), 7);
+  const versions = body.versions as { roles: string[]; byRole: Record<string, { version: string; promoted?: { source: string } }[]> };
+  assert.deepEqual(versions.roles, ['builder']);
+  assert.equal(versions.byRole.builder?.[0]?.promoted?.source, 'created');
+  assert.equal((await read(await getMetrics(new Request('http://h/api/metrics?range=12'), services))).body.range, 30);
+});
+
+test('/api/health: every component from its source, alarms not set up, deploys and webhooks (#59)', async () => {
+  const services = stubServices({ rows });
+  const { status, body } = await read(await getHealth(services));
+  assert.equal(status, 200);
+  const components = body.components as { name: string; detail: string; figure: string; status: string }[];
+  const named = (n: string) => components.find((c) => c.name === n);
+  assert.equal(named('State machine factorial-work')?.detail, '1 running, 0 failed today');
+  assert.equal(named('State machine factorial-work')?.figure, 'alias live → v128');
+  assert.equal(named('Fargate invoker')?.detail, '1 task running');
+  assert.equal(named('Runtime factorial_builder')?.detail, 'live → v45, READY');
+  assert.equal(named('Ledger factorial-work-items')?.figure, '51 rows');
+  assert.deepEqual((body.alarms as { list: unknown[] }).list, []);
+  const quotas = body.quotas as { meters: { name: string; display: string }[] };
+  assert.deepEqual(quotas.meters.map((m) => m.name), ['Fargate vCPU']);
+  assert.equal(quotas.meters[0]?.display, '10 / 384');
+  assert.deepEqual((body.deploys as { rows: unknown[] }).rows, []);
+  assert.equal((body.webhooks as { labels: string[] }).labels.length, 24);
+});
+
+test('/api/health: a source that fails is a warning on its own row, never the whole view', async () => {
+  const services = stubServices({ rows });
+  services.clients.ecs.send = async () => {
+    throw Object.assign(new Error('not authorised to perform ecs:ListTasks'), { name: 'AccessDeniedException' });
+  };
+  const { status, body } = await read(await getHealth(services));
+  assert.equal(status, 200);
+  const invoker = (body.components as { name: string; status: string; figure: string }[]).find((c) => c.name === 'Fargate invoker');
+  assert.equal(invoker?.status, 'warn');
+  assert.match(invoker?.figure ?? '', /ecs:ListTasks/);
+});
+
+test('/api/overview: a failed deploy in the last hour is under Attention (#59)', async () => {
+  const sha = 'e9c3377a0123456789abcdef0123456789abcdef';
+  const fetch = async (url: string) => {
+    const body = url.endsWith('/runs?branch=main&per_page=10')
+      ? { workflow_runs: [{ id: 1, run_attempt: 1, head_sha: sha, head_commit: { message: 'x' }, run_started_at: '2026-11-01T09:40:00Z', status: 'completed', conclusion: 'failure' }] }
+      : url.includes('/jobs')
+        ? { jobs: [{ id: 2, name: 'Deploy Factorial stacks', conclusion: 'failure' }] }
+        : [];
+    return { ok: true, status: 200, headers: { get: () => null }, json: async () => body };
+  };
+  const services = stubServices({ rows, fetch });
+  const { body } = await read(await getOverview(services));
+  const notices = body.notices as { tone: string; text: string }[];
+  assert.ok(notices.some((n) => n.tone === 'crit' && n.text === 'Deploy of e9c3377 failed'), JSON.stringify(notices));
 });

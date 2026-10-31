@@ -337,6 +337,11 @@ export class LiveHub {
     return this.upstream;
   }
 
+  /** The upstream connection's state, for the Health view. */
+  get connectionState(): ConnectionState {
+    return this.upstream?.current ?? this.connection;
+  }
+
   /** How many upstream subscriptions the hub holds. */
   get subscriptions(): number {
     return this.channels.size;

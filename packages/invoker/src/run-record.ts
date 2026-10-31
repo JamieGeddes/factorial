@@ -57,8 +57,10 @@ export interface UsageRecord extends VersionInfo {
   toolCalls: number;
   durationSeconds: number;
   usage: RunUsage;
-  /** One entry per model call, in order. */
+  /** One entry per model call, in order, each with its model and duration since #59. */
   calls: CallUsage[];
+  /** Model calls the harness retried (`model.retry` events), since #59. */
+  retries?: number;
   /** What the harness reported beyond the counts above. */
   harness?: HarnessRecord;
   /** The live feed (#194): events published and dropped, and the catch-up chunks stored. */
@@ -119,6 +121,7 @@ export function usageRecord(params: {
   endedAt: number;
   usage: RunUsage;
   calls: CallUsage[];
+  retries?: number | undefined;
   harness?: HarnessRecord | undefined;
   live?: LiveRecord | undefined;
   error?: string | undefined;
@@ -130,6 +133,7 @@ export function usageRecord(params: {
     durationSeconds: Math.round((params.endedAt - params.startedAt) / 1000),
     usage: params.usage,
     calls: params.calls,
+    ...(params.retries !== undefined ? { retries: params.retries } : {}),
     ...(params.harness ? { harness: roundedHarness(params.harness) } : {}),
     ...(params.live ? { live: params.live } : {}),
     ...(params.error ? { error: params.error } : {}),

@@ -94,7 +94,36 @@ export interface OverviewInput {
   now: number;
   /** CloudWatch alarms in `ALARM`, with when they entered it. */
   alarms?: { name: string; since?: string }[];
+  /** The deploy workflow's runs on `main` (#59). */
+  deploys?: DeployNotice[];
   resultSince?: string;
+}
+
+/** What Attention needs of a deploy run. */
+export interface DeployNotice {
+  sha: string;
+  at: string;
+  status: 'deployed' | 'skipped' | 'failed' | 'running' | 'cancelled';
+  stacks?: string[];
+  promoted?: { runtime: string; version: string }[];
+}
+
+/** A deploy in the last hour as an Attention notice: failed is critical, deployed and running are news, skipped is noise. */
+export function deployNotice(d: DeployNotice): Notice | undefined {
+  const sha = oneLine(d.sha).slice(0, 7);
+  if (!/^[0-9a-f]{7}$/.test(sha) || !Number.isFinite(Date.parse(d.at))) return undefined;
+  const stacks = d.stacks?.length ? ` ${d.stacks.map(oneLine).join(', ')}` : '';
+  const promoted = d.promoted?.length ? `, promoted ${d.promoted.map((p) => `${oneLine(p.runtime).replace(/^factorial_/, '')} v${oneLine(p.version)}`).join(', ')}` : '';
+  switch (d.status) {
+    case 'failed':
+      return { tone: 'crit', text: `Deploy of ${sha} failed`, at: d.at };
+    case 'running':
+      return { tone: 'info', text: `Deploy of ${sha} running`, at: d.at };
+    case 'deployed':
+      return { tone: 'ok', text: `Deployed ${sha}${stacks ? `:${stacks}` : ''}${promoted}`, at: d.at };
+    default:
+      return undefined;
+  }
 }
 
 const HOUR = 3_600_000;
@@ -247,7 +276,7 @@ function puckOf(f: Facts): Puck | undefined {
   };
 }
 
-function notices(facts: Facts[], threads: Map<string, ThreadRow>, now: number, testP90: number | undefined, alarms: { name: string; since?: string }[], resultSince: string): Notice[] {
+function notices(facts: Facts[], threads: Map<string, ThreadRow>, now: number, testP90: number | undefined, alarms: { name: string; since?: string }[], resultSince: string, deploys: DeployNotice[] = []): Notice[] {
   const out: Notice[] = [];
   const recent = (ms: number | undefined) => ms !== undefined && now - ms <= HOUR && ms <= now + 60_000;
   for (const f of facts) {
@@ -277,6 +306,10 @@ function notices(facts: Facts[], threads: Map<string, ThreadRow>, now: number, t
     }
   }
   for (const alarm of alarms) out.push({ tone: 'crit', text: `CloudWatch alarm ${oneLine(alarm.name)} is in ALARM`, at: alarm.since ?? new Date(now).toISOString() });
+  for (const d of deploys) {
+    const notice = recent(Date.parse(d.at)) ? deployNotice(d) : undefined;
+    if (notice) out.push(notice);
+  }
   return out.sort((a, b) => b.at.localeCompare(a.at));
 }
 
@@ -363,7 +396,7 @@ export function overview(input: OverviewInput): Overview {
     tiles: tiles(facts, rows, threads, now),
     stages: durations,
     pucks,
-    notices: notices(facts, threads, now, testP90, input.alarms ?? [], resultSince),
+    notices: notices(facts, threads, now, testP90, input.alarms ?? [], resultSince, input.deploys),
     sessions: sessions(facts),
     throughput: {
       labels: days14.map(dayLabel),

@@ -77,6 +77,8 @@ export interface ModelCall {
   usage: TokenUsage;
   /** False when outputTokens is a lower bound. */
   exact?: boolean;
+  /** Milliseconds from the request to the end of the response, as the harness measured it (#59). */
+  durationMs?: number;
   /** The harness's estimate for this call at list prices (#194). */
   cost?: { usd: number };
 }

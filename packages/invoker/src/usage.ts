@@ -10,6 +10,10 @@ export interface CallUsage {
   totalTokens?: number | undefined;
   cacheReadInputTokens?: number | undefined;
   cacheWriteInputTokens?: number | undefined;
+  /** The call's model id, as the host reported it (#59). Absent on runs recorded before. */
+  model?: string | undefined;
+  /** Milliseconds from the request to the end of the response, as the harness measured it (#59). */
+  durationMs?: number | undefined;
 }
 
 export interface RunUsage {

@@ -1,12 +1,33 @@
 'use client';
 
 import { niceMax } from '../../lib/charts.ts';
-import type { Series } from './ColumnChart.tsx';
 import { Legend } from './Legend.tsx';
 import { TipLine, useTooltip } from './Tooltip.tsx';
 
+/** A line's values; `null` where a label has no data, which leaves a gap. */
+export interface LineSeries {
+  name: string;
+  color: string;
+  values: (number | null)[];
+}
+
+/** The path through a line's points, broken at each gap. */
+export function linePath(values: (number | null)[], xs: (i: number) => number, ys: (v: number) => number): string {
+  let out = '';
+  let pen = false;
+  values.forEach((v, i) => {
+    if (v === null || !Number.isFinite(v)) {
+      pen = false;
+      return;
+    }
+    out += `${pen ? 'L' : 'M'}${xs(i)},${ys(v)}`;
+    pen = true;
+  });
+  return out;
+}
+
 /** Lines over shared labels, each ending in a labelled point, with a tooltip per label. */
-export function LineChart({ series, labels, height = 170, fmt = (v: number) => v.toFixed(1), min = 0, max, label }: { series: Series[]; labels: string[]; height?: number; fmt?: (v: number) => string; min?: number; max?: number; label: string }) {
+export function LineChart({ series, labels, height = 170, fmt = (v: number) => v.toFixed(1), min = 0, max, label }: { series: LineSeries[]; labels: string[]; height?: number; fmt?: (v: number) => string; min?: number; max?: number; label: string }) {
   const tip = useTooltip();
   const W = 520;
   const H = height;
@@ -14,7 +35,7 @@ export function LineChart({ series, labels, height = 170, fmt = (v: number) => v
   const padR = 70;
   const padT = 10;
   const padB = 22;
-  const all = series.flatMap((s) => s.values);
+  const all = series.flatMap((s) => s.values.filter((v): v is number => v !== null));
   const mx = max ?? niceMax(Math.max(0, ...all) * 1.05);
   const n = labels.length;
   const step = n > 1 ? (W - padL - padR) / (n - 1) : W - padL - padR;
@@ -38,12 +59,18 @@ export function LineChart({ series, labels, height = 170, fmt = (v: number) => v
           })}
         </g>
         {series.map((s) => {
-          const last = s.values.length - 1;
+          let last = s.values.length - 1;
+          while (last >= 0 && s.values[last] === null) last -= 1;
           if (last < 0) return null;
           const lastValue = s.values[last] as number;
+          // A point with no neighbour draws no line: mark each one.
+          const lone = s.values.flatMap((v, i) => (v !== null && (s.values[i - 1] ?? null) === null && (s.values[i + 1] ?? null) === null && i !== last ? [i] : []));
           return (
             <g key={s.name}>
-              <path d={s.values.map((v, i) => `${i ? 'L' : 'M'}${xs(i)},${ys(v)}`).join('')} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              <path d={linePath(s.values, xs, ys)} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+              {lone.map((i) => (
+                <circle key={i} cx={xs(i)} cy={ys(s.values[i] as number)} r={2.5} fill={s.color} />
+              ))}
               <circle cx={xs(last)} cy={ys(lastValue)} r={4} fill={s.color} stroke="var(--surface)" strokeWidth={2} />
               <text x={xs(last) + 9} y={ys(lastValue) + 4} fill="var(--ink-2)">
                 {`${s.name} ${fmt(lastValue)}`}
@@ -71,9 +98,10 @@ export function LineChart({ series, labels, height = 170, fmt = (v: number) => v
                 e,
                 <>
                   <b>{lab}</b>
-                  {series.map((s) => (
-                    <TipLine key={s.name} color={s.color} name={s.name} value={fmt(s.values[i] ?? 0)} />
-                  ))}
+                  {series.map((s) => {
+                    const v = s.values[i];
+                    return <TipLine key={s.name} color={s.color} name={s.name} value={v === null || v === undefined ? 'no data' : fmt(v)} />;
+                  })}
                 </>,
               )
             }
