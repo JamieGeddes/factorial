@@ -61,6 +61,19 @@ async function webhookSecret(): Promise<string> {
   return cachedSecret;
 }
 
+/**
+ * How a delivery ended, one line each (#59): the command centre's webhook
+ * panel counts them per hour by `outcome` and `reason` in Logs Insights.
+ * `work-item` and `closed` placed an event; `ignored` placed nothing by
+ * design; `rejected` was refused (bad signature, method or payload);
+ * `failed` could not place its event.
+ */
+export type DeliveryOutcome = 'work-item' | 'closed' | 'ignored' | 'rejected' | 'failed';
+
+function delivery(outcome: DeliveryOutcome, fields: { deliveryId?: string | undefined; event?: string | undefined; reason?: string | undefined; workItemId?: string | undefined }): void {
+  console.log(JSON.stringify({ message: 'delivery', outcome, ...fields }));
+}
+
 function respond(statusCode: number, body: Record<string, unknown>): LambdaFunctionURLResult {
   return {
     statusCode,
@@ -71,6 +84,7 @@ function respond(statusCode: number, body: Record<string, unknown>): LambdaFunct
 
 export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunctionURLResult> => {
   if (event.requestContext.http.method !== 'POST') {
+    delivery('rejected', { reason: 'method not allowed' });
     return respond(405, { message: 'method not allowed' });
   }
 
@@ -80,15 +94,18 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
 
   if (!verifyGitHubSignature(await webhookSecret(), body, headers['x-hub-signature-256'])) {
     console.warn(JSON.stringify({ message: 'rejected delivery with bad signature', deliveryId }));
+    delivery('rejected', { deliveryId, reason: 'bad signature' });
     return respond(401, { message: 'invalid signature' });
   }
 
   const githubEvent = headers['x-github-event'];
   if (githubEvent === 'ping') {
+    delivery('ignored', { deliveryId, event: githubEvent, reason: 'ping' });
     return respond(200, { message: 'pong' });
   }
   const forPullRequest = (PULL_REQUEST_EVENTS as readonly string[]).includes(githubEvent ?? '');
   if (githubEvent !== 'issues' && !forPullRequest) {
+    delivery('ignored', { deliveryId, event: githubEvent, reason: 'event not handled' });
     return respond(202, { message: `ignored event "${githubEvent ?? ''}"` });
   }
 
@@ -96,6 +113,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   try {
     payload = JSON.parse(body.toString('utf8'));
   } catch {
+    delivery('rejected', { deliveryId, event: githubEvent, reason: 'body is not valid JSON' });
     return respond(400, { message: 'body is not valid JSON' });
   }
 
@@ -111,6 +129,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
   } catch (error) {
     if (error instanceof BadPayloadError) {
       console.warn(JSON.stringify({ message: 'rejected malformed payload', deliveryId, error: error.message }));
+      delivery('rejected', { deliveryId, event: githubEvent, reason: 'malformed payload' });
       return respond(400, { message: error.message });
     }
     throw error;
@@ -120,6 +139,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     // Pull request events arrive for every comment and workflow run; the
     // reason is logged so a request that did nothing can be traced.
     if (forPullRequest) console.log(JSON.stringify({ message: 'event ignored', event: githubEvent, deliveryId, reason: decision.reason }));
+    delivery('ignored', { deliveryId, event: githubEvent, reason: decision.reason });
     return respond(202, { message: decision.reason });
   }
 
@@ -140,9 +160,11 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
     );
     if ((put.FailedEntryCount ?? 0) > 0) {
       console.error(JSON.stringify({ message: 'PutEvents failed', deliveryId, entries: put.Entries }));
+      delivery('failed', { deliveryId, event: githubEvent, reason: 'PutEvents failed' });
       return respond(500, { message: 'failed to publish PullRequestClosed' });
     }
     console.log(JSON.stringify({ message: 'pull request closed', deliveryId, repository: closed.repository, number: closed.number, merged: closed.merged }));
+    delivery('closed', { deliveryId, event: githubEvent });
     return respond(202, { pullRequest: closed.number, merged: closed.merged });
   }
 
@@ -163,6 +185,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
 
   if ((result.FailedEntryCount ?? 0) > 0) {
     console.error(JSON.stringify({ message: 'PutEvents failed', deliveryId, entries: result.Entries }));
+    delivery('failed', { deliveryId, event: githubEvent, reason: 'PutEvents failed' });
     return respond(500, { message: 'failed to publish WorkItem' });
   }
 
@@ -175,5 +198,6 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
       repository: workItem.repository,
     }),
   );
+  delivery('work-item', { deliveryId, event: githubEvent, workItemId: workItem.id });
   return respond(202, { workItemId: workItem.id });
 };

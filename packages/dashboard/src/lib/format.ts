@@ -38,3 +38,15 @@ export function shortId(id: string): string {
 export function clip(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
+
+/** When something happened, as the deploys table says it: `today 18:02`, `yesterday 21:40`, `3 days ago`. */
+export function fmtWhen(iso: string, now: number): string {
+  const at = Date.parse(iso);
+  if (!Number.isFinite(at)) return '';
+  const day = (ms: number) => new Date(new Date(ms).setHours(0, 0, 0, 0)).getTime();
+  const days = Math.round((day(now) - day(at)) / 86_400_000);
+  const time = fmtTime(new Date(at)).slice(0, 5);
+  if (days <= 0) return `today ${time}`;
+  if (days === 1) return `yesterday ${time}`;
+  return `${days} days ago`;
+}

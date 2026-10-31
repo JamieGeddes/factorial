@@ -3,22 +3,29 @@ import 'server-only';
 import { BedrockAgentCoreControlClient } from '@aws-sdk/client-bedrock-agentcore-control';
 import { CloudFormationClient } from '@aws-sdk/client-cloudformation';
 import { CloudWatchClient } from '@aws-sdk/client-cloudwatch';
+import { CloudWatchLogsClient } from '@aws-sdk/client-cloudwatch-logs';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { ECSClient } from '@aws-sdk/client-ecs';
 import { S3Client } from '@aws-sdk/client-s3';
+import { ServiceQuotasClient } from '@aws-sdk/client-service-quotas';
+import { SFNClient } from '@aws-sdk/client-sfn';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { connectAuthorization, connectProtocols, realtimeDomainOf, subscribeAuthorization, type LiveEndpoint } from '@factorial/live';
 
 import { parseStageKey } from '../lib/stage-key.ts';
 import { createArtefacts, type Artefacts } from './artefacts.ts';
 import { REGION, type Sender } from './aws.ts';
-import { createCloudWatch, type Alarms } from './cloudwatch.ts';
+import { createCloudWatch, type AlarmDetail, type Alarms } from './cloudwatch.ts';
 import { createConfig, type Config, type Env } from './config.ts';
+import { createGitHub, type Fetch, type GitHub } from './github.ts';
 import { createLedger, type Ledger } from './ledger.ts';
 import { LiveConnection, type SocketLike } from './live-connection.ts';
 import { LiveHub } from './live.ts';
-import { createRuntimes, type RuntimeVersion } from './runtimes.ts';
+import { createOps, type Ops } from './ops.ts';
+import { createRuntimes, type Runtimes } from './runtimes.ts';
 import { createStacks, type Stacks } from './stacks.ts';
 import { createThreads, type Threads } from './threads.ts';
+import { createUsageRecords, type UsageRecords } from './usage-records.ts';
 
 /**
  * Every source the views read, built once per server process. Credentials
@@ -31,8 +38,14 @@ export interface Services {
   ledger: Ledger;
   threads: Threads;
   artefacts: Artefacts;
-  runtimes: { live(): Promise<RuntimeVersion[]> };
-  cloudwatch: { busRate(): Promise<number>; alarms(): Promise<Alarms> };
+  runtimes: Runtimes;
+  cloudwatch: { busRate(): Promise<number>; alarms(): Promise<Alarms>; alarmDetails(): Promise<AlarmDetail[]> };
+  /** Each run's `usage.json` facts (#59). */
+  usage: UsageRecords;
+  /** The Health view's AWS sources (#59). */
+  ops: Ops;
+  /** The deploy workflow's runs on Factorial's own repository (#59). */
+  github: GitHub;
   live: LiveHub;
   now: () => number;
 }
@@ -43,7 +56,15 @@ export interface Clients {
   s3: Sender;
   control: Sender;
   cw: Sender;
+  sfn: Sender;
+  ecs: Sender;
+  quotas: Sender;
+  logs: Sender;
+  ddb: Sender;
 }
+
+/** Factorial's own repository, where `FactorialVersion` is a commit and the deploy workflow runs. */
+export const FACTORIAL_REPOSITORY = 'JamieGeddes/factorial';
 
 /** Whether the ledger says a run, or its whole item, has ended. */
 export async function runOver(ledger: Ledger, workItemId: string, stage: string, round: number): Promise<boolean> {
@@ -58,7 +79,8 @@ export async function runOver(ledger: Ledger, workItemId: string, stage: string,
   return false;
 }
 
-export function createServices(clients: Clients, options: { env?: Env; upstream?: ConstructorParameters<typeof LiveHub>[0]['upstream'] } = {}): Services {
+export function createServices(clients: Clients, options: { env?: Env; upstream?: ConstructorParameters<typeof LiveHub>[0]['upstream']; fetch?: Fetch } = {}): Services {
+  const env = options.env ?? process.env;
   const stacks = createStacks(clients.cfn);
   const config = createConfig(stacks, options.env);
   const ledger = createLedger(clients.documents, { table: async () => (await config()).workItemsTable });
@@ -93,6 +115,9 @@ export function createServices(clients: Clients, options: { env?: Env; upstream?
     artefacts,
     runtimes: createRuntimes(clients.control, stacks),
     cloudwatch: createCloudWatch(clients.cw),
+    usage: createUsageRecords(artefacts),
+    ops: createOps(clients, stacks, config),
+    github: createGitHub({ repository: env.FACTORIAL_REPOSITORY ?? FACTORIAL_REPOSITORY, token: env.GITHUB_TOKEN, ...(options.fetch ? { fetch: options.fetch } : {}) }),
     live,
     now: Date.now,
   };
@@ -122,6 +147,11 @@ export function services(): Services {
       s3: new S3Client({ region: REGION }),
       control: new BedrockAgentCoreControlClient({ region: REGION }),
       cw: new CloudWatchClient({ region: REGION }),
+      sfn: new SFNClient({ region: REGION }),
+      ecs: new ECSClient({ region: REGION }),
+      quotas: new ServiceQuotasClient({ region: REGION }),
+      logs: new CloudWatchLogsClient({ region: REGION }),
+      ddb: new DynamoDBClient({ region: REGION }),
     });
     closeOnSignals(created.live, process);
     holder[KEY] = created;

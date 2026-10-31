@@ -137,6 +137,8 @@ const run = {
   toolCalls: 0,
   usage: emptyRunUsage(),
   calls: [] as CallUsage[],
+  /** Model calls the harness retried. */
+  retries: 0,
   error: undefined as string | undefined,
   /** The build's usage over earlier rounds, from the ledger row, when continuing. */
   previousRoundsUsage: undefined as RunUsage | undefined,
@@ -337,6 +339,7 @@ async function invokeRuntime(runtime: RuntimeTarget, prompt: string): Promise<vo
       // Kept current, so a stopped task still records what was used.
       run.toolCalls = tally.toolCalls;
       run.calls = tally.calls;
+      run.retries = tally.retries;
       run.usage = tally.calls.reduce(addCallUsage, emptyRunUsage());
       feed?.event(message, seq, at, line);
     },

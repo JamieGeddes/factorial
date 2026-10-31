@@ -46,6 +46,14 @@ describe('usageRecord', () => {
     assert.equal('live' in usageRecord({ ...base, stopReason: 'completed', interrupted: false }), false);
   });
 
+  it("records each call's model and duration, and the retries (#59)", () => {
+    const timed = [{ inputTokens: 100, outputTokens: 10, model: 'global.anthropic.claude-sonnet-5-5', durationMs: 8200 }];
+    const record = usageRecord({ ...base, calls: timed, retries: 3, stopReason: 'completed', interrupted: false });
+    assert.deepEqual(record.calls, timed);
+    assert.equal(record.retries, 3);
+    assert.equal('retries' in usageRecord({ ...base, stopReason: 'completed', interrupted: false }), false);
+  });
+
   it('says error when the stream failed before a stop reason arrived', () => {
     assert.equal(usageRecord({ ...base, stopReason: undefined, interrupted: false, error: 'boom' }).stopReason, 'error');
   });

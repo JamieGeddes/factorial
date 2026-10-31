@@ -91,6 +91,10 @@
           "description": "False when the harness reports the call before its output is finished, so outputTokens is a lower bound. run.ended's totals are then the figure to trust.",
           "type": "boolean"
         },
+        "durationMs": {
+          "description": "Milliseconds from the request to the end of the response, as the harness measured it (#59). Absent when the harness does not know.",
+          "$ref": "#/$defs/count"
+        },
         "cost": {
           "description": "The harness's estimate for this call at list prices, not a bill: what a reader can show while the run goes on. run.ended's cost is the run's figure.",
           "type": "object",

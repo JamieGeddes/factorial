@@ -221,6 +221,14 @@ jobs:
           # absent: a human deploys it (docs/bootstrap.md).
           stacks=(triggers agent orchestration)
           mkdir -p .packaged
+          # The stacks this run changed, as a notice annotation the command
+          # centre's deploys panel reads (#59), written however the step ends.
+          deployed=()
+          trap 'echo "::notice title=Stacks deployed::${deployed[*]:-none}"' EXIT
+          updated_at() {
+            aws cloudformation describe-stacks --stack-name "$1" \
+              --query 'Stacks[0].[LastUpdatedTime, CreationTime]' --output text 2>/dev/null || echo NONE
+          }
           for name in "${stacks[@]}"; do
             template="templates/$name.yml"
             stack="factorial-$name"
@@ -237,6 +245,7 @@ jobs:
               aws cloudformation delete-stack --stack-name "$stack" --role-arn "$CFN_ROLE"
               aws cloudformation wait stack-delete-complete --stack-name "$stack"
             fi
+            before=$(updated_at "$stack")
             params=()
             case "$stack" in
               factorial-agent) params=(--parameter-overrides "AgentRuntimeImageTag=$AGENT_RUNTIME_IMAGE_TAG") ;;
@@ -259,6 +268,7 @@ jobs:
               --tags Project=Factorial \
               --no-fail-on-empty-changeset \
               "${params[@]}"
+            if [ "$(updated_at "$stack")" != "$before" ]; then deployed+=("$name"); fi
             echo "::endgroup::"
           done
 
@@ -277,6 +287,10 @@ jobs:
             echo "No runtimes in the agent stack; nothing to promote."
             exit 0
           fi
+          # Each live endpoint this run moved, as `<runtime> <version>`, as a
+          # notice annotation the command centre reads (#59).
+          promoted=()
+          trap 'joined=$(IFS=,; echo "${promoted[*]:-none}"); echo "::notice title=Runtimes promoted::${joined//,/, }"' EXIT
           for runtime_id in $runtime_ids; do
             # The CLI applies --query to each page separately, so list every
             # READY version and take the highest here (#132).
@@ -300,6 +314,7 @@ jobs:
             aws bedrock-agentcore-control update-agent-runtime-endpoint --agent-runtime-id "$runtime_id" --endpoint-name live \
               --agent-runtime-version "$latest" --description "Promoted by deploy run $GITHUB_RUN_ID ($GITHUB_SHA)" >/dev/null
             echo "$runtime_id: live endpoint moved from runtime version $current to $latest."
+            promoted+=("${runtime_id%-*} $latest")
             # On V2 the endpoint prepares a snapshot, which takes minutes.
             deadline=$((SECONDS + 1200))
             while true; do

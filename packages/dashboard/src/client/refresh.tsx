@@ -50,6 +50,14 @@ export function useRefreshed<T>(url: string, initial: T, options: { everyMs?: nu
     reload();
   });
 
+  // A new URL (a filter changed) is read at once, not at the next tick.
+  const shown = useRef(url);
+  useEffect(() => {
+    if (shown.current === url) return;
+    shown.current = url;
+    void load();
+  }, [url, load]);
+
   const every = options.everyMs ?? 20_000;
   useEffect(() => {
     const timer = setInterval(() => void load(), every);

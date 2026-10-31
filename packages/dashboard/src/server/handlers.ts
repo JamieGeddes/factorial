@@ -4,14 +4,18 @@ import { chunkLines, chunkPath } from '@factorial/live';
 
 import { commitUrl, executionUrl, artefactsUrl, REGION } from '../lib/links.ts';
 import { resultOf } from '../lib/status.ts';
+import { lastDays } from '../lib/days.ts';
+import { health, type Health, type HealthInput, type QuotaMeter, type Settled } from '../lib/health.ts';
+import { isRange, metrics, type Metrics, type Range } from '../lib/metrics.ts';
 import { overview, type Overview } from '../lib/overview.ts';
+import { modelLabel, type UsageFacts } from '../lib/usage-facts.ts';
 import { limitsOf, runDetail as buildRunDetail, type Limits, type RunDetail } from '../lib/run-view.ts';
 import { stageKeyOf } from '../lib/stages.ts';
 import { isPlanWrite, planSteps, type PlanStep } from '../lib/transcript.ts';
 import { compareItems, isFilter, matchesFilter, matchesSearch, sourceLabel, summarise, type Filter, type WorkItemSummary } from '../lib/work-items.ts';
 import { isWorkItemId, itemKey } from './artefacts.ts';
 import { parseChannel, type LiveMessage, type StreamHandle } from './live.ts';
-import type { Services } from './services.ts';
+import { FACTORIAL_REPOSITORY, type Services } from './services.ts';
 import type { LedgerRow } from '../lib/records.ts';
 
 /**
@@ -160,8 +164,6 @@ const settle = async <T>(promise: Promise<T>): Promise<{ value?: T; error?: stri
   }
 };
 
-/** Factorial's own repository, where `FactorialVersion` is a commit. */
-export const FACTORIAL_REPOSITORY = 'JamieGeddes/factorial';
 
 export interface StatusBar {
   version?: { sha: string; url?: string };
@@ -261,11 +263,11 @@ export async function postLiveChannels(request: Request, services: Services, str
   return json({ channels: stream.setChannels(body.channels) });
 }
 
-/** The Overview (#58): every row and thread, the alarms in `ALARM`. A failed alarm read leaves them out, never the view. */
+/** The Overview (#58): every row and thread, the alarms in `ALARM`, the deploys (#59). A failed alarm or deploy read leaves them out, never the view. */
 export async function overviewPage(services: Services): Promise<Overview> {
-  const [rows, threads, alarms] = await Promise.all([services.ledger.list(), services.threads.all(), settle(services.cloudwatch.alarms())]);
+  const [rows, threads, alarms, deploys] = await Promise.all([services.ledger.list(), services.threads.all(), settle(services.cloudwatch.alarms()), settle(services.github.deploys())]);
   const firing = (alarms.value?.firing ?? []).map((name) => ({ name, ...(alarms.value?.since[name] ? { since: alarms.value.since[name] } : {}) }));
-  return overview({ rows, threads, now: services.now(), alarms: firing });
+  return overview({ rows, threads, now: services.now(), alarms: firing, ...(deploys.value ? { deploys: deploys.value } : {}) });
 }
 
 export function getOverview(services: Services): Promise<Response> {
@@ -345,4 +347,122 @@ export function getRun(services: Services, id: string, stage: string, round: str
     const detail = await runPage(services, id, stage, n);
     return detail ? json(detail) : problem(404, 'no such run');
   });
+}
+
+/** The usage keys of every run entry that ended at or after `since`. */
+function usageKeysSince(rows: LedgerRow[], since: number): string[] {
+  const keys: string[] = [];
+  for (const row of rows) {
+    for (const entry of Object.values(row.stages ?? {})) {
+      const at = entry?.endedAt ? Date.parse(entry.endedAt) : NaN;
+      const key = entry?.run?.usageKey;
+      if (Number.isFinite(at) && at >= since && typeof key === 'string' && key.startsWith(`${row.workItemId}/`)) keys.push(key);
+    }
+  }
+  return keys;
+}
+
+const startOfRange = (now: number, range: number): number => {
+  const [first = ''] = lastDays(now, range);
+  const [y, m, d] = first.split('-').map(Number) as [number, number, number];
+  return new Date(y, m - 1, d).getTime();
+};
+
+const metricsCache = new WeakMap<Services, Map<string, { at: number; value: Promise<Metrics> }>>();
+
+/**
+ * The Metrics and cost view (#59) for one range and repository. Every run's
+ * `usage.json` in the range is read once and kept; the view itself is kept
+ * for 10 seconds per range and repository.
+ */
+export function metricsPage(services: Services, query: { range?: string | null; repository?: string | null }): Promise<Metrics> {
+  const range: Range = isRange(query.range) ? (Number(query.range) as Range) : 30;
+  const repository = (query.repository ?? '').slice(0, 200);
+  const key = `${range}|${repository.toLowerCase()}`;
+  const cache = metricsCache.get(services) ?? new Map();
+  metricsCache.set(services, cache);
+  const hit = cache.get(key);
+  if (hit && services.now() - hit.at < 10_000) return hit.value;
+  const value = (async () => {
+    const now = services.now();
+    const [rows, threads, versions, deploys] = await Promise.all([services.ledger.list(), services.threads.all(), settle(services.runtimes.versions()), settle(services.github.deploys())]);
+    const records = await services.usage.many(usageKeysSince(rows, startOfRange(now, range)));
+    const promotions = new Map<string, string>();
+    for (const d of [...(deploys.value ?? [])].reverse()) for (const p of d.promoted ?? []) if (!promotions.has(`${p.runtime} ${p.version}`)) promotions.set(`${p.runtime} ${p.version}`, d.at);
+    return metrics({ rows, threads, records, now, range, repository, promotions, ...(versions.value ? { created: versions.value } : {}) });
+  })();
+  cache.set(key, { at: services.now(), value });
+  value.catch(() => cache.delete(key));
+  return value;
+}
+
+export function getMetrics(request: Request, services: Services): Promise<Response> {
+  return guarded(async () => {
+    const params = new URL(request.url).searchParams;
+    return json(await metricsPage(services, { range: params.get('range'), repository: params.get('repository') }));
+  });
+}
+
+/** A Bedrock model id the roles name (an inference profile or a model), not the harness's own `compaction` entry. */
+const isModelId = (id: string): boolean => /^[a-z0-9-]+(\.[a-z0-9-]+)+(:\d+)?$/.test(id) && id.includes('anthropic.');
+
+/** The Health view (#59): every source read at once, each one's failure on its own row. */
+export async function healthPage(services: Services): Promise<Health> {
+  const now = services.now();
+  const rows = await services.ledger.list();
+  const recent = await services.usage.many(usageKeysSince(rows, now - 7 * 86_400_000));
+  const dayKeys = new Set(usageKeysSince(rows, now - 86_400_000));
+  const day = [...recent].filter(([key]) => dayKeys.has(key)).map(([, facts]) => facts);
+  const live = { published: day.reduce((a, f) => a + (f.live?.published ?? 0), 0), dropped: day.reduce((a, f) => a + (f.live?.dropped ?? 0), 0), runs: day.length };
+  const inUse = new Set<string>();
+  for (const facts of recent.values() as Iterable<UsageFacts>) for (const m of facts.configured) if (isModelId(m)) inUse.add(m);
+  for (const row of rows) for (const entry of Object.values(row.stages ?? {})) if (entry?.run?.modelId && isModelId(entry.run.modelId) && entry.endedAt && Date.parse(entry.endedAt) >= now - 7 * 86_400_000) inUse.add(entry.run.modelId);
+  const ids = [...inUse].sort();
+
+  const [ops, stateMachine, invoker, runtimes, models, retries, table, alarms, quotas, deploys, deliveries, busRate] = await Promise.all([
+    settle(services.ops.metrics()),
+    settle(services.ops.stateMachine()),
+    settle(services.ops.invokerTasks()),
+    settle(services.runtimes.live()),
+    settle(services.ops.models(ids)),
+    settle(services.ops.retries()),
+    settle(services.ops.table()),
+    settle(services.cloudwatch.alarmDetails()),
+    settle(services.ops.quotas()),
+    settle(services.github.deploys()),
+    settle(services.ops.deliveries()),
+    settle(services.cloudwatch.busRate()),
+  ]);
+  const part = <T, K extends keyof T>(s: { value?: T; error?: string }, key: K): Settled<T[K]> => (s.value ? { value: s.value[key] } : { error: s.error ?? 'unknown' });
+  const modelMeters: QuotaMeter[] = (models.value ?? []).flatMap((m) => [
+    ...(m.tpm ? [{ name: `${modelLabel(m.model)} TPM`, used: m.tpm.peak, limit: m.tpm.limit, display: `${Math.round((m.tpm.peak / m.tpm.limit) * 100)}%` }] : []),
+    ...(m.rpm ? [{ name: `${modelLabel(m.model)} RPM`, used: m.rpm.peak, limit: m.rpm.limit, display: `${Math.round((m.rpm.peak / m.rpm.limit) * 100)}%` }] : []),
+  ]);
+  const input: HealthInput = {
+    now,
+    rows,
+    live,
+    connection: services.live.connectionState,
+    adapter: part(ops, 'adapter'),
+    deliveries,
+    bus: part(ops, 'bus'),
+    busRate,
+    stateMachine,
+    invoker,
+    runtimes,
+    models,
+    retries,
+    artefacts: part(ops, 'artefacts'),
+    ledger: part(ops, 'ledger'),
+    table,
+    alarms,
+    quotas: quotas.value ? { value: [...modelMeters, ...quotas.value] } : modelMeters.length ? { value: modelMeters, error: quotas.error ?? '' } : { error: quotas.error ?? 'unknown' },
+    deploys,
+    repository: services.github.repository,
+  };
+  return health(input);
+}
+
+export function getHealth(services: Services): Promise<Response> {
+  return guarded(async () => json(await healthPage(services)));
 }
