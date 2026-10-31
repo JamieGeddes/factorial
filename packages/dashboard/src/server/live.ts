@@ -70,6 +70,8 @@ export interface HubOptions {
 
 export interface Sink {
   send(message: LiveMessage): void;
+  /** Called when the hub ends the stream (it is shutting down); the stream should end. */
+  close?(): void;
 }
 
 const UUID = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}';
@@ -289,6 +291,15 @@ class Tab {
   }
 }
 
+/** Ends a tab's stream; one that fails to end must not stop the others. */
+function endSink(sink: Sink): void {
+  try {
+    sink.close?.();
+  } catch {
+    // the stream has gone already
+  }
+}
+
 export interface StreamHandle {
   readonly id: string;
   /** Replaces the channels this tab wants; returns those accepted. */
@@ -304,6 +315,7 @@ export class LiveHub {
   private upstream: Upstream | undefined;
   private connection: ConnectionState = 'idle';
   private flush: unknown;
+  private closed = false;
 
   constructor(options: HubOptions) {
     this.options = options;
@@ -331,6 +343,10 @@ export class LiveHub {
   }
 
   open(sink: Sink): StreamHandle {
+    if (this.closed) {
+      endSink(sink);
+      return { id: '', setChannels: () => [], close: () => {} };
+    }
     const tab = new Tab(randomUUID(), sink);
     this.tabs.set(tab.id, tab);
     this.send(tab, { kind: 'hello', stream: tab.id });
@@ -357,6 +373,7 @@ export class LiveHub {
   }
 
   private join(tab: Tab, name: string): void {
+    if (this.closed) return;
     let channel = this.channels.get(name);
     if (!channel) {
       const parsed = parseChannel(name);
@@ -414,11 +431,38 @@ export class LiveHub {
 
   /** Something a tab's state shows has changed: tell every tab, at most once a second. */
   changed(): void {
-    if (this.flush !== undefined) return;
+    if (this.closed || this.flush !== undefined) return;
     this.flush = this.timers.setTimeout(() => {
       this.flush = undefined;
       for (const tab of this.tabs.values()) this.sendState(tab);
     }, 1000);
+  }
+
+  /**
+   * Shuts the hub down (the process was asked to stop): ends every tab's
+   * stream, drops every upstream subscription, which closes the upstream
+   * connection, and stops every timer, so nothing keeps the server alive.
+   * Nothing is sent to the tabs; their streams just end. Idempotent.
+   */
+  close(): void {
+    if (this.closed) return;
+    this.closed = true;
+    if (this.flush !== undefined) this.timers.clearTimeout(this.flush);
+    this.flush = undefined;
+    for (const [name, channel] of this.channels) {
+      if (channel.drop !== undefined) this.timers.clearTimeout(channel.drop);
+      channel.drop = undefined;
+      channel.stop();
+      channel.tabs.clear();
+      this.upstream?.remove(name);
+    }
+    this.channels.clear();
+    const tabs = [...this.tabs.values()];
+    this.tabs.clear();
+    for (const tab of tabs) {
+      tab.channels.clear();
+      endSink(tab.sink);
+    }
   }
 
   private sendState(tab: Tab): void {
