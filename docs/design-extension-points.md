@@ -185,7 +185,7 @@ The canary (#13) stays first. After that, each item below is done when its first
 |---|---|---|
 | 1. Thread record and Intake, with the `WorkItem` change | Before #161 | Questions are the first second route; adding them as another `cause` makes the contract the router |
 | 2. Role manifests | The PR that adds the triager and responder | The first new roles since the reviewer |
-| 3. Outcomes and the GitHub reporter | #15 | The notifier seam is the same thing |
+| 3. Outcomes and the GitHub reporter | #15 | The notifier seam is the same thing. Done in #165: `contracts/outcome/v1/`, `lib/outcome.ts`, `reporters/github/` (`docs/current-stage.md`, Outcomes and the GitHub reporter) |
 | 4. Session seeds from providers | The next change to seeding | Pure refactor; do it when the code is open anyway. Done in #166: `lib/seed.ts`, `lib/seed-providers.ts` (`docs/current-stage.md`, The seed) |
 | 5. Verifiers | Before #50 and #51 | The smoke test is the second verifier and should land on this shape, not beside a dispatched workflow |
 | 6. Integrate route | #155 | Reuses the thread and Verify |

@@ -1,6 +1,6 @@
 # The progress record
 
-Every stage a work item runs has one entry on its ledger row, under `stages`, and every transition is announced as a `WorkItemProgress` event (source `factorial.progress`) on the `factorial-work` bus (#15). Subscribers (the live feed's forwarder in #194, the notifier in #205, a dashboard) react to the events instead of polling the ledger.
+Every stage a work item runs has one entry on its ledger row, under `stages`, and every transition is announced as a `WorkItemProgress` event (source `factorial.progress`) on the `factorial-work` bus (#15). Subscribers (the live feed's forwarder in #194, the GitHub reporter's started notice in #205 and #165, a dashboard) react to the events instead of polling the ledger.
 
 It is internal to Factorial, not part of the `WorkItem` API, but other components act on it, so it has a schema and is changed with the same care. The canonical definition is the JSON Schema in `v1/progress-event.schema.json`; `@factorial/progress` validates every event against that file before it is put on the bus.
 
