@@ -1,10 +1,15 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
+
+import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand, StopRuntimeSessionCommand } from '@aws-sdk/client-bedrock-agentcore';
+import { S3Client } from '@aws-sdk/client-s3';
+import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import {
   LEFTOVER_COMMIT_MESSAGE,
   SALVAGE_COMMIT_MESSAGE,
   bundleScript,
+  collect,
   cleanRoomPushScript,
   inspectScript,
   leftoverMessage,
@@ -13,6 +18,8 @@ import {
   touchesWorkflows,
 } from './collect.ts';
 import type { WorkContext } from '../lib/context.ts';
+import type { Logger } from '../lib/log.ts';
+import { InvalidPlanError } from '../lib/plan-files.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 
@@ -212,5 +219,121 @@ describe('roundStartFor', () => {
 
   it('refuses a round start that is not a commit sha', () => {
     assert.throws(() => roundStartFor(ctx(), { commit: 'HEAD; rm -rf /', existing: true, pushed: true }), /not a commit sha/);
+  });
+});
+
+describe('collect stops the sessions it has finished with', () => {
+  const WORK_ITEM_ID = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
+  const pushed = 'c'.repeat(40);
+  const ENV = { BUILDER_RUNTIME_ARN: 'arn:builder', REVIEWER_RUNTIME_ARN: 'arn:reviewer', RUNTIME_QUALIFIER: 'live', ARTEFACT_BUCKET: 'bucket', TABLE_NAME: 'table' };
+  const ctx = {
+    workItem: { id: WORK_ITEM_ID, repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' } },
+    sessionId: WORK_ITEM_ID,
+    branch: 'factorial/x',
+    baseBranch: 'main',
+    baseCommit: base,
+    attempt: 1,
+    artefactPrefix: `${WORK_ITEM_ID}/1/`,
+  } as unknown as WorkContext;
+  const deps = { commitIdentity: async () => ({ name: 'Factorial', email: 'f@example.invalid' }), repositoryToken: async () => TOKEN };
+  const log = { info: () => {}, error: () => {}, with: () => log } as Logger;
+
+  /** What the sessions answer, in order of the calls, and what was stopped. */
+  let events: string[];
+  let saved: Record<string, string | undefined>;
+  /** Makes the session command whose script contains `marker` throw. */
+  let failOn: string | undefined;
+  let failStop: boolean;
+  let commits: number;
+
+  const reply = (stdout: string, exitCode = 0) => ({ stream: [{ chunk: { contentDelta: { stdout } } }, { chunk: { contentStop: { exitCode } } }] });
+
+  beforeEach(() => {
+    saved = Object.fromEntries(Object.keys(ENV).map((name) => [name, process.env[name]]));
+    Object.assign(process.env, ENV);
+    events = [];
+    failOn = undefined;
+    failStop = false;
+    commits = 2;
+    mock.method(S3Client.prototype, 'send', async () => ({}));
+    mock.method(DynamoDBDocumentClient.prototype, 'send', async () => ({}));
+    mock.method(BedrockAgentCoreClient.prototype, 'send', async (command: unknown) => {
+      if (command instanceof StopRuntimeSessionCommand) {
+        events.push(`stop ${command.input.runtimeSessionId}`);
+        if (failStop) throw new Error('stop denied');
+        return {};
+      }
+      assert.ok(command instanceof InvokeAgentRuntimeCommandCommand);
+      const script = command.input.body?.command ?? '';
+      if (failOn && script.includes(failOn)) throw new Error(`${failOn} failed`);
+      if (script.includes('status --porcelain')) return reply(`${commits}\n${SECTION}${sha}\n${SECTION}a.txt\n${SECTION}${commits}\n${SECTION}Did it.`);
+      if (script.includes('bundle create')) {
+        events.push('bundle');
+        return reply('QUJD');
+      }
+      if (script.includes('push --quiet')) {
+        events.push(`push ${command.input.runtimeSessionId}`);
+        return reply(`${pushed}\n`);
+      }
+      if (script.includes('FACTORIAL-PLAN')) return reply('missing:\n===FACTORIAL-PLAN===\nmissing:');
+      return reply('');
+    });
+  });
+  afterEach(() => {
+    mock.restoreAll();
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  });
+
+  it('stops the clean room after the push and the builder session before returning', async () => {
+    const result = await collect({ ...ctx, salvage: true }, log, deps);
+    assert.equal(result.headSha, pushed);
+    assert.deepEqual(events, ['bundle', `push ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}`]);
+  });
+
+  it('stops the round\'s own session, not the work item\'s', async () => {
+    await collect({ ...ctx, salvage: true, builderSessionId: `${WORK_ITEM_ID}-round-2` }, log, deps);
+    assert.ok(events.includes(`stop ${WORK_ITEM_ID}-round-2`));
+    assert.ok(!events.includes(`stop ${WORK_ITEM_ID}`));
+  });
+
+  it('stops only the builder session when the agent made no commits', async () => {
+    commits = 0;
+    const result = await collect({ ...ctx, salvage: true }, log, deps);
+    assert.equal(result.pushed, false);
+    assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+  });
+
+  it('stops only the builder session when earlier rounds pushed and this one added nothing', async () => {
+    commits = 0;
+    const result = await collect({ ...ctx, salvage: true, roundStart: { commit: pushed, existing: true, pushed: true } }, log, deps);
+    assert.equal(result.pushed, true);
+    assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+  });
+
+  it('stops nothing when the inspection fails, so the retry finds the session', async () => {
+    failOn = 'status --porcelain';
+    await assert.rejects(collect({ ...ctx, salvage: true }, log, deps), /status --porcelain failed/);
+    assert.deepEqual(events, []);
+  });
+
+  it('stops nothing when the plan is invalid, which ends the item', async () => {
+    await assert.rejects(collect({ ...ctx }, log, deps), InvalidPlanError);
+    assert.deepEqual(events, []);
+  });
+
+  it('stops nothing when the push fails', async () => {
+    failOn = 'push --quiet';
+    await assert.rejects(collect({ ...ctx, salvage: true }, log, deps), /push --quiet failed/);
+    assert.deepEqual(events, ['bundle']);
+  });
+
+  it('still succeeds when a stop fails', async () => {
+    failStop = true;
+    const result = await collect({ ...ctx, salvage: true }, log, deps);
+    assert.equal(result.headSha, pushed);
+    assert.deepEqual(events, [`bundle`, `push ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}`]);
   });
 });

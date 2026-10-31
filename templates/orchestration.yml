@@ -1065,10 +1065,12 @@ Resources:
         Version: '2012-10-17'
         Statement:
           # Each role's Runtime (the builder's also holds its clean room):
-          # commands only, since the invoker runs the agent.
+          # commands only, since the invoker runs the agent, and stopping the
+          # session once Collect or CollectReview has finished with it.
           - Effect: Allow
             Action:
               - bedrock-agentcore:InvokeAgentRuntimeCommand
+              - bedrock-agentcore:StopRuntimeSession
             Resource:
               - !ImportValue Factorial-BuilderRuntimeArn
               - !Sub
