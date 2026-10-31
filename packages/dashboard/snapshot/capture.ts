@@ -17,6 +17,7 @@ import { RANGES } from '../src/lib/metrics.ts';
 import { transcriptPath } from '../src/lib/run-view.ts';
 import { RUN_FOLDERS } from '../src/lib/stages.ts';
 import { compareItems, summarise } from '../src/lib/work-items.ts';
+import { itemKey } from '../src/server/artefacts.ts';
 import { healthPage, metricsPage, overviewPage, runPage, runsPage, safeContentType, statusBar, workItemDetail, workItemsPage } from '../src/server/handlers.ts';
 import { services } from '../src/server/services.ts';
 import { metricsKey, runKey, SNAPSHOT_FORMAT, type ArtefactEntry, type SnapshotIndex, type SnapshotItem } from './format.ts';
@@ -35,9 +36,12 @@ async function main(): Promise<void> {
   const config = await s.config();
   const account = /(\d{12})$/.exec(config.bucket)?.[1];
   const redact = (value: string): string => (account ? value.split(account).join('000000000000') : value);
+  // Every file lands under `snapshot-out/`, whatever an object key holds.
   const write = async (file: string, body: string) => {
-    await mkdir(path.dirname(path.join(out, file)), { recursive: true });
-    await writeFile(path.join(out, file), redact(body));
+    const full = path.resolve(out, file);
+    if (!full.startsWith(out + path.sep)) throw new Error(`"${file}" would leave ${out}`);
+    await mkdir(path.dirname(full), { recursive: true });
+    await writeFile(full, redact(body));
   };
   const writeJson = (file: string, value: unknown) => write(file, JSON.stringify(value));
 
@@ -81,6 +85,8 @@ async function main(): Promise<void> {
     const chunks = new Map<string, string[]>();
     for (const object of detail.artefacts) {
       const rel = object.key.slice(id.length + 1);
+      // A key the routes would refuse (`..`, an empty segment, a backslash) is left out, as the app leaves it out.
+      if (itemKey(id, rel) !== object.key) continue;
       const contentType = safeContentType(object.key, 'text/plain');
       let entry: ArtefactEntry;
       if (BINARY.test(rel)) entry = { kind: 'binary', size: object.size };
