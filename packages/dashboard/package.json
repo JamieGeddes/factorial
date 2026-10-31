@@ -1,0 +1,30 @@
+{
+  "name": "@factorial/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The command centre (#57): a local, read-only operations console for one reviewer, run with their own AWS credentials",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --import ./test/register.ts --test 'src/**/*.test.ts' 'src/**/*.test.tsx'",
+    "build": "NEXT_TELEMETRY_DISABLED=1 next build",
+    "start": "node --disable-warning=ExperimentalWarning scripts/start.ts"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore-control": "^3.1152.0",
+    "@aws-sdk/client-cloudformation": "^3.1152.0",
+    "@aws-sdk/client-cloudwatch": "^3.1152.0",
+    "@aws-sdk/client-dynamodb": "^3.1152.0",
+    "@aws-sdk/client-s3": "^3.1152.0",
+    "@aws-sdk/lib-dynamodb": "^3.1152.0",
+    "@factorial/live": "^0.1.0",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "server-only": "^0.0.1"
+  }
+}

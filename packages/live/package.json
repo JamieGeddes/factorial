@@ -5,7 +5,8 @@
   "description": "The live run feed (#194): channel names, the event envelope and its caps, signed publishing and subscribing on the AppSync Events API, and catch-up chunks",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./channels": "./src/channels.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -99,6 +99,8 @@ Everything on the channel was written by a model or a tool. Show it as text, nev
 
 **Progress on the ledger row.** Every 60 seconds, and at the run's start and end, the invoker replaces the row's `live` attribute: `role`, `stage`, `round`, `at`, `seq`, `events`, `toolCalls`, `modelCalls`, `usage`, `costUsd`, `elapsedSeconds`, `lastEvent` and the version's `limits`. Mid-run, `costUsd` is the sum of the host's per-call estimates and `turns` is absent; after the run, both are the harness's figures, `usage` matches `usage.json` and `ended` is `true`. A later run of the same item (the next build round, the review) replaces it. A `live.at` more than a minute old on a running item means the invoker has stopped.
 
+**In the command centre:** `npm run dashboard` (`docs/dashboard.md`) shows every work item and each item's stages, live record, thread and artefacts; its Run & transcript view arrives with #58.
+
 **From a terminal:**
 
 ```

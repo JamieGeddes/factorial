@@ -19,7 +19,8 @@
     "ci": "npm run typecheck && npm run build && npm test && npm run check:yml && npm run check:workflows && npm run lint:cfn",
     "deploy:foundation": "node --disable-warning=ExperimentalWarning scripts/deploy-foundation.ts",
     "check:workflows": "node --disable-warning=ExperimentalWarning scripts/check-workflows.ts",
-    "check:bundles": "node --disable-warning=ExperimentalWarning scripts/check-bundles.ts"
+    "check:bundles": "node --disable-warning=ExperimentalWarning scripts/check-bundles.ts",
+    "dashboard": "npm run start -w @factorial/dashboard"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",
