@@ -92,7 +92,7 @@ export const handler = staged('continue-build', (input: ContinueBuildInput) => r
   await handOverWorkspace(sessionTarget(sessionId, 'builder'));
 
   await putJsonArtefact(ctx.artefactPrefix, `build/round-${round}/continuing.json`, { sessionId, from: at, pushed, commitCount: collect.commitCount ?? 0, planned: plan !== undefined });
-  await recordProgress(ctx.workItem.id, 'build-continuing', { buildRounds: round, buildSessionId: sessionId });
+  await recordProgress(ctx.workItem.id, 'build-continuing');
   log.info('build continues in a new session', { round, sessionId, from: at, pushed });
   const existing = pushed || ctx.resumedFrom !== undefined || ctx.rework !== undefined;
   return { sessionId, round, roundStart: { commit: at, existing, pushed } };

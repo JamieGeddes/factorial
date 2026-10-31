@@ -58,6 +58,23 @@ export function addRunUsage(a: RunUsage, b: RunUsage): RunUsage {
   };
 }
 
+/**
+ * The usage of a role's earlier rounds, for a round after the first: the
+ * ledger row's `<stage>UsageTotal`, which every round adds to. Rows written
+ * before and after the second part of #15 both hold it; the builder's
+ * top-level `usage` (the latest round's alone) is never read. A missing or
+ * malformed figure counts as 0.
+ */
+export function previousRoundsUsage(row: Record<string, unknown> | undefined, stage: string, round: number | undefined): RunUsage | undefined {
+  if (round === undefined || round < 2) return undefined;
+  const total = row?.[`${stage}UsageTotal`];
+  if (typeof total !== 'object' || total === null) return undefined;
+  const figures = total as Record<string, unknown>;
+  const usage = emptyRunUsage();
+  for (const key of Object.keys(usage) as (keyof RunUsage)[]) usage[key] = count(figures[key]);
+  return usage;
+}
+
 /** Add one model call's usage record to the running total. */
 export function addCallUsage(run: RunUsage, call: CallUsage | undefined): RunUsage {
   if (!call) return run;

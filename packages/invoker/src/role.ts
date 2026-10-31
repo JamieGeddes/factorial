@@ -4,7 +4,7 @@
  * overrides, and this checks they belong together before anything is invoked.
  */
 import { isRoleName, type RoleManifest, type RoleName, type SensitivePath } from '@factorial/roles';
-import type { RunOutcome as Outcome } from '@factorial/run';
+import type { RunOutcome } from '@factorial/run';
 
 /**
  * The exit code for a run of a role that must finish (the builder) that
@@ -20,49 +20,9 @@ export const INCOMPLETE_EXIT_CODE = 3;
  * manifest's `mustFinish`): a half-finished build must not become a pull
  * request, while CollectReview already checks what the reviewer left behind.
  */
-export function incompleteReason(role: RoleManifest, outcome: Outcome | undefined, stopReason: string | undefined): string | undefined {
+export function incompleteReason(role: RoleManifest, outcome: RunOutcome | undefined, stopReason: string | undefined): string | undefined {
   if (!role.mustFinish || outcome === 'complete') return undefined;
   return `incomplete: the ${role.name} stopped with ${stopReason ?? 'no stop reason'} before finishing`;
-}
-
-export interface RunOutcome {
-  stopReason: string | undefined;
-  toolCalls: number;
-  durationSeconds: number;
-  usage: unknown;
-  error: string | undefined;
-  /** Pointers to the stored transcript and usage, when they were stored. */
-  record: Record<string, unknown> | undefined;
-}
-
-/**
- * The ledger attributes for a finished run. A role whose manifest says
- * `top-level` (the builder) keeps the names from before other roles; other
- * roles' sit under their stage, until the progress record (#15) gives every
- * stage the same shape.
- */
-export function outcomeAttributes(role: RoleManifest, outcome: RunOutcome): Record<string, unknown> {
-  const { stage } = role;
-  if (role.ledger === 'top-level') {
-    return {
-      stopReason: outcome.stopReason,
-      toolCalls: outcome.toolCalls,
-      [`${stage}DurationSeconds`]: outcome.durationSeconds,
-      usage: outcome.usage,
-      [`${stage}Error`]: outcome.error,
-      [stage]: outcome.record,
-    };
-  }
-  return {
-    [stage]: {
-      stopReason: outcome.stopReason,
-      toolCalls: outcome.toolCalls,
-      durationSeconds: outcome.durationSeconds,
-      usage: outcome.usage,
-      ...(outcome.error ? { error: outcome.error } : {}),
-      ...outcome.record,
-    },
-  };
 }
 
 export interface RuntimeTarget {

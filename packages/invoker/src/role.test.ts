@@ -3,7 +3,7 @@ import { test } from 'node:test';
 
 import { ROLES } from '@factorial/roles';
 
-import { incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget } from './role.ts';
+import { incompleteReason, parseSensitivePaths, runtimeTarget } from './role.ts';
 
 const env = {
   ROLE: 'builder',
@@ -50,25 +50,6 @@ test("refuses a runtime that is not the role's", () => {
 
 test('rejects a malformed qualifier', () => {
   assert.throws(() => runtimeTarget({ ...env, RUNTIME_QUALIFIER: 'live endpoint' }), /not an endpoint name/);
-});
-
-test("the builder's outcome keeps its existing ledger names", () => {
-  const outcome = { stopReason: 'success', toolCalls: 3, durationSeconds: 60, usage: { inputTokens: 1 }, error: undefined, record: { usageKey: 'k' } };
-  assert.deepEqual(outcomeAttributes(ROLES.builder, outcome), {
-    stopReason: 'success',
-    toolCalls: 3,
-    buildDurationSeconds: 60,
-    usage: { inputTokens: 1 },
-    buildError: undefined,
-    build: { usageKey: 'k' },
-  });
-});
-
-test("another role's outcome sits under its stage and leaves the builder's fields alone", () => {
-  const outcome = { stopReason: 'success', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', record: { usageKey: 'p' } };
-  assert.deepEqual(outcomeAttributes(ROLES.reviewer, outcome), {
-    review: { stopReason: 'success', toolCalls: 2, durationSeconds: 30, usage: { inputTokens: 5 }, error: 'boom', usageKey: 'p' },
-  });
 });
 
 test('reads the sensitive paths for the reviewer', () => {

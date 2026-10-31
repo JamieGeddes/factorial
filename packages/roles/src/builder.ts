@@ -14,7 +14,6 @@ export const builder: RoleManifest = {
   models: ['explore'],
   mustFinish: true,
   rounds: true,
-  ledger: 'top-level',
   notesPlan:
     '_Your plan, from the plan subagent, goes in /workspace/plan.json and /workspace/plan.md: follow its steps in order by `id`. Keep a line here per step (done, part done, not started), and note any step you change or skip, and why._',
   firstMessage: (workItem, branch, baseBranch, options) => buildPrompt(workItem, branch, baseBranch, options.round ?? 1, options.resumed ?? false),
