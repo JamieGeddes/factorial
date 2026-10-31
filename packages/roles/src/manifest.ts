@@ -41,16 +41,10 @@ export interface RoleManifest {
   mustFinish: boolean;
   /**
    * Whether the role continues in fresh sessions. A later round's records go
-   * under `<stage>/round-<n>/`, and the ledger keeps `<stage>Rounds` and
-   * `<stage>UsageTotal` across rounds.
+   * under `<stage>/round-<n>/`, each round has its own entry under the
+   * ledger's `stages`, and the ledger keeps `<stage>UsageTotal` across rounds.
    */
   rounds: boolean;
-  /**
-   * Where the ledger keeps a run's outcome: at the top level (the builder's
-   * names from before other roles, `stopReason`, `usage`,
-   * `<stage>DurationSeconds`, ...) or under `<stage>`.
-   */
-  ledger: 'top-level' | 'stage';
   /** The `# Plan` section of the session's starting notes.md. */
   notesPlan: string;
   /** The user message that starts a session. The system prompt is the Runtime version's. */

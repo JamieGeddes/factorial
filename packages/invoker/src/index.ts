@@ -42,13 +42,13 @@ import { ROLES } from '@factorial/roles';
 import { RUN_CONTRACT, RUN_CONTRACT_VARIABLE, validateRunStatus, type RunOutcome, type RunStatus } from '@factorial/run';
 import { assertWorkItem } from '@factorial/workitem';
 
-import { INCOMPLETE_EXIT_CODE, incompleteReason, outcomeAttributes, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
+import { INCOMPLETE_EXIT_CODE, incompleteReason, parseSensitivePaths, runtimeTarget, type RuntimeTarget } from './role.ts';
 import { roundUsd, runEntryOf, runtimeInfoOf, usageRecord, type HarnessRecord, type VersionInfo } from './run-record.ts';
 import { streamRun, type InvokeSession } from './runtime-stream.ts';
 import { RunTally, runUsageOf, runtimeStop, subagentsOf } from './run-events.ts';
 import { traceBaggage } from './trace.ts';
 import { TranscriptBuffer } from './transcript.ts';
-import { addCallUsage, addRunUsage, emptyRunUsage, type CallUsage, type RunUsage } from './usage.ts';
+import { addCallUsage, addRunUsage, emptyRunUsage, previousRoundsUsage, type CallUsage, type RunUsage } from './usage.ts';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -154,8 +154,8 @@ async function runtimeInfo({ runtimeId }: RuntimeTarget): Promise<VersionInfo> {
   }
 }
 
-/** Upload the transcript and usage under the role's stage. Returns the ledger pointer: keys and sizes, never content. */
-async function storeRunRecord(): Promise<Record<string, unknown> | undefined> {
+/** Upload the transcript and usage under the role's stage. Returns their keys for the stage's entry, never content. */
+async function storeRunRecord(): Promise<{ transcriptKey: string; usageKey: string } | undefined> {
   const kept = transcript.close();
   if (!run.prefix) {
     log.error('no artefact prefix on the ledger row; run record not stored');
@@ -168,8 +168,6 @@ async function storeRunRecord(): Promise<Record<string, unknown> | undefined> {
     return {
       transcriptKey: artefactKey(run.prefix, recordPath('transcript.jsonl')),
       usageKey: artefactKey(run.prefix, recordPath('usage.json')),
-      transcriptBytes: kept.bytes,
-      transcriptTruncated: kept.truncated,
     };
   } catch (error) {
     log.error('run record not stored', { error });
@@ -186,13 +184,9 @@ function finish(succeeded: boolean): Promise<void> {
     const durationSeconds = Math.round((Date.now() - run.startedAt) / 1000);
     const stopReason = run.interrupted ? 'interrupted' : run.stopReason;
     log.info('agent finished', { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, costUsd: run.harness?.costUsd });
-    const outcome = outcomeAttributes(manifest, { stopReason, toolCalls: run.toolCalls, durationSeconds, usage: run.usage, error: run.error, record: stored });
-    // A role in rounds records this round's figures; the total across rounds is kept beside them.
-    const rounds =
-      round !== undefined
-        ? { [`${stage}Rounds`]: round, [`${stage}UsageTotal`]: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage }
-        : {};
-    await record(succeeded ? done : failed, { ...outcome, ...rounds });
+    // The run itself is recorded on its stage's entry below; a role in rounds also keeps the total across rounds.
+    const total = round !== undefined ? { [`${stage}UsageTotal`]: run.previousRoundsUsage ? addRunUsage(run.previousRoundsUsage, run.usage) : run.usage } : {};
+    await record(succeeded ? done : failed, total);
     if (progressStage) {
       const entry = runEntryOf({
         role,
@@ -229,10 +223,7 @@ async function main(): Promise<number> {
   run.prefix = typeof row.Item?.artefactPrefix === 'string' ? row.Item.artefactPrefix : undefined;
   run.attempt = typeof row.Item?.attempt === 'number' ? row.Item.attempt : undefined;
   log = log.with({ attempt: run.attempt });
-  if (round !== undefined && round > 1) {
-    const previous = row.Item?.[`${stage}UsageTotal`] ?? row.Item?.usage;
-    run.previousRoundsUsage = previous && typeof previous === 'object' ? addRunUsage(emptyRunUsage(), previous as RunUsage) : undefined;
-  }
+  run.previousRoundsUsage = previousRoundsUsage(row.Item, stage, round);
 
   const resumed = typeof row.Item?.resumedFrom === 'string';
   const prompt = manifest.firstMessage(workItem, branch, baseBranch, { sensitivePaths, ...(round !== undefined ? { round } : {}), resumed });
@@ -246,7 +237,7 @@ async function main(): Promise<number> {
     );
   }
   log.info('invoking agent', { role, sessionId, qualifier, ...(round !== undefined ? { buildRound: round } : {}), ...run.version });
-  await record(running, { role, [`${stage}StartedAt`]: new Date().toISOString() });
+  await record(running, {});
   if (progressStage) await progress.started(workItemId, progressStage, buildRound);
 
   run.startedAt = Date.now();

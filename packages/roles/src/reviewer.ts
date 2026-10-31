@@ -13,7 +13,6 @@ export const reviewer: RoleManifest = {
   models: [],
   mustFinish: false,
   rounds: false,
-  ledger: 'stage',
   notesPlan:
     '_The plan the builder followed is /workspace/plan.json, with its explanation in /workspace/plan.md. Your review goes in /workspace/review.json, not here. Keep working notes under # Notes._',
   firstMessage: (workItem, branch, baseBranch, options) => reviewPrompt(workItem, branch, baseBranch, options.sensitivePaths ?? []),

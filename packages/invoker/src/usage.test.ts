@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { addCallUsage, emptyRunUsage } from './usage.ts';
+import { addCallUsage, emptyRunUsage, previousRoundsUsage } from './usage.ts';
 
 describe('addCallUsage', () => {
   it('sums every call instead of keeping the last one', () => {
@@ -31,5 +31,32 @@ describe('addCallUsage', () => {
 
   it('leaves the total unchanged when there is no usage record', () => {
     assert.deepEqual(addCallUsage(emptyRunUsage(), undefined), emptyRunUsage());
+  });
+});
+
+describe('previousRoundsUsage', () => {
+  const total = { ...emptyRunUsage(), modelCalls: 40, inputTokens: 900000, outputTokens: 20000, totalTokens: 920000 };
+
+  it('has nothing before the second round', () => {
+    assert.equal(previousRoundsUsage({ buildUsageTotal: total }, 'build', undefined), undefined);
+    assert.equal(previousRoundsUsage({ buildUsageTotal: total }, 'build', 1), undefined);
+  });
+
+  it("reads the stage's total across rounds", () => {
+    assert.deepEqual(previousRoundsUsage({ buildUsageTotal: total, stages: {} }, 'build', 2), total);
+  });
+
+  it('reads the total, not the latest round, from a row written before the interim fields were dropped', () => {
+    const row = { buildUsageTotal: total, usage: { ...emptyRunUsage(), modelCalls: 5 }, buildRounds: 1, stopReason: 'max_turns' };
+    assert.deepEqual(previousRoundsUsage(row, 'build', 2), total);
+  });
+
+  it('has nothing when the row holds no total', () => {
+    assert.equal(previousRoundsUsage(undefined, 'build', 2), undefined);
+    assert.equal(previousRoundsUsage({ usage: total }, 'build', 2), undefined);
+  });
+
+  it('counts a missing or malformed figure as 0', () => {
+    assert.deepEqual(previousRoundsUsage({ buildUsageTotal: { modelCalls: 3, inputTokens: 'x' } }, 'build', 3), { ...emptyRunUsage(), modelCalls: 3 });
   });
 });
