@@ -6,9 +6,12 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "node --disable-warning=ExperimentalWarning --import ./test/register.ts --test 'src/**/*.test.ts' 'src/**/*.test.tsx' 'scripts/*.test.ts'",
+    "test": "node --disable-warning=ExperimentalWarning --import ./test/register.ts --test 'src/**/*.test.ts' 'src/**/*.test.tsx' 'scripts/*.test.ts' 'snapshot/*.test.ts'",
     "build": "NEXT_TELEMETRY_DISABLED=1 next build",
-    "start": "node --disable-warning=ExperimentalWarning scripts/start.ts"
+    "start": "node --disable-warning=ExperimentalWarning scripts/start.ts",
+    "snapshot": "npm run snapshot:capture && npm run snapshot:build",
+    "snapshot:capture": "node --disable-warning=ExperimentalWarning --import ./snapshot/register.ts snapshot/capture.ts",
+    "snapshot:build": "node --disable-warning=ExperimentalWarning --import ./snapshot/register.ts snapshot/build.ts"
   },
   "devDependencies": {
     "@types/react": "^19.3.0",

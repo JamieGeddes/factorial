@@ -11,6 +11,7 @@ const STATE_TEXT: Record<StreamState, string> = {
   reconnecting: 'Live feed reconnecting',
   down: 'Live feed down',
   idle: 'Live feed idle',
+  snapshot: 'Snapshot: nothing live',
 };
 
 const STATE_DOT: Record<StreamState, string> = {
@@ -19,6 +20,7 @@ const STATE_DOT: Record<StreamState, string> = {
   reconnecting: 'dot warn',
   down: 'dot down',
   idle: 'dot idle',
+  snapshot: 'dot idle',
 };
 
 /** The thin status bar: the stream's state, the bus rate, the alarm count and a clock. */

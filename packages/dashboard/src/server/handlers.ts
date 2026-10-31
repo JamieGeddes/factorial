@@ -17,6 +17,7 @@ import { isWorkItemId, itemKey } from './artefacts.ts';
 import { parseChannel, type LiveMessage, type StreamHandle } from './live.ts';
 import { FACTORIAL_REPOSITORY, type Services } from './services.ts';
 import type { LedgerRow } from '../lib/records.ts';
+import type { WorkItemDetailData } from '../components/work-items/WorkItemDetail.tsx';
 
 /**
  * What each data route returns (#57): exactly what its view needs, so a
@@ -85,7 +86,7 @@ export function getWorkItems(request: Request, services: Services): Promise<Resp
   });
 }
 
-export async function workItemDetail(services: Services, id: string) {
+export async function workItemDetail(services: Services, id: string): Promise<WorkItemDetailData | undefined> {
   const row = await services.ledger.get(id);
   if (!row) return undefined;
   const [thread, objects, config] = await Promise.all([
@@ -102,6 +103,17 @@ export async function workItemDetail(services: Services, id: string) {
     artefacts: objects,
     links: { ...(execution ? { execution } : {}), ...(artefacts ? { artefacts } : {}) },
   };
+}
+
+/** The `/runs` list: the latest agent run of every item that has one, running first, at most 50. */
+export async function runsPage(services: Services): Promise<WorkItemSummary[]> {
+  const [rows, threads] = await Promise.all([services.ledger.list(), services.threads.all()]);
+  const now = services.now();
+  return rows
+    .map((row) => summarise(row, row.threadKey ? threads.get(row.threadKey) : undefined, now))
+    .filter((i) => i.latestRun)
+    .sort(compareItems)
+    .slice(0, 50);
 }
 
 export function getWorkItem(services: Services, id: string): Promise<Response> {

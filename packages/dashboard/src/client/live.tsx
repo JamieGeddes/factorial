@@ -8,7 +8,8 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, type R
  * registers here, and the tab asks the server for the union, changing it
  * without reconnecting. The shell always wants `/factorial/work-items`.
  */
-export type StreamState = 'connecting' | 'connected' | 'reconnecting' | 'down' | 'idle';
+/** `snapshot`: a static copy of the command centre, with no stream at all (`snapshot/`). */
+export type StreamState = 'connecting' | 'connected' | 'reconnecting' | 'down' | 'idle' | 'snapshot';
 
 export interface ChannelState {
   events: number;
