@@ -1,4 +1,6 @@
-/* The static page's own few rules: the banner and the artefact viewer. Everything else is the app's. */
+/* The static page's own few rules: the root, the banner and the artefact viewer. Everything else is the app's. */
+/* The shell takes its height from its parent, as it takes the body's in the app; here it is in #root. */
+#root { height: 100%; }
 .snapshot-banner { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; margin-bottom: 16px; padding: 10px 14px; border: 1px solid var(--hair-strong); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--raised); font-size: 12px; color: var(--ink-2); }
 .snapshot-banner b { color: var(--ink); }
 .snapshot-banner .num { font-family: var(--mono); }
