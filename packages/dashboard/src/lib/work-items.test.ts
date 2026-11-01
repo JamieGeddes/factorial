@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { compareItems, costOf, matchesFilter, matchesSearch, sourceLabel, SOURCES, summarise } from './work-items.ts';
+import { compareItems, costOf, matchesFilter, matchesSearch, newestFirst, sourceLabel, SOURCES, summarise } from './work-items.ts';
 import type { LedgerRow } from './records.ts';
 
 const NOW = Date.parse('2026-11-01T10:10:00Z');
@@ -131,6 +131,14 @@ test('running and waiting first, then newest first', () => {
   const recent = summarise(base({ createdAt: '2026-11-01T11:00:00Z', result: 'failed' }), undefined, NOW);
   const running = summarise(base({ createdAt: '2026-11-01T08:00:00Z' }), undefined, NOW);
   assert.deepEqual([old, recent, running].sort(compareItems), [running, recent, old]);
+});
+
+test('newest created first, whatever the state, with items that have no creation time last', () => {
+  const old = summarise(base({ createdAt: '2026-11-01T09:00:00Z', result: 'failed' }), undefined, NOW);
+  const recent = summarise(base({ createdAt: '2026-11-01T11:00:00Z', result: 'failed' }), undefined, NOW);
+  const running = summarise(base({ createdAt: '2026-11-01T08:00:00Z' }), undefined, NOW);
+  const undated = { ...old, createdAt: undefined };
+  assert.deepEqual([undated, running, old, recent].sort(newestFirst), [recent, old, running, undated]);
 });
 
 test('untrusted text loses control and bidirectional characters', () => {
