@@ -29,6 +29,27 @@ describe('digest', () => {
     assert.match(text, /\(2 of 3\) ---\nerror one  …\nerror two\n--- last 1 lines ---\nend\n$/);
   });
 
+  it('strips colour sequences and npm notices, and keeps the failure lines', () => {
+    const red = (text: string): string => `\x1b[31m${text}\x1b[39m`;
+    const output = [
+      `\x1b[1m\x1b[46m RUN \x1b[49m\x1b[22m v3.2.4`,
+      ` ${red('×')} src/a.test.ts > parses ${red('2ms')}`,
+      `\x1b[31m\x1b[1mAssertionError\x1b[22m: expected 1 to be 2\x1b[39m`,
+      ...numbered(40).split('\n'),
+      'npm notice',
+      'npm notice New major version of npm available! 10.9.9 -> 12.2.1',
+      'npm notice To update run: npm install -g npm@12.2.1',
+      ` Test Files  ${red('1 failed')} (1)`,
+      'progress 10%\rprogress 100%',
+    ].join('\n');
+    const text = digest({ command: 'npx vitest run', exitCode: 1, output, logPath: 'l' });
+    assert.doesNotMatch(text, /\x1b/);
+    assert.doesNotMatch(text, /npm notice|New major version/);
+    assert.match(text, /exit 1 · 48 lines/);
+    assert.match(text, /--- failure lines before the tail \(1 of 1\) ---\nAssertionError: expected 1 to be 2\n/);
+    assert.match(text, /Test Files {2}1 failed \(1\)\nprogress 100%\n$/);
+  });
+
   it('reports empty output as zero lines with no sections', () => {
     assert.equal(digest({ command: 'true', exitCode: 0, output: '', logPath: 'l' }), '$ true\nexit 0 · 0 lines · full output: l\n');
   });

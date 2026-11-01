@@ -118,10 +118,13 @@ describe('firstOnPath', () => {
 });
 
 describe('shellEnvironment', () => {
-  it('passes the allow-list only, never AWS credentials, and sets the agent home and region', () => {
+  it('passes the allow-list only, never AWS credentials, and sets plain output, the agent home and region', () => {
     const env = shellEnvironment(config, {
       PATH: '/usr/bin',
       LANG: 'C.UTF-8',
+      CI: 'true',
+      TERM: 'xterm-256color',
+      FORCE_COLOR: '3',
       AWS_ACCESS_KEY_ID: 'k',
       AWS_SECRET_ACCESS_KEY: 's',
       AWS_SESSION_TOKEN: 't',
@@ -131,10 +134,24 @@ describe('shellEnvironment', () => {
       GITHUB_TOKEN: 'never',
       HOME: '/root',
       NPM_CONFIG_AUDIT: 'false',
+      NPM_CONFIG_FUND: 'false',
+      NPM_CONFIG_UPDATE_NOTIFIER: 'false',
       NPM_CONFIG_REGISTRY: 'https://registry.example/',
       NPM_CONFIG_USERCONFIG: '/workspace/.npmrc',
     });
-    assert.deepEqual(env, { PATH: '/usr/bin', LANG: 'C.UTF-8', NPM_CONFIG_AUDIT: 'false', HOME: '/home/agent', AWS_REGION: 'eu-west-1' });
+    assert.deepEqual(env, {
+      PATH: '/usr/bin',
+      LANG: 'C.UTF-8',
+      CI: 'true',
+      NPM_CONFIG_AUDIT: 'false',
+      NPM_CONFIG_FUND: 'false',
+      NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+      NO_COLOR: '1',
+      FORCE_COLOR: '0',
+      TERM: 'dumb',
+      HOME: '/home/agent',
+      AWS_REGION: 'eu-west-1',
+    });
   });
 
   it("sets npm's registry to the version's mirror, whatever the host's environment says", () => {
