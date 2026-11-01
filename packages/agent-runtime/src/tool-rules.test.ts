@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { decideReviewerToolUse, decideToolUse, writesByRedirection } from './tool-rules.ts';
+import { decideReviewerToolUse, decideToolUse, redirectionTargets, writesByRedirection } from './tool-rules.ts';
 import type { ToolCall } from './tools.ts';
 
 const write = (path?: string): ToolCall => ({ kind: 'write', path });
@@ -117,8 +117,31 @@ describe('decideReviewerToolUse', () => {
       'bash -c "echo x > a"',
       'git push origin HEAD',
       'gh api repos/x/y',
+      'cat > /workspace/repo/x',
+      'tee /workspace/notes.md',
+      'tee review.json',
+      'cat > review.json && echo x > other.json',
+      'cat > review.json 2> err.log',
+      'cat >> /workspace/review.json',
+      'cd repo && cat > review.json',
+      'cat > $HOME/review.json',
+      "cat > /workspace/review.json <<'E'\nE\nrm -rf x",
+      "cat > /workspace/review.json <<E\n$(rm -rf x)\nE",
+      "echo '<<E' > /workspace/repo/x\ncat > review.json",
     ]) {
       assert.equal(bash(command), false, command);
+    }
+  });
+
+  it('allows writing review.json by redirection', () => {
+    for (const command of [
+      "cat > /workspace/review.json <<'E'\n{\"summary\": \"x => y; tee a > b\"}\nE",
+      'cat > review.json',
+      "cat <<'E' > review.json\n{}\nE",
+      'cat > /workspace/review.json <<"E" && jq -e . /workspace/review.json',
+      "cat > /workspace/review.json <<'E'\n{}\nE\njq -e . /workspace/review.json",
+    ]) {
+      assert.equal(bash(command), true, command);
     }
   });
 
@@ -139,5 +162,21 @@ describe('writesByRedirection', () => {
     assert.equal(writesByRedirection('cmd >out'), true);
     assert.equal(writesByRedirection('cmd 2> err.log'), true);
     assert.equal(writesByRedirection("echo '>' > a"), true);
+  });
+});
+
+describe('redirectionTargets', () => {
+  it('lists the files written to', () => {
+    assert.deepEqual(redirectionTargets('cmd >out 2> err.log'), ['out', 'err.log']);
+    assert.deepEqual(redirectionTargets('cmd >> a; cmd > b'), ['a', 'b']);
+  });
+
+  it('ignores quoted text, harmless redirections and heredoc bodies', () => {
+    assert.deepEqual(redirectionTargets("grep '=>' a 2>/dev/null >&2"), []);
+    assert.deepEqual(redirectionTargets("cat > review.json <<'E'\na > b\nE"), ['review.json']);
+  });
+
+  it('scans the body of a heredoc with an unquoted delimiter', () => {
+    assert.deepEqual(redirectionTargets('cat <<E\na > b\nE'), ['b']);
   });
 });

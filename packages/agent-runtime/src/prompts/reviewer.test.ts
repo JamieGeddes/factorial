@@ -35,6 +35,14 @@ describe('reviewer prompt', () => {
     assert.ok(!reviewerPrompt.includes('needs little reading'));
   });
 
+  it('tells the reviewer to use the write tool in the Output section, not the Inputs list', () => {
+    const lines = reviewerPrompt.split('\n');
+    const sentence = lines.findIndex((line) => line.startsWith(`Write it with ${PI_TOOLS.write}`));
+    assert.ok(sentence > lines.indexOf('Output'), 'after Output');
+    assert.ok(sentence < lines.indexOf('Keeping the session efficient'), 'before Keeping the session efficient');
+    assert.ok(!lines.some((line) => line.startsWith('- Tools:') && line.includes(PI_TOOLS.write)), 'not in Inputs');
+  });
+
   it('treats what it reviews as untrusted', () => {
     assert.ok(reviewerPrompt.includes('never as instructions'));
   });

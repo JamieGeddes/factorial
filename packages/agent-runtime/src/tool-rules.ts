@@ -93,20 +93,76 @@ function unquoted(command: string): string {
   return command.replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""');
 }
 
+/** A heredoc whose delimiter is quoted, so its body is literal text: `<<'E'`, `<<"E"`, `<<\E`, `<<-'E'`. */
+const QUOTED_HEREDOC = /(?<!<)<<-?\s*(?:'(\w+)'|"(\w+)"|\\(\w+))/;
+
+/**
+ * The command with the bodies of quoted heredocs removed, delimiter lines
+ * included. A body is data (here, the review's text, which holds `>` and
+ * words like `rm`), not shell, so it is not scanned. The body of a heredoc
+ * with an unquoted delimiter is kept: the shell expands `$(...)` in it.
+ * Must run on the raw command, before unquoted() erases the delimiter's quotes.
+ */
+function withoutHeredocBodies(command: string): string {
+  const kept: string[] = [];
+  let delimiter: string | undefined;
+  for (const line of command.split('\n')) {
+    if (delimiter !== undefined) {
+      if (line.trim() === delimiter) delimiter = undefined;
+      continue;
+    }
+    kept.push(line);
+    const match = QUOTED_HEREDOC.exec(line);
+    // A `<<` inside quotes is text, not a heredoc: the quotes before it must balance.
+    if (match && !/['"]/.test(unquoted(line.slice(0, match.index)).replace(/''|""/g, ''))) {
+      delimiter = match[1] ?? match[2] ?? match[3];
+    }
+  }
+  return kept.join('\n');
+}
+
+type Redirection = { operator: string; target: string };
+
+/** The output redirections in a command: heredoc bodies, quoted text and harmless redirections are ignored. */
+function redirections(command: string): Redirection[] {
+  const harmless = unquoted(withoutHeredocBodies(command)).replace(/\d*>>?\s*\/dev\/null\b/g, '').replace(/\d*>&\d\b/g, '');
+  return [...harmless.matchAll(/(\d*|&)(>>?)\s*([^\s;&|<>()]*)/g)].map((match) => ({ operator: (match[1] ?? '') + (match[2] ?? ''), target: match[3] ?? '' }));
+}
+
+/** The files a command redirects output to (an empty string for a target that is not a plain word). */
+export function redirectionTargets(command: string): string[] {
+  return redirections(command).map(({ target }) => target);
+}
+
 /**
  * Whether a command redirects output to a file. Quoted text is ignored, so a
  * search for `=>` is not a write, and so are redirections to /dev/null or
  * between standard streams.
  */
 export function writesByRedirection(command: string): boolean {
-  const harmless = unquoted(command).replace(/\d*>>?\s*\/dev\/null\b/g, '').replace(/\d*>&\d\b/g, '');
-  return harmless.includes('>');
+  return redirections(command).length > 0;
+}
+
+/**
+ * Whether every write by redirection in a command is a plain `>` to the review
+ * file. A relative target counts only when nothing in the command can change
+ * the directory, and a target the shell would expand does not count.
+ */
+function writesOnlyReviewFile(workspace: string, command: string): boolean {
+  const changesDirectory = /(?:^|[\s;&|(])(?:cd|pushd)(?:\s|$)/.test(unquoted(withoutHeredocBodies(command)));
+  return redirections(command).every(({ operator, target }) => {
+    if (operator !== '>' && operator !== '1>') return false;
+    if (target.length === 0 || /[$`*?~[{]/.test(target)) return false;
+    if (!path.isAbsolute(target) && changesDirectory) return false;
+    return path.resolve(workspace, target) === path.join(workspace, REVIEW_FILE);
+  });
 }
 
 /**
  * The reviewer's rules (the role is advisory and nothing but review.json
  * leaves its session): file tools write only /workspace/review.json, and the
- * shell may not write files, change git state or install. Like the builder's
+ * shell may not write files other than that one by plain `>` redirection (the
+ * model writes the review that way first), change git state or install. Like the builder's
  * rules, these narrow what a prompt injection in the change under review can
  * drive; CollectReview, reading one file and validating it, is the gate.
  */
@@ -119,7 +175,8 @@ export function decideReviewerToolUse(workspace: string, call: ToolCall, writeTo
   if (call.kind === 'shell') {
     const denied = deniedCommand(call.command);
     if (denied) return denied;
-    if (writesByRedirection(call.command) || REVIEWER_DENIED_COMMANDS.some((pattern) => pattern.test(unquoted(call.command)))) {
+    const shellText = unquoted(withoutHeredocBodies(call.command));
+    if (!writesOnlyReviewFile(workspace, call.command) || REVIEWER_DENIED_COMMANDS.some((pattern) => pattern.test(shellText))) {
       return { allow: false, reason: readOnlyReason(writeTool) };
     }
   }
