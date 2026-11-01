@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import { BedrockAgentCoreClient, StopRuntimeSessionCommand } from '@aws-sdk/client-bedrock-agentcore';
 
 import type { Logger } from './log.ts';
-import { asAgent, cleanRoomTarget, commandFor, sessionTarget, stopSession, stopSessionQuietly } from './session.ts';
+import { asAgent, commandFor, sessionTarget, stopSession, stopSessionQuietly } from './session.ts';
 
 const RUNTIME = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_builder-abc';
 const REVIEWER = 'arn:aws:bedrock-agentcore:eu-west-1:111122223333:runtime/factorial_reviewer-abc';
@@ -28,10 +28,8 @@ describe('sessionTarget', () => {
     }
   });
 
-  it('targets the builder Runtime, clean room included', () => {
+  it('targets the builder Runtime', () => {
     assert.deepEqual(sessionTarget('s'), { arn: RUNTIME, qualifier: 'live', sessionId: 's' });
-    assert.equal(cleanRoomTarget('w').arn, RUNTIME);
-    assert.equal(cleanRoomTarget('w').sessionId, 'w-push');
   });
 
   it('targets the reviewer Runtime', () => {

@@ -10,7 +10,6 @@ import {
   SALVAGE_COMMIT_MESSAGE,
   bundleScript,
   collect,
-  cleanRoomPushScript,
   inspectScript,
   leftoverMessage,
   parseInspection,
@@ -18,6 +17,7 @@ import {
   testSkipReason,
   touchesWorkflows,
 } from './collect.ts';
+import type { CleanRoomPush } from '../lib/clean-room.ts';
 import type { WorkContext } from '../lib/context.ts';
 import type { Logger } from '../lib/log.ts';
 import { InvalidPlanError } from '../lib/plan-files.ts';
@@ -120,84 +120,6 @@ describe('agent-session scripts carry no credentials', () => {
   });
 });
 
-describe('cleanRoomPushScript', () => {
-  const identity = { name: 'factorial-x[bot]', email: '12345+factorial-x[bot]@users.noreply.github.com' };
-  const params = {
-    owner: 'JamieGeddes',
-    name: 'factorial',
-    branch: 'factorial/abc',
-    baseBranch: 'main',
-    baseCommit: base,
-    headSha: sha,
-    existingBranch: true,
-    token: TOKEN,
-    bundleBase64: 'QUJD',
-    identity,
-  };
-
-  it('imports the bundle into a pristine clone, verifies the head and pushes exactly that commit', () => {
-    const script = cleanRoomPushScript(params);
-    const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
-    assert.match(script, /printf '%s' 'QUJD' \| base64 -d > incoming\.bundle/);
-    assert.match(script, new RegExp(`clone --quiet --bare --filter=blob:none 'https://github\\.com/JamieGeddes/factorial\\.git' repo\\.git`));
-    assert.match(script, /fetch --quiet \.\.\/incoming\.bundle HEAD/);
-    // clone, bundle import (lazy blob fetch from origin) and push all authenticate
-    assert.equal(script.split('http.extraHeader=').length - 1, 3);
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse FETCH_HEAD\\)" = '${sha}'`));
-    assert.match(script, /push --quiet origin "\$new:refs\/heads\/factorial\/abc"/);
-    assert.match(script, /echo "\$new"$/);
-    assert.match(script, new RegExp(`http\\.extraHeader='AUTHORIZATION: basic ${basic}'`));
-    assert.doesNotMatch(script, /ghs_t/);
-    assert.doesNotMatch(script, /x-access-token:ghs/);
-    assert.ok(script.split('core.hooksPath=/dev/null').length >= 4, 'every git call that could run hooks disables them');
-  });
-
-  it('re-creates every commit with the App identity, keeping trees, messages and author dates', () => {
-    const script = cleanRoomPushScript(params);
-    assert.match(script, new RegExp(`base='${base}'`));
-    assert.match(script, /test -z "\$\(git rev-list --merges "\$base\.\.FETCH_HEAD"\)"/);
-    assert.match(script, /for c in \$\(git rev-list --reverse "\$base\.\.FETCH_HEAD"\); do/);
-    assert.match(script, /GIT_AUTHOR_NAME='factorial-x\[bot\]' GIT_AUTHOR_EMAIL='12345\+factorial-x\[bot\]@users\.noreply\.github\.com' GIT_COMMITTER_NAME='factorial-x\[bot\]' GIT_COMMITTER_EMAIL='12345\+factorial-x\[bot\]@users\.noreply\.github\.com'/);
-    assert.match(script, /GIT_AUTHOR_DATE="\$\(git log -1 --format=%aI "\$c"\)" git commit-tree "\$c\^\{tree\}" -p "\$new"/);
-    // the rewrite happens after the head check and before the push
-    assert.ok(script.indexOf('rev-parse FETCH_HEAD') < script.indexOf('commit-tree'));
-    assert.ok(script.indexOf('commit-tree') < script.indexOf('push --quiet'));
-  });
-
-  it('pushes only on top of the branch head the session started from, as a fast-forward', () => {
-    const script = cleanRoomPushScript(params);
-    // the branch must still point at the base commit; anything else fails
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse --verify --quiet refs/heads/factorial/abc\\)" = '${base}'`));
-    // and the agent's head must descend from it, so the push is a fast-forward
-    assert.match(script, new RegExp(`git merge-base --is-ancestor '${base}' FETCH_HEAD`));
-    // never a force push
-    assert.doesNotMatch(script, /--force|-f refs|push -f/);
-    // the ancestry check happens before the rewrite and the push
-    assert.ok(script.indexOf('merge-base --is-ancestor') < script.indexOf('commit-tree'));
-    assert.ok(script.indexOf('merge-base --is-ancestor') < script.indexOf('push --quiet'));
-  });
-
-  it('requires a fresh branch not to exist yet, so the push never overwrites one', () => {
-    const script = cleanRoomPushScript({ ...params, existingBranch: false });
-    assert.match(script, /test -z "\$\(git rev-parse --verify --quiet refs\/heads\/factorial\/abc\)"/);
-    assert.doesNotMatch(script, /rev-parse --verify --quiet refs\/heads\/factorial\/abc\)" =/);
-    // the agent's head must still descend from the base commit
-    assert.match(script, new RegExp(`git merge-base --is-ancestor '${base}' FETCH_HEAD`));
-  });
-
-  it('rejects an identity or branch that could break out of the shell command', () => {
-    assert.throws(() => cleanRoomPushScript({ ...params, identity: { ...identity, name: "x'; rm -rf /" } }), /unexpected format/);
-    assert.throws(() => cleanRoomPushScript({ ...params, identity: { ...identity, email: 'a b@c' } }), /unexpected format/);
-    assert.throws(() => cleanRoomPushScript({ ...params, baseBranch: 'main;ls' }), /not a valid branch name/);
-    assert.throws(() => cleanRoomPushScript({ ...params, branch: '../x' }), /not a valid branch name/);
-  });
-
-  it('rejects bad names and shas before building anything', () => {
-    assert.throws(() => cleanRoomPushScript({ ...params, owner: 'bad owner' }), /not a valid GitHub name/);
-    assert.throws(() => cleanRoomPushScript({ ...params, headSha: 'short' }), /not a commit sha/);
-  });
-});
-
 describe('roundStartFor', () => {
   const ctx = (extra: Partial<WorkContext> = {}): WorkContext =>
     ({ workItem: { id: 'w', context: undefined }, baseCommit: base, ...extra }) as unknown as WorkContext;
@@ -251,7 +173,7 @@ describe('testSkipReason', () => {
   });
 });
 
-describe('collect stops the sessions it has finished with', () => {
+describe('collect pushes from its own clean room and stops the builder session', () => {
   const WORK_ITEM_ID = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
   const pushed = 'c'.repeat(40);
   const ENV = { BUILDER_RUNTIME_ARN: 'arn:builder', REVIEWER_RUNTIME_ARN: 'arn:reviewer', RUNTIME_QUALIFIER: 'live', ARTEFACT_BUCKET: 'bucket', TABLE_NAME: 'table' };
@@ -264,7 +186,18 @@ describe('collect stops the sessions it has finished with', () => {
     attempt: 1,
     artefactPrefix: `${WORK_ITEM_ID}/1/`,
   } as unknown as WorkContext;
-  const deps = { commitIdentity: async () => ({ name: 'Factorial', email: 'f@example.invalid' }), repositoryToken: async () => TOKEN };
+  /** What the clean-room push was given; it runs in the Lambda, so no session sees it. */
+  let pushes: CleanRoomPush[];
+  const deps = {
+    commitIdentity: async () => ({ name: 'Factorial', email: 'f@example.invalid' }),
+    repositoryToken: async () => TOKEN,
+    push: async (params: CleanRoomPush) => {
+      pushes.push(params);
+      events.push('push');
+      if (failOn === 'push') throw new Error('push failed');
+      return pushed;
+    },
+  };
   const log = { info: () => {}, error: () => {}, with: () => log } as Logger;
 
   /** What the sessions answer, in order of the calls, and what was stopped. */
@@ -281,6 +214,7 @@ describe('collect stops the sessions it has finished with', () => {
     saved = Object.fromEntries(Object.keys(ENV).map((name) => [name, process.env[name]]));
     Object.assign(process.env, ENV);
     events = [];
+    pushes = [];
     failOn = undefined;
     failStop = false;
     commits = 2;
@@ -299,10 +233,6 @@ describe('collect stops the sessions it has finished with', () => {
       if (script.includes('bundle create')) {
         events.push('bundle');
         return reply('QUJD');
-      }
-      if (script.includes('push --quiet')) {
-        events.push(`push ${command.input.runtimeSessionId}`);
-        return reply(`${pushed}\n`);
       }
       if (script.includes('FACTORIAL-PLAN')) return reply('missing:\n===FACTORIAL-PLAN===\nmissing:');
       return reply('');
@@ -323,10 +253,26 @@ describe('collect stops the sessions it has finished with', () => {
     assert.equal(result.testSkipReason, undefined);
   });
 
-  it('stops the clean room after the push and the builder session before returning', async () => {
+  it('pushes the exported bundle from the Lambda, with no second session, and stops the builder session before returning', async () => {
     const result = await collect({ ...ctx, salvage: true }, log, deps);
     assert.equal(result.headSha, pushed);
-    assert.deepEqual(events, ['bundle', `push ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}`]);
+    assert.deepEqual(events, ['bundle', 'push', `stop ${WORK_ITEM_ID}`]);
+    assert.equal(pushes.length, 1);
+    const [push] = pushes;
+    assert.equal(push?.remoteUrl, 'https://github.com/JamieGeddes/factorial.git');
+    assert.equal(push?.branch, 'factorial/x');
+    assert.equal(push?.baseCommit, base);
+    assert.equal(push?.headSha, sha);
+    assert.equal(push?.existingBranch, false);
+    assert.equal(push?.token, TOKEN);
+    assert.deepEqual(Buffer.from(push?.bundle ?? []), Buffer.from('ABC'));
+  });
+
+  it('pushes a rework onto the existing branch from the head its session started at', async () => {
+    const started = 'd'.repeat(40);
+    await collect({ ...ctx, salvage: true, roundStart: { commit: started, existing: true, pushed: false } }, log, deps);
+    assert.equal(pushes[0]?.existingBranch, true);
+    assert.equal(pushes[0]?.baseCommit, started);
   });
 
   it('stops the round\'s own session, not the work item\'s', async () => {
@@ -361,15 +307,15 @@ describe('collect stops the sessions it has finished with', () => {
   });
 
   it('stops nothing when the push fails', async () => {
-    failOn = 'push --quiet';
-    await assert.rejects(collect({ ...ctx, salvage: true }, log, deps), /push --quiet failed/);
-    assert.deepEqual(events, ['bundle']);
+    failOn = 'push';
+    await assert.rejects(collect({ ...ctx, salvage: true }, log, deps), /push failed/);
+    assert.deepEqual(events, ['bundle', 'push']);
   });
 
   it('still succeeds when a stop fails', async () => {
     failStop = true;
     const result = await collect({ ...ctx, salvage: true }, log, deps);
     assert.equal(result.headSha, pushed);
-    assert.deepEqual(events, [`bundle`, `push ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}-push`, `stop ${WORK_ITEM_ID}`]);
+    assert.deepEqual(events, ['bundle', 'push', `stop ${WORK_ITEM_ID}`]);
   });
 });
