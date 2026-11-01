@@ -272,6 +272,7 @@ async function* runPi(
     await resourceLoader.reload();
     const customTools = toolsFor(spec.tools, {
       cwd: config.workspace,
+      repository: config.repository,
       runner: parts.runner,
       helper: parts.helper,
       webSearch: parts.webSearch,

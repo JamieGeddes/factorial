@@ -78,6 +78,8 @@ export interface Config {
   webSearchGatewayUrl: string | undefined;
   port: number;
   workspace: string;
+  /** The target repository's clone, inside the workspace: where shell commands start. */
+  repository: string;
   /** The agent user's home directory. */
   agentHome: string;
   /** Where the host keeps the run's record: root-owned, out of the agent user's reach. */
@@ -121,6 +123,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     webSearchGatewayUrl: env.FACTORIAL_WEB_SEARCH_GATEWAY_URL || undefined,
     port: 8080,
     workspace: '/workspace',
+    repository: '/workspace/repo',
     agentHome: '/home/agent',
     stateDirectory: '/var/lib/factorial',
   };
