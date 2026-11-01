@@ -44,7 +44,7 @@ async function guarded(run: () => Promise<Response>): Promise<Response> {
 export interface WorkItemsPage {
   items: WorkItemSummary[];
   total: number;
-  /** Every source type the ledger holds, for the source filter. */
+  /** Every source type the ledger's rows record, for the source filter. */
   sources: { type: string; label: string }[];
   /** Running (not in Test) and waiting (in Test) items, for the rail's count. */
   counts: { running: number; waiting: number };
@@ -61,7 +61,8 @@ export async function workItemsPage(services: Services, query: { filter?: string
   const limit = Math.min(500, Math.max(1, Number(query.limit) || 100));
   const offset = Math.max(0, Number(query.cursor) || 0);
   const items = matching.slice(offset, offset + limit);
-  const types = [...new Set(all.map((item) => item.source.type))].sort();
+  // A row without a WorkItem records no source type, so it adds none to the filter.
+  const types = [...new Set(all.map((item) => item.source.type).filter(Boolean))].sort();
   return {
     items,
     total: matching.length,

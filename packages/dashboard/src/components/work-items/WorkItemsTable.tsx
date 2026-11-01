@@ -26,21 +26,24 @@ const columns: Column<WorkItemSummary>[] = [
   {
     key: 'source',
     header: 'Source',
-    render: (i) => (
-      <>
-        {i.source.label}
-        <span className="sub">
-          {i.source.url ? (
-            <a href={i.source.url} target="_blank" rel="noreferrer noopener">
-              {i.source.ref}
-            </a>
-          ) : (
-            i.source.ref
-          )}
-          {i.requester ? ` · by ${i.requester}` : ''}
-        </span>
-      </>
-    ),
+    render: (i) =>
+      i.incomplete ? (
+        '–'
+      ) : (
+        <>
+          {i.source.label}
+          <span className="sub">
+            {i.source.url ? (
+              <a href={i.source.url} target="_blank" rel="noreferrer noopener">
+                {i.source.ref}
+              </a>
+            ) : (
+              i.source.ref
+            )}
+            {i.requester ? ` · by ${i.requester}` : ''}
+          </span>
+        </>
+      ),
   },
   {
     key: 'repository',

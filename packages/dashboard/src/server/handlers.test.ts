@@ -20,6 +20,8 @@ const rows = [
   item(ID2, { createdAt: '2026-11-01T09:00:00Z', stages: { Build: { startedAt: '2026-11-01T09:01:00Z' } } }),
 ];
 
+const ID3 = 'd1a2b3c4-d53d-11f1-8851-ff488f20a8b2';
+
 const read = async (response: Response) => ({ status: response.status, body: (await response.json()) as Record<string, unknown> });
 
 test('/api/work-items: running first, filtered, with sources and counts', async () => {
@@ -34,6 +36,20 @@ test('/api/work-items: running first, filtered, with sources and counts', async 
   assert.deepEqual((running.body.items as Array<{ id: string }>).map((i) => i.id), [ID2]);
   const page = await read(await getWorkItems(new Request('http://h/api/work-items?limit=1'), services));
   assert.equal(page.body.nextCursor, '1');
+});
+
+test('/api/work-items: a row without a WorkItem is listed under all and attention, and adds no source', async () => {
+  const orphan: LedgerRow = { workItemId: ID3, status: 'failed', savedWork: true };
+  const services = stubServices({ rows: [...rows, orphan] });
+  const all = await read(await getWorkItems(new Request('http://h/api/work-items'), services));
+  const found = (all.body.items as Array<{ id: string; title: string; status: { label: string } }>).find((i) => i.id === ID3);
+  assert.equal(found?.title, 'No WorkItem recorded');
+  assert.equal(found?.status.label, 'failed');
+  assert.deepEqual(all.body.sources, [{ type: 'github-issue', label: 'GitHub issue' }]);
+  const attention = await read(await getWorkItems(new Request('http://h/api/work-items?filter=attention'), services));
+  assert.deepEqual((attention.body.items as Array<{ id: string }>).map((i) => i.id), [ID3]);
+  const detail = await read(await getWorkItem(services, ID3));
+  assert.equal(detail.status, 200);
 });
 
 test('/api/work-items/{id}: the row, its thread and its artefacts; 400 and 404 otherwise', async () => {

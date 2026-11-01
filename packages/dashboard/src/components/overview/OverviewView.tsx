@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react';
 import { useChannels } from '../../client/live.tsx';
 import { useNow } from '../../client/now.tsx';
 import { useRefreshed } from '../../client/refresh.tsx';
-import { clip, fmtDur, fmtK, fmtUsd, shortId } from '../../lib/format.ts';
+import { clip, fmtDur, fmtK, fmtUsd, refAndTitle, shortId } from '../../lib/format.ts';
 import { noticeTime, type Overview, type Puck, type SessionRow } from '../../lib/overview.ts';
 import { emptyWatch, retryNotices, watchEvent, type RunWatch } from '../../lib/run-watch.ts';
 import { graphStage, stageLabel, STAGES } from '../../lib/stages.ts';
@@ -70,7 +70,7 @@ function sessionColumns(now: number, watches: Record<string, RunWatch>): Column<
       render: (r) => (
         <>
           <span className="mono">{shortId(r.id)}</span>
-          <span className="sub">{`${r.ref} · ${clip(r.title, 44)}`}</span>
+          <span className="sub">{refAndTitle(r.ref, clip(r.title, 44))}</span>
         </>
       ),
     },
@@ -156,7 +156,7 @@ const RECENT: Column<Overview['recent'][number]>[] = [
     render: (r) => (
       <>
         <span className="mono">{shortId(r.id)}</span>
-        <span className="sub">{`${r.ref} · ${clip(r.title, 40)}`}</span>
+        <span className="sub">{refAndTitle(r.ref, clip(r.title, 40))}</span>
       </>
     ),
   },

@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { useNow } from '../../client/now.tsx';
 import { useRefreshed } from '../../client/refresh.tsx';
 import { useRunEvents } from '../../client/run-events.tsx';
-import { fmtDur, fmtK, fmtUsd, shortId } from '../../lib/format.ts';
+import { fmtDur, fmtK, fmtUsd, refAndTitle, shortId } from '../../lib/format.ts';
 import type { RunDetail, TimelineRow } from '../../lib/run-view.ts';
 import { isPlanWrite, type Tally } from '../../lib/transcript.ts';
 import { MeterRow } from '../Meter.tsx';
@@ -140,7 +140,7 @@ export function RunView({ initial }: { initial: RunDetail }) {
       <div className="run-head">
         <div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <h1>{`${detail.ref} · ${detail.title}`}</h1>
+            <h1>{refAndTitle(detail.ref, detail.title)}</h1>
             <Pill pill={detail.status} />
           </div>
           <div className="ids">

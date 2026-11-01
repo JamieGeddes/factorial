@@ -13,6 +13,7 @@ import { BuildRoundsTag } from './BuildRoundsTag.tsx';
 import { Meter } from './Meter.tsx';
 import { Pill } from './Pill.tsx';
 import { RunLine } from './RunLine.tsx';
+import { WorkItemDetail } from './work-items/WorkItemDetail.tsx';
 import { WorkItemsTable } from './work-items/WorkItemsTable.tsx';
 
 const router = { push() {}, replace() {}, refresh() {}, prefetch() {}, back() {}, forward() {} };
@@ -41,6 +42,20 @@ test('a work item titled <img src=x onerror=alert(1)> shows as text', () => {
   assert.ok(html.includes('&lt;script&gt;alert(2)&lt;/script&gt;'));
   assert.ok(!html.includes('<b>branch'));
   assert.ok(!html.includes('<i>me'));
+});
+
+test('a row without a WorkItem shows "–" in the Source column', () => {
+  const orphan = summarise({ workItemId: ID, status: 'failed', savedWork: true }, undefined, Date.parse('2026-11-01T10:10:00Z'));
+  const html = render(<WorkItemsTable items={[orphan]} empty="none" />);
+  assert.match(html, /No WorkItem recorded/);
+  assert.match(html, /<td[^>]*>–<\/td>/);
+  assert.match(html, /Written by a stage update; no WorkItem was accepted/);
+  assert.ok(!html.includes('unknown'));
+  const row = { workItemId: ID, status: 'failed', savedWork: true };
+  const page = render(<WorkItemDetail detail={{ row, thread: null, summary: orphan, artefacts: [], links: {} }} />);
+  assert.match(page, /<h1>No WorkItem recorded<\/h1>/);
+  assert.ok(!page.includes('(no text)'));
+  assert.equal(page.split('Written by a stage update; no WorkItem was accepted').length - 1, 2);
 });
 
 test('a row links to the item, and an empty table says what to clear', () => {
