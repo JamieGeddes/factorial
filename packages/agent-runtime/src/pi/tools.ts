@@ -40,6 +40,14 @@ export const PI_TOOLS: ToolNames = {
   webSearch: WEB_SEARCH_TOOL,
 };
 
+/**
+ * What the shell is for, ahead of pi's own description (#250). The model reads
+ * a tool's description as it chooses the tool, so this says there what the
+ * prompt says: commands in bash, files through the file tools.
+ */
+export const BASH_PURPOSE =
+  `Runs a command in the repository: git, and the repository's own install, test, build and lint commands and scripts. Not for reading, searching, creating or changing files: use ${PI_TOOLS.read}, ${PI_TOOLS.grep}, ${PI_TOOLS.glob}, ${PI_TOOLS.write} and ${PI_TOOLS.edit}, which can be called several at once in one response.`;
+
 export function toolCallOf(toolName: string, input: unknown): ToolCall {
   const fields = (typeof input === 'object' && input !== null ? input : {}) as Record<string, unknown>;
   const target = typeof fields.path === 'string' ? fields.path : undefined;
@@ -87,13 +95,16 @@ export function toolsFor(kinds: readonly ToolKind[], deps: ToolDeps): AnyTool[] 
   for (const kind of kinds) {
     const tool = ((): AnyTool | undefined => {
       switch (kind) {
-        case 'shell':
+        case 'shell': {
           // pi runs a tool in the session's directory when it has one; the hook overrides that.
-          return createBashToolDefinition(deps.repository, {
+          const bash = createBashToolDefinition(deps.repository, {
             operations: bashOperations(deps.runner),
             exposeSessionEnvironment: false,
             spawnHook: (context) => ({ ...context, cwd: deps.repository }),
           });
+          bash.description = `${BASH_PURPOSE} ${bash.description}`;
+          return bash;
+        }
         case 'read':
           return createReadToolDefinition(deps.cwd, { operations: readOperations(deps.helper) });
         case 'edit':

@@ -16,7 +16,7 @@ import { PiEvents, costOf, durationOf, runStarted, usageOf } from './events.ts';
 import { pageText } from './fetch.ts';
 import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
 import { PI_SETTINGS, RG_WRAPPER, firstOnPath } from './harness.ts';
-import { PI_TOOLS, toolCallOf, toolsFor } from './tools.ts';
+import { BASH_PURPOSE, PI_TOOLS, toolCallOf, toolsFor } from './tools.ts';
 
 const configEnv = {
   FACTORIAL_ROLE: 'builder',
@@ -62,6 +62,15 @@ describe('pi tools', () => {
     const result = await bash!.execute('call', { command: 'pwd && cat src/a.ts' }, undefined, undefined, { cwd: workspace } as never);
     const output = result.content.map((part: { type: string; text?: string }) => part.text ?? '').join('');
     assert.equal(output.trim(), `${realpathSync(repository)}\nin the repository`);
+  });
+
+  it("says in the bash tool's description that it runs commands and the file tools handle files (#250)", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'pi-'));
+    const [bash] = toolsFor(['shell'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, fetch: undefined, agent: undefined });
+    assert.ok(bash!.description.startsWith(BASH_PURPOSE));
+    assert.match(bash!.description, /Not for reading, searching, creating or changing files: use read, grep, find, write and edit/);
+    // pi's own description, with its output limits, follows.
+    assert.match(bash!.description, /Output is truncated/);
   });
 });
 

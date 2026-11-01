@@ -41,6 +41,7 @@ describe('builder prompt', () => {
     assert.match(section, /Never edit a file through bash: no python or node one-off scripts, sed -i, perl -i/);
     assert.match(section, /The host refuses those, and printing or searching the repository's files with cat, head, tail, sed -n, grep, rg or find in bash/);
     assert.ok(builderPrompt.includes('Write a whole function, test or section in one edit'));
+    assert.match(section, new RegExp(`- Calls that do not depend on each other go in one response: several ${PI_TOOLS.read}, ${PI_TOOLS.grep} or ${PI_TOOLS.glob} calls.*count as one turn`));
   });
 
   it('says bash starts in the repository and names the workspace files by absolute path (#250)', () => {
