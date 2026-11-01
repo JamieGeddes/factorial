@@ -137,7 +137,8 @@ test('newest created first, whatever the state, with items that have no creation
   const old = summarise(base({ createdAt: '2026-11-01T09:00:00Z', result: 'failed' }), undefined, NOW);
   const recent = summarise(base({ createdAt: '2026-11-01T11:00:00Z', result: 'failed' }), undefined, NOW);
   const running = summarise(base({ createdAt: '2026-11-01T08:00:00Z' }), undefined, NOW);
-  const undated = { ...old, createdAt: undefined };
+  const { createdAt: _omit, ...rest } = base();
+  const undated = summarise(rest, undefined, NOW);
   assert.deepEqual([undated, running, old, recent].sort(newestFirst), [recent, old, running, undated]);
 });
 
