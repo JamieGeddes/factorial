@@ -3,6 +3,7 @@ import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 
 import { artefactPrefix } from '@factorial/artefacts';
+import type { LedgerRow } from '@factorial/progress';
 import type { WorkItem } from '@factorial/workitem';
 
 import { requireEnv } from './env.ts';
@@ -146,4 +147,24 @@ export async function recordProgress(workItemId: string, status: string, attribu
       ExpressionAttributeValues: values,
     }),
   );
+}
+
+/** The parts of a ledger row a progress event is built from: never the work item's text. */
+export async function progressRow(workItemId: string): Promise<LedgerRow | undefined> {
+  const result = await documents.send(
+    new GetCommand({
+      TableName: requireEnv('TABLE_NAME'),
+      Key: { workItemId },
+      ProjectionExpression: '#id, #item.#source, #item.#repository, #attempt, #thread',
+      ExpressionAttributeNames: {
+        '#id': 'workItemId',
+        '#item': 'workItem',
+        '#source': 'source',
+        '#repository': 'repository',
+        '#attempt': 'attempt',
+        '#thread': 'threadKey',
+      },
+    }),
+  );
+  return result.Item as LedgerRow | undefined;
 }

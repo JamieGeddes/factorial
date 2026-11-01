@@ -95,6 +95,19 @@ An App created before these events were added needs them subscribed. Each event 
 4. Check the rework events: in the left nav click **Advanced**. Comment on a Factorial pull request without the mention; **Recent Deliveries** shows an `issue_comment` delivery answered `202` with "comment does not address Factorial".
 5. Check the **Pull request** event: merge or close a Factorial pull request. **Recent Deliveries** shows a `pull_request` delivery answered `202` with `{"pullRequest":<number>,"merged":true}` (or `false`). Within a minute its thread records `outcome` (`docs/finding-a-run.md`). A `pull_request` delivery for any other action is answered `202` with "ignored pull request action".
 
+### When a close is missed
+
+A close GitHub never delivers (the App not subscribed to **Pull request**, a failed delivery, or the adapter dropping it) leaves its thread without an outcome, and nothing errs. Hourly, `factorial-thread-reconcile` reads the pull request of every thread that records one and no outcome, with a read-only token (`pull_requests: read`). A close more than an hour old is recorded as the webhook would have recorded it, and counted in the metric `Factorial/MissedPullRequestCloses` (in all, and per `Repository`). For a close without merging, `by` is the issues API's `closed_by`; for an account GitHub no longer has, it is `ghost`.
+
+Any missed close puts the alarm `factorial-missed-pull-request-closes` into `ALARM` for that hour; the command centre's status bar and Health view show it. The first run after the reconciler deployed records every close missed until then, so that alarm is expected once. When it fires:
+
+1. Find which pull requests: **CloudWatch** → left nav **Logs** → **Log groups** → `/aws/lambda/factorial-thread-reconcile` → **Search log group**, with the filter `"missed close recorded"`. Each line names the pull request (`pullRequest`) and its close (`closedAt`).
+2. Check the subscription: on the App's page (step 1 above), left nav **Permissions & events**, then **Subscribe to events**. **Pull request** must be ticked; if it is not, tick it and click **Save changes**.
+3. Check the deliveries: left nav **Advanced**, then **Recent Deliveries**. Find the `pull_request` delivery near the `closedAt` time. None at all points to the subscription; a red delivery (no `2xx` response) means the adapter failed it, so open it and read **Response**, then the adapter's log group `/aws/lambda/factorial-github-issues-adapter` at that time (`docs/finding-a-run.md`).
+4. Nothing to replay: the reconciler has already recorded the outcome and announced it.
+
+The alarm `factorial-thread-reconcile-errors` means the reconciler itself failed, so missed closes are not being recorded: read its log group for `"failed"`. A single pull request it cannot read (a `404` or another GitHub error) is logged as `not reconciled; the next run tries again`, does not fail the run, and is tried again each hour.
+
 ## Adding a permission later
 
 Changing the App's permissions does not change existing installations until the installation owner accepts the new permissions.
