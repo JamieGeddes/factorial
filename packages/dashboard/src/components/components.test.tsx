@@ -13,6 +13,7 @@ import { BuildRoundsTag } from './BuildRoundsTag.tsx';
 import { Meter } from './Meter.tsx';
 import { Pill } from './Pill.tsx';
 import { RunLine } from './RunLine.tsx';
+import { SourceLink } from './SourceLink.tsx';
 import { WorkItemDetail } from './work-items/WorkItemDetail.tsx';
 import { WorkItemsTable } from './work-items/WorkItemsTable.tsx';
 
@@ -56,6 +57,26 @@ test('a row without a WorkItem shows "–" in the Source column', () => {
   assert.match(page, /<h1>No WorkItem recorded<\/h1>/);
   assert.ok(!page.includes('(no text)'));
   assert.equal(page.split('Written by a stage update; no WorkItem was accepted').length - 1, 2);
+});
+
+test('the source links to the record that triggered it, or shows as text without a URL', () => {
+  const linked = { type: 'github-issue', label: 'GitHub issue', ref: '#42', url: 'https://github.com/JamieGeddes/factorial/issues/42' };
+  const link = '<a href="https://github.com/JamieGeddes/factorial/issues/42" target="_blank" rel="noreferrer noopener">';
+  assert.equal(render(<SourceLink source={linked} />), `${link}#42</a>`);
+  assert.equal(render(<SourceLink source={linked} withLabel />), `${link}GitHub issue #42</a>`);
+  assert.equal(render(<SourceLink source={{ type: 'jira-ticket', label: 'jira-ticket', ref: 'OPS-7' }} withLabel />), 'jira-ticket OPS-7');
+
+  const row = { workItemId: ID, workItem: { title: 't', requestedBy: 'jamie', source: { type: 'github-issue', id: '42', url: 'https://evil.example' }, repository: { owner: 'JamieGeddes', name: 'factorial' } } };
+  const summary = summarise(row, undefined, Date.parse('2026-11-01T10:10:00Z'));
+  const page = render(<WorkItemDetail detail={{ row, thread: null, summary, artefacts: [], links: {} }} />);
+  assert.ok(page.includes(`${link}GitHub issue #42</a> · by jamie`), page);
+  assert.ok(!page.includes('evil.example'));
+  assert.ok(render(<WorkItemsTable items={[summary]} empty="none" />).includes(`${link}#42</a>`));
+
+  const invalid = { ...row, workItem: { ...row.workItem, repository: { owner: 'bad/owner', name: 'factorial' } } };
+  const plain = render(<WorkItemDetail detail={{ row: invalid, thread: null, summary: summarise(invalid, undefined, Date.parse('2026-11-01T10:10:00Z')), artefacts: [], links: {} }} />);
+  assert.ok(plain.includes('GitHub issue #42 · by jamie'), plain);
+  assert.ok(!plain.includes('/issues/42'));
 });
 
 test('a row links to the item, and an empty table says what to clear', () => {

@@ -19,17 +19,49 @@ export const FILTER_LABELS: Record<Filter, string> = {
   refused: 'Refused',
 };
 
-const SOURCE_LABELS: Record<string, string> = {
-  'github-issue': 'GitHub issue',
-  'github-pull-request': 'Pull request',
-  'github-pull-request-review': 'PR review',
-  'github-pull-request-review-comment': 'PR review comment',
-  'github-pull-request-comment': 'PR comment',
-  'github-workflow-run': 'Checks failed',
+/** One source type: how the views name it and its reference. */
+export interface SourceType {
+  label: string;
+  /**
+   * The reference shown and, when the app can build one from validated
+   * fields, its link (`lib/links.ts`). The recorded `source.url` is never used.
+   */
+  reference(row: LedgerRow, repo?: Repository): { ref: string; url?: string };
+}
+
+const sourceId = (row: LedgerRow): string => oneLine(text(row.workItem?.source?.id)).slice(0, 40);
+
+const issue: SourceType['reference'] = (row, repo) => {
+  const url = repo ? issueUrl(repo, Number(row.workItem?.source?.id)) : undefined;
+  return { ref: `#${sourceId(row)}`, ...(url ? { url } : {}) };
 };
 
+/** The pull request a rework replies to, or the source id when none is recorded. */
+const pullRequest: SourceType['reference'] = (row, repo) => {
+  const item = row.workItem ?? {};
+  const pr = item.inReplyTo?.number ?? row.reworkOf?.prNumber ?? item.context?.pullRequest?.number;
+  if (typeof pr !== 'number') return { ref: sourceId(row) };
+  const url = repo ? pullRequestUrl(repo, pr) : undefined;
+  return { ref: `PR #${pr}`, ...(url ? { url } : {}) };
+};
+
+/** Every source type the views know. A new trigger type adds one entry, with its URL builder in `lib/links.ts`. */
+export const SOURCES: Readonly<Record<string, SourceType>> = {
+  'github-issue': { label: 'GitHub issue', reference: issue },
+  'github-pull-request': { label: 'Pull request', reference: pullRequest },
+  'github-pull-request-review': { label: 'PR review', reference: pullRequest },
+  'github-pull-request-review-comment': { label: 'PR review comment', reference: pullRequest },
+  'github-pull-request-comment': { label: 'PR comment', reference: pullRequest },
+  'github-workflow-run': { label: 'Checks failed', reference: pullRequest },
+};
+
+/** An unknown type: its raw type as the label, the source id as text, no link. */
+function sourceType(type: string): SourceType {
+  return Object.hasOwn(SOURCES, type) ? (SOURCES[type] as SourceType) : { label: type, reference: (row) => ({ ref: sourceId(row) }) };
+}
+
 export function sourceLabel(type: string): string {
-  return SOURCE_LABELS[type] ?? type;
+  return sourceType(type).label;
 }
 
 export interface WorkItemSummary {
@@ -105,23 +137,6 @@ function latestRun(row: LedgerRow): { stage: string; round: number } | undefined
   return undefined;
 }
 
-function reference(row: LedgerRow): { ref: string; url?: string; pr?: number } {
-  const item = row.workItem ?? {};
-  const type = item.source?.type ?? '';
-  const repo = isRepository(item.repository) ? item.repository : undefined;
-  const pr = item.inReplyTo?.number ?? row.reworkOf?.prNumber ?? item.context?.pullRequest?.number;
-  if (type === 'github-issue') {
-    const ref = `#${text(item.source?.id)}`;
-    const url = repo ? issueUrl(repo, Number(item.source?.id)) : undefined;
-    return { ref, ...(url ? { url } : {}) };
-  }
-  if (typeof pr === 'number') {
-    const url = repo ? pullRequestUrl(repo, pr) : undefined;
-    return { ref: `PR #${pr}`, ...(url ? { url } : {}), pr };
-  }
-  return { ref: oneLine(text(item.source?.id)).slice(0, 40) };
-}
-
 function meanOf(scores: Record<string, number> | undefined): number | undefined {
   const values = Object.values(scores ?? {}).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined;
@@ -133,7 +148,8 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
   const result = resultOf(row, resultSince);
   const current = currentStage(row);
   const repository = isRepository(item.repository) ? { owner: item.repository.owner, name: item.repository.name } : undefined;
-  const { ref, url } = incomplete ? { ref: '', url: undefined } : reference(row);
+  const type = incomplete ? '' : text(item.source?.type) || 'unknown';
+  const { ref, url } = incomplete ? { ref: '', url: undefined } : sourceType(type).reference(row, repository);
   const prNumber = typeof row.prNumber === 'number' ? row.prNumber : thread?.prNumber;
   const prUrl = repository && prNumber ? pullRequestUrl(repository, prNumber) : undefined;
   const pill = statusPill(row, thread, resultSince);
@@ -143,7 +159,6 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
   const cost = costOf(row);
   const mean = meanOf(row.reviewScores);
   const run = latestRun(row);
-  const type = incomplete ? '' : text(item.source?.type) || 'unknown';
   const endedAt = result === undefined ? undefined : (row.endedAt ?? row.updatedAt);
   return {
     id: row.workItemId,

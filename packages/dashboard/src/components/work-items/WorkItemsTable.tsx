@@ -2,6 +2,7 @@
 
 import { Elapsed } from '../Elapsed.tsx';
 import { Pill } from '../Pill.tsx';
+import { SourceLink } from '../SourceLink.tsx';
 import { Table, type Column } from '../Table.tsx';
 import { clip, fmtUsd, shortId } from '../../lib/format.ts';
 import { runHref } from '../../lib/overview.ts';
@@ -33,13 +34,7 @@ const columns: Column<WorkItemSummary>[] = [
         <>
           {i.source.label}
           <span className="sub">
-            {i.source.url ? (
-              <a href={i.source.url} target="_blank" rel="noreferrer noopener">
-                {i.source.ref}
-              </a>
-            ) : (
-              i.source.ref
-            )}
+            <SourceLink source={i.source} />
             {i.requester ? ` · by ${i.requester}` : ''}
           </span>
         </>
