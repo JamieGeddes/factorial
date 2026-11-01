@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Factorial VPC session network</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@600;700&family=Public+Sans:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* Layout: one reading column, figures wider than the text, tables full width. */
+  --bg: #f6f8f8;
+  --surface: #ffffff;
+  --ink: #16242a;
+  --muted: #5b6b72;
+  --line: #d3dbde;
+  --accent: #0b6e73;
+  --accent-soft: #d9efef;
+  --blocked: #b4342b;
+  --blocked-soft: #f7e3e0;
+  --note: #eef3f4;
+  --font-display: "Manrope", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Public Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #101a1d;
+    --surface: #182528;
+    --ink: #e4ecee;
+    --muted: #9fb0b5;
+    --line: #2f4046;
+    --accent: #5fd0cf;
+    --accent-soft: #163a3c;
+    --blocked: #f08a80;
+    --blocked-soft: #44231f;
+    --note: #1d2c30;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #101a1d;
+  --surface: #182528;
+  --ink: #e4ecee;
+  --muted: #9fb0b5;
+  --line: #2f4046;
+  --accent: #5fd0cf;
+  --accent-soft: #163a3c;
+  --blocked: #f08a80;
+  --blocked-soft: #44231f;
+  --note: #1d2c30;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.55;
+  padding: 0 16px 80px;
+}
+main { max-width: 1040px; margin: 0 auto; }
+.prose { max-width: 720px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.15; }
+h1 { font-size: 2.1rem; margin: 48px 0 8px; }
+h2 { font-size: 1.45rem; margin: 56px 0 12px; padding-top: 16px; border-top: 1px solid var(--line); }
+h3 { font-size: 1.1rem; margin: 28px 0 8px; }
+p { margin: 0 0 14px; }
+.lede { color: var(--muted); font-size: 1.05rem; margin-bottom: 28px; }
+.meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 36px; }
+code, pre { font-family: var(--font-mono); font-size: 0.86em; }
+code { background: var(--note); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--note); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow-x: auto; line-height: 1.5; margin: 0 0 18px; }
+pre code { background: none; padding: 0; }
+ul, ol { margin: 0 0 16px; padding-left: 22px; }
+li { margin-bottom: 6px; }
+a { color: var(--accent); }
+strong { font-weight: 600; }
+.summary {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 18px 22px;
+  margin: 0 0 32px;
+}
+.summary ol { margin-bottom: 0; }
+figure { margin: 28px 0 36px; }
+figure svg { max-width: 100%; height: auto; display: block; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
+/* Diagram colours follow the theme: text inherits the page foreground, and
+   the accent (the new hop) and blocked (removed path) hues are the tokens. */
+figure svg text { fill: currentColor; }
+figure svg .acc-stroke { stroke: var(--accent); }
+figure svg .acc-fill { fill: var(--accent); }
+figure svg text.acc-fill { fill: var(--accent); }
+figure svg .acc-box { fill: var(--accent); fill-opacity: 0.14; stroke: var(--accent); }
+figure svg .blk-stroke { stroke: var(--blocked); }
+figure svg .blk-fill { fill: var(--blocked); }
+figcaption { color: var(--muted); font-size: 0.9rem; margin-top: 10px; max-width: 720px; }
+.scroll { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; margin: 0 0 24px; font-size: 0.93rem; background: var(--surface); }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-display); font-weight: 600; font-size: 0.85rem; letter-spacing: 0.01em; color: var(--muted); border-bottom: 2px solid var(--line); }
+td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.pill { display: inline-block; font-family: var(--font-display); font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; }
+.pill.keep { background: var(--accent-soft); color: var(--accent); }
+.pill.gone { background: var(--blocked-soft); color: var(--blocked); }
+.pill.new { background: var(--note); color: var(--ink); border: 1px solid var(--line); }
+.note { background: var(--note); border-radius: 8px; padding: 14px 18px; margin: 0 0 18px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 24px; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 16px 18px; }
+.card h3 { margin-top: 0; }
+.card p:last-child, .card ul:last-child { margin-bottom: 0; }
+.toc { font-size: 0.92rem; color: var(--muted); margin-bottom: 8px; }
+.toc a { color: var(--ink); text-decoration: none; margin-right: 14px; }
+.toc a:hover, .toc a:focus-visible { text-decoration: underline; outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Factorial VPC session network</h1>
+<p class="lede prose">How the builder and reviewer Runtimes keep working once they move to VPC mode in private subnets that reach neither GitHub nor the public npm registry.</p>
+<p class="meta">Design proposal for Factorial, 30 October 2026, revised 1 November 2026. Region eu-west-1. Not yet agreed: nothing here is binding until it reaches <code>CLAUDE.md</code>.</p>
+<p class="toc"><a href="#summary">Summary</a><a href="#today">What a session reaches</a><a href="#overview">The design</a><a href="#repo">Repository in and out</a><a href="#npm">Packages</a><a href="#endpoints">Endpoints and policies</a><a href="#build">What it takes</a><a href="#checks">Checks</a></p>
+
+<section id="summary" class="summary prose">
+<p><strong>Recommendation.</strong> Give the session subnets no path to the internet at all, and move every GitHub operation into the orchestrator Lambdas, which already hold the tokens and already run outside any VPC. The repository crosses into a session as a git bundle through a short-lived S3 transfer bucket, fetched over the free S3 gateway endpoint with a five-minute presigned URL. Commits cross back the way they do today, as a bundle on the command stream. The clean-room push leaves the builder Runtime and runs inside the Collect Lambda. Packages come from CodeArtifact with an npmjs upstream through its interface endpoints. The model and web search reach Bedrock and the AgentCore gateway through interface endpoints. The NAT gateway is not on the session route table.</p>
+<ol>
+<li><strong>No session ever talks to GitHub again</strong>, not even with a read token header. The design rule "no credential enters the sandbox" becomes true for GitHub in full.</li>
+<li><strong>Nothing reachable from a session accepts a write.</strong> The S3 endpoint policy allows <code>GetObject</code> on three buckets and nothing else, so even stolen outside credentials cannot upload through it.</li>
+<li><strong>One new container</strong> (a Lambda image with git) and <strong>one new stack</strong> (<code>factorial-network</code>). No new service to run.</li>
+</ol>
+<p><strong>Status, 1 November 2026.</strong> The VPC itself is deferred: the interface endpoints it needs cost about three times a NAT gateway per month, which the proof of concept does not justify. The parts that stand without it are going ahead in this order: CodeArtifact (#242, deployed and working), the clean room in the Collect Lambda (#261), then the clone handover through the transfer bucket (#262). The Runtimes stay <code>NetworkMode: PUBLIC</code> throughout. Once #262 is in, no session reaches GitHub, and the VPC change reduces to subnets and endpoints.</p>
+<p><strong>Decided 1 November 2026: VPC mode is the target, and its trigger is the first private target.</strong> The repositories the final Factorial works on are private, and sessions may need private APIs inside an existing VPC. The first makes exfiltration consequential, and only the network stops it by construction; the second cannot be done from <code>PUBLIC</code> mode at all, since a session there has no path to a private address. The rule: <code>PUBLIC</code> mode for public targets while the proof of concept lasts; VPC mode, the egress allow-list and the capability replacements below in place before the first private repository or private API is enrolled. The sections on the existing VPC and on security groups say how the design changes for that.</p>
+</section>
+
+<h2 id="today">What a session reaches, today and after</h2>
+<div class="prose">
+<p>Every row below is a network path a session uses now in <code>NetworkMode: PUBLIC</code>. Three are already orchestrator-driven commands whose network traffic happens to run inside the session; those are the ones that move.</p>
+</div>
+<div class="scroll">
+<table>
+<thead><tr><th>Need</th><th>Today</th><th>After</th><th></th></tr></thead>
+<tbody>
+<tr><td>Repository into the session</td><td><code>git fetch github.com</code> run in the session by Prepare, read token as a header</td><td>Prepare fetches in the Lambda, writes a bundle to S3; the session fetches it from the bundle via a presigned URL, today over the internet, later over the S3 gateway endpoint (#262)</td><td><span class="pill new">moves</span></td></tr>
+<tr><td>Commits out of the session</td><td>Bundle as base64 on the command stream, 8 MB cap</td><td>Unchanged</td><td><span class="pill keep">keep</span></td></tr>
+<tr><td>Push to the work branch</td><td>Clean-room session on the builder Runtime: clone, rewrite, push with a write token header</td><td>Same script, run in the Collect Lambda's own <code>/tmp</code>. The second session goes away (#261)</td><td><span class="pill new">moves</span></td></tr>
+<tr><td>Named files out (plan, summary, logs)</td><td>Base64 on the command stream</td><td>Unchanged</td><td><span class="pill keep">keep</span></td></tr>
+<tr><td>Session commands (seed, bundle, export)</td><td>Command API, served by AgentCore into the microVM</td><td>Unchanged: this is not VPC traffic</td><td><span class="pill keep">keep</span></td></tr>
+<tr><td>Model calls</td><td>Public <code>bedrock-runtime</code> endpoint, execution role</td><td><code>bedrock-runtime</code> interface endpoint</td><td><span class="pill keep">endpoint</span></td></tr>
+<tr><td>Web search</td><td>Public gateway URL, signed by the execution role</td><td><code>bedrock-agentcore.gateway</code> interface endpoint, private DNS</td><td><span class="pill keep">endpoint</span></td></tr>
+<tr><td>npm packages</td><td><code>registry.npmjs.org</code></td><td>CodeArtifact repository with an npmjs upstream (#242, done), later through two interface endpoints plus the S3 gateway</td><td><span class="pill new">replaces</span></td></tr>
+<tr><td>Image refresh and logs</td><td>Service side</td><td><code>ecr.api</code>, <code>ecr.dkr</code>, <code>logs</code> endpoints and the ECR layer bucket on the S3 gateway (AgentCore requires these in VPC mode)</td><td><span class="pill keep">endpoint</span></td></tr>
+<tr><td><code>fetch</code> tool (curl to any page)</td><td>Public internet</td><td>Unreachable directly. Replace before the flip, not after: a fetch served through Factorial's gateway with a domain allow-list, or web search alone if its results prove enough</td><td><span class="pill new">replaces</span></td></tr>
+<tr><td>Private APIs a target's tests need</td><td>Unreachable</td><td>Reached through the peering to the existing VPC, admitted by each API's security group from <code>factorial-session</code> on its port</td><td><span class="pill new">new</span></td></tr>
+<tr><td><code>gh</code> in the image (read-only, no token)</td><td><code>api.github.com</code></td><td>Unreachable. Drop it from the image or leave it inert</td><td><span class="pill gone">gone</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="overview">The design in one picture</h2>
+<figure>
+<svg viewBox="0 0 1320 640" role="img" aria-label="GitHub is reached only by the orchestrator Lambdas outside the VPC. Sessions in private subnets reach AWS services through interface endpoints and read the repository bundle from the transfer bucket over the S3 gateway endpoint. The NAT gateway has no route from the session subnets." xmlns="http://www.w3.org/2000/svg" font-family="Public Sans, Helvetica Neue, Arial, sans-serif" font-size="12">
+<defs>
+<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+<marker id="arr-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="acc-fill"/></marker>
+</defs>
+<!-- zones -->
+<rect x="330" y="40" width="240" height="580" rx="8" fill="none" stroke="currentColor" stroke-dasharray="4 4" opacity="0.6"/>
+<text x="350" y="62" font-weight="600" font-size="13">Orchestrator, outside any VPC</text>
+<text x="350" y="78" opacity="0.7">Lambdas and the Fargate invoker</text>
+<rect x="600" y="40" width="500" height="580" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="620" y="62" font-weight="600" font-size="13">factorial-network VPC, eu-west-1</text>
+<rect x="620" y="84" width="220" height="300" rx="6" fill="none" stroke="currentColor" opacity="0.5"/>
+<text x="632" y="102" font-weight="600">Session subnets (2 AZs)</text>
+<text x="632" y="116" opacity="0.7">private, no route to NAT</text>
+<rect x="870" y="84" width="210" height="300" rx="6" fill="none" stroke="currentColor" opacity="0.5"/>
+<text x="882" y="102" font-weight="600">Interface endpoints</text>
+<text x="882" y="116" opacity="0.7">TCP 443 from the session SG only</text>
+<!-- outside left -->
+<rect x="40" y="100" width="230" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="155" y="126" text-anchor="middle" font-weight="600" font-size="13">GitHub</text>
+<text x="155" y="144" text-anchor="middle" opacity="0.8">repository, pull requests, Actions</text>
+<!-- orchestrator boxes -->
+<rect x="350" y="100" width="200" height="74" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="450" y="122" text-anchor="middle" font-weight="600">Prepare, ContinueBuild,</text>
+<text x="450" y="138" text-anchor="middle" font-weight="600">PrepareReview</text>
+<text x="450" y="158" text-anchor="middle" opacity="0.8">git fetch, bundle, presign</text>
+<rect x="350" y="250" width="200" height="74" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="450" y="272" text-anchor="middle" font-weight="600">Collect (clean room)</text>
+<text x="450" y="290" text-anchor="middle" opacity="0.8">import bundle, rewrite,</text>
+<text x="450" y="306" text-anchor="middle" opacity="0.8">push with write token</text>
+<rect x="350" y="400" width="200" height="50" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="450" y="422" text-anchor="middle" font-weight="600">Invoker (Fargate)</text>
+<text x="450" y="438" text-anchor="middle" opacity="0.8">runs one invocation to completion</text>
+<rect x="350" y="520" width="200" height="64" rx="6" class="acc-box" stroke-width="1.5"/>
+<text x="450" y="543" text-anchor="middle" font-weight="600">factorial-transfer (S3)</text>
+<text x="450" y="560" text-anchor="middle" opacity="0.85">repo.bundle per stage</text>
+<text x="450" y="574" text-anchor="middle" opacity="0.85">expires after 1 day</text>
+<!-- sessions -->
+<rect x="640" y="134" width="180" height="76" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="730" y="156" text-anchor="middle" font-weight="600">Builder session</text>
+<text x="730" y="174" text-anchor="middle" opacity="0.8">host (root) around pi;</text>
+<text x="730" y="190" text-anchor="middle" opacity="0.8">model's tools as agent user</text>
+<rect x="640" y="240" width="180" height="56" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="730" y="262" text-anchor="middle" font-weight="600">Reviewer session</text>
+<text x="730" y="280" text-anchor="middle" opacity="0.8">reads only, writes review.json</text>
+<!-- S3 gateway endpoint -->
+<rect x="640" y="420" width="180" height="56" rx="6" class="acc-box" stroke-width="1.5"/>
+<text x="730" y="442" text-anchor="middle" font-weight="600">S3 gateway endpoint</text>
+<text x="730" y="460" text-anchor="middle" opacity="0.85">GetObject only, three buckets</text>
+<!-- NAT -->
+<rect x="870" y="420" width="210" height="56" rx="6" fill="none" stroke="currentColor" stroke-dasharray="3 3" opacity="0.6"/>
+<text x="975" y="442" text-anchor="middle" font-weight="600" opacity="0.7">NAT gateway (public subnet)</text>
+<text x="975" y="460" text-anchor="middle" opacity="0.7">no route from the session subnets</text>
+<!-- endpoint boxes -->
+<rect x="882" y="130" width="186" height="34" rx="4" fill="none" stroke="currentColor"/>
+<text x="975" y="151" text-anchor="middle">bedrock-runtime</text>
+<rect x="882" y="174" width="186" height="34" rx="4" fill="none" stroke="currentColor"/>
+<text x="975" y="195" text-anchor="middle">bedrock-agentcore.gateway</text>
+<rect x="882" y="218" width="186" height="34" rx="4" fill="none" stroke="currentColor"/>
+<text x="975" y="239" text-anchor="middle">codeartifact.api</text>
+<rect x="882" y="262" width="186" height="34" rx="4" fill="none" stroke="currentColor"/>
+<text x="975" y="283" text-anchor="middle">codeartifact.repositories</text>
+<rect x="882" y="306" width="186" height="34" rx="4" fill="none" stroke="currentColor"/>
+<text x="975" y="327" text-anchor="middle">ecr.api, ecr.dkr, logs</text>
+<!-- services right -->
+<rect x="1130" y="130" width="170" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="1215" y="151" text-anchor="middle" font-weight="600">Bedrock: Claude</text>
+<rect x="1130" y="174" width="170" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="1215" y="195" text-anchor="middle" font-weight="600">Web search gateway</text>
+<rect x="1130" y="218" width="170" height="78" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="1215" y="242" text-anchor="middle" font-weight="600">CodeArtifact</text>
+<text x="1215" y="260" text-anchor="middle" opacity="0.8">domain factorial,</text>
+<text x="1215" y="276" text-anchor="middle" opacity="0.8">repo factorial-npm</text>
+<rect x="1130" y="306" width="170" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="1215" y="327" text-anchor="middle" font-weight="600">ECR, CloudWatch</text>
+<rect x="1130" y="400" width="170" height="50" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="1215" y="421" text-anchor="middle" font-weight="600">registry.npmjs.org</text>
+<text x="1215" y="438" text-anchor="middle" opacity="0.8">upstream, public</text>
+<rect x="1130" y="520" width="170" height="64" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="1215" y="543" text-anchor="middle" font-weight="600">Service-owned buckets</text>
+<text x="1215" y="560" text-anchor="middle" opacity="0.8">ECR image layers,</text>
+<text x="1215" y="574" text-anchor="middle" opacity="0.8">CodeArtifact assets</text>
+<!-- arrows: GitHub <-> orchestrator -->
+<line x1="270" y1="124" x2="350" y2="124" stroke="currentColor" stroke-width="1.5" marker-start="url(#arr)"/>
+<text x="310" y="116" text-anchor="middle" font-size="11">fetch, read token</text>
+<line x1="350" y1="287" x2="270" y2="287" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="310" y="280" text-anchor="middle" font-size="11">push, write token</text>
+<path d="M270,287 L155,287 L155,164" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<!-- Prepare -> transfer bucket -->
+<path d="M370,174 L370,520" fill="none" class="acc-stroke" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+<text x="384" y="350" font-size="11" class="acc-fill">PutObject repo.bundle</text>
+<text x="384" y="364" font-size="11" class="acc-fill">then presign GET, 5 min</text>
+<!-- transfer bucket -> S3 gateway -> builder -->
+<line x1="550" y1="552" x2="730" y2="552" class="acc-stroke" stroke-width="1.5"/>
+<path d="M730,552 L730,476" fill="none" class="acc-stroke" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+<text x="640" y="544" text-anchor="middle" font-size="11" class="acc-fill">GET, usable only via this endpoint</text>
+<path d="M730,420 L730,210" fill="none" class="acc-stroke" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+<text x="742" y="320" font-size="11" class="acc-fill">curl, then</text>
+<text x="742" y="334" font-size="11" class="acc-fill">git fetch from bundle</text>
+<!-- command API dashed -->
+<path d="M550,137 L640,160" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+<text x="560" y="128" font-size="11">command API</text>
+<path d="M550,270 L640,190" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-start="url(#arr)"/>
+<text x="560" y="222" font-size="11">bundle out, base64</text>
+<path d="M550,425 L600,425 L600,200 L640,200" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr)"/>
+<text x="604" y="400" font-size="11">InvokeAgentRuntime</text>
+<!-- session -> endpoints -->
+<path d="M820,172 L882,172" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<path d="M820,268 L882,268" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="851" y="162" text-anchor="middle" font-size="11">443</text>
+<!-- endpoints -> services -->
+<line x1="1068" y1="147" x2="1130" y2="147" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="1068" y1="191" x2="1130" y2="191" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="1068" y1="235" x2="1130" y2="235" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="1068" y1="279" x2="1130" y2="279" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<line x1="1068" y1="323" x2="1130" y2="323" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<!-- CodeArtifact -> npmjs -->
+<path d="M1215,296 L1215,400" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="1224" y="352" font-size="11">upstream pull,</text>
+<text x="1224" y="366" font-size="11">first request only</text>
+<!-- S3 gateway -> service buckets -->
+<path d="M820,448 L1000,448 L1000,552 L1130,552" fill="none" class="acc-stroke" stroke-width="1.5" marker-end="url(#arr-acc)"/>
+<!-- blocked NAT -->
+<path d="M820,180 L855,180 L855,448 L870,448" fill="none" class="blk-stroke" stroke-width="1.5" stroke-dasharray="3 3"/>
+<line x1="848" y1="300" x2="862" y2="314" class="blk-stroke" stroke-width="2"/>
+<line x1="862" y1="300" x2="848" y2="314" class="blk-stroke" stroke-width="2"/>
+<text x="975" y="500" text-anchor="middle" font-size="11" class="blk-fill">no 0.0.0.0/0 route: internet unreachable</text>
+</svg>
+<figcaption>Figure 1. Only the orchestrator talks to GitHub. The one new hop (teal) carries the repository into a session as a bundle through the transfer bucket and the S3 gateway endpoint. Dashed arrows are the AgentCore command and invoke APIs, which the service delivers into the microVM and which never cross the VPC. The red path is the one the design removes: the session subnets have no default route.</figcaption>
+</figure>
+
+<div class="prose">
+<p>The invoker and the orchestration Lambdas stay where they are. They are trusted code, not sandboxes, and they need GitHub, Step Functions, the ledger and the artefact store. Nothing about this design requires them inside the VPC. The invoker keeps its public subnets; moving it into the private subnets later is optional and would need the <code>bedrock-agentcore</code> data-plane, S3, DynamoDB and logs endpoints.</p>
+</div>
+
+<h2 id="repo">Repository in and out</h2>
+<div class="prose">
+<p>Today the orchestrator already owns every GitHub call, but two of its scripts run their network traffic inside a session: the fetch that seeds a session (Prepare, ContinueBuild and PrepareReview share <code>cloneScript</code>) and the clean-room push in Collect, which runs in a second session on the builder Runtime. Both move out of the session, and neither needs the VPC: the push first (#261), then the seed (#262). The bundle format already in use for commits leaving a session is the right carrier for commits going in.</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 960 330" role="img" aria-label="Before: Prepare sends a git fetch command into the session, which fetches from GitHub with a token header. After: Prepare fetches in the Lambda, writes a bundle to S3, and sends the session a command that downloads the bundle by presigned URL and fetches from the file." xmlns="http://www.w3.org/2000/svg" font-family="Public Sans, Helvetica Neue, Arial, sans-serif" font-size="12">
+<defs>
+<marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+<marker id="arr2-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="acc-fill"/></marker>
+</defs>
+<text x="24" y="36" font-weight="700" font-size="13">Before: the session fetches</text>
+<rect x="24" y="56" width="190" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="119" y="78" text-anchor="middle" font-weight="600">Prepare (Lambda)</text>
+<text x="119" y="96" text-anchor="middle" opacity="0.8">builds the script</text>
+<rect x="385" y="56" width="190" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="480" y="78" text-anchor="middle" font-weight="600">Session (new, no agent yet)</text>
+<text x="480" y="96" text-anchor="middle" opacity="0.8">git init, git fetch origin</text>
+<rect x="746" y="56" width="190" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="841" y="78" text-anchor="middle" font-weight="600">GitHub</text>
+<text x="841" y="96" text-anchor="middle" opacity="0.8">needs a route from the subnet</text>
+<line x1="214" y1="82" x2="385" y2="82" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr2)"/>
+<text x="300" y="74" text-anchor="middle" font-size="11">command API</text>
+<line x1="575" y1="82" x2="746" y2="82" class="blk-stroke" stroke-width="1.5" marker-end="url(#arr2)"/>
+<text x="660" y="74" text-anchor="middle" font-size="11" class="blk-fill">HTTPS, read token header</text>
+<line x1="24" y1="140" x2="936" y2="140" stroke="currentColor" opacity="0.3"/>
+<text x="24" y="172" font-weight="700" font-size="13">After: the orchestrator fetches, the session reads a file</text>
+<rect x="24" y="192" width="190" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="119" y="214" text-anchor="middle" font-weight="600">Prepare (Lambda, with git)</text>
+<text x="119" y="232" text-anchor="middle" opacity="0.8">git fetch the same refs</text>
+<text x="119" y="248" text-anchor="middle" opacity="0.8">git bundle create</text>
+<rect x="746" y="192" width="190" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="841" y="214" text-anchor="middle" font-weight="600">GitHub</text>
+<text x="841" y="232" text-anchor="middle" opacity="0.8">reached from the Lambda only</text>
+<path d="M214,210 L740,210 L740,205" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<line x1="700" y1="210" x2="746" y2="210" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr2)"/>
+<text x="480" y="202" text-anchor="middle" font-size="11">HTTPS, read token header, default branch and work branch only</text>
+<rect x="24" y="286" width="190" height="36" rx="6" class="acc-box" stroke-width="1.5"/>
+<text x="119" y="309" text-anchor="middle" font-weight="600">factorial-transfer / repo.bundle</text>
+<line x1="119" y1="258" x2="119" y2="286" class="acc-stroke" stroke-width="1.5" marker-end="url(#arr2-acc)"/>
+<text x="130" y="276" font-size="11" class="acc-fill">PutObject</text>
+<rect x="385" y="192" width="190" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="480" y="214" text-anchor="middle" font-weight="600">Session (new, no agent yet)</text>
+<text x="480" y="232" text-anchor="middle" opacity="0.8">curl presigned URL to /tmp</text>
+<text x="480" y="248" text-anchor="middle" opacity="0.8">git fetch /tmp/repo.bundle</text>
+<path d="M214,240 L385,240" fill="none" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr2)"/>
+<text x="300" y="254" text-anchor="middle" font-size="11">command API, URL in the script</text>
+<path d="M214,304 L480,304 L480,258" fill="none" class="acc-stroke" stroke-width="1.5" marker-end="url(#arr2-acc)"/>
+<text x="330" y="298" text-anchor="middle" font-size="11" class="acc-fill">GET via S3 gateway endpoint, 5 min, one object</text>
+</svg>
+<figcaption>Figure 2. The session script keeps its shape: <code>git init</code>, one fetch, set <code>origin/HEAD</code>, checkout, print the head. The fetch source changes from the GitHub URL with a token header to a local bundle file, which git treats as a remote. The remote named <code>origin</code> is still added with the GitHub URL so <code>origin/&lt;default&gt;</code> and the three-dot diffs keep their names; it is never contacted.</figcaption>
+</figure>
+
+<div class="prose">
+<h3>What the transfer bucket is</h3>
+<ul>
+<li><strong>Separate from the artefact store.</strong> The artefact bucket is write-once, delete-denied and read by no session. The transfer bucket is the opposite: ephemeral, read by a session, expired by a one-day lifecycle rule. Keeping them apart keeps the artefact rules literally true.</li>
+<li><strong>Keys</strong> follow the correlation convention: <code>&lt;workItemId&gt;/&lt;attempt&gt;/&lt;stage&gt;/repo.bundle</code>.</li>
+<li><strong>Who writes:</strong> the Prepare, ContinueBuild and PrepareReview roles, <code>PutObject</code> only. <strong>Who reads:</strong> the same roles, so they can presign. While the Runtimes are <code>PUBLIC</code> the controls are the five-minute expiry, the unguessable key and the one-day lifecycle. With the VPC, the bucket policy denies <code>GetObject</code> unless <code>aws:SourceVpce</code> is the session VPC's S3 gateway endpoint, and a presigned URL that leaks is useless anywhere but inside those subnets.</li>
+<li><strong>The URL is consumed by root</strong> in the seeding script, before the workspace is handed to the agent user and before any model runs. The bundle file is deleted in the same script. The agent never sees the URL, and it is dead within five minutes anyway.</li>
+<li><strong>Size.</strong> Factorial's own history bundles to under 2 MB, and every target in view is well under 100 MB. The Lambdas get 2 GB of memory and 2 GB of ephemeral storage, and the bundle is streamed to S3 from the file, so disk holds one copy of the pack. A command on the session API is capped at 64 KB, which is why the bundle cannot travel the way the seed files do.</li>
+</ul>
+
+<h3>Why the bundle carries full history</h3>
+<ul>
+<li><strong>A shallow clone cannot be bundled.</strong> Verified with git 2.56: <code>git bundle create</code> accepts a shallow repository, but cloning from the result fails with "remote did not send all necessary objects". So the Lambda cannot shrink a target by cloning with <code>--depth</code>.</li>
+<li><strong>A partial clone has nowhere to fetch from.</strong> A <code>--filter=blob:none</code> clone in the session would lazily fetch missing blobs from GitHub, which is the path being removed. Today's <code>cloneScript</code> already avoids the filter for the same reason.</li>
+<li><strong>Full history is what the roles have today.</strong> <code>git blame</code>, <code>git log -p</code> and <code>git show</code> on old commits keep working; a missing-object error is a failure mode a model will hit and then fight.</li>
+<li><strong>Single branch keeps it small.</strong> The Lambda fetches only the refs the session uses, the default branch, a rework's base branch when it differs, and the work branch, with no tags, which is often most of a mirror.</li>
+<li><strong>The reduced form, if a target ever needs it:</strong> a clone with a blob size filter (full commit history, large files only at the checked-out commit) carried as a tarball, with lazy fetching switched off, chosen per target in its <code>.factorial/</code>. The outbound <code>base..HEAD</code> bundle imports cleanly from such a clone (verified). Not built until a target needs it; Git LFS targets are a separate question.</li>
+</ul>
+
+<h3>The clean room moves into Collect</h3>
+<p>The push script does not change: fresh bare clone with hooks disabled, import the bundle, check the head is the expected commit and the base its ancestor, refuse merges, re-create every commit under the App's bot identity, push a fast-forward to <code>factorial/*</code>. What changes is where it runs. A Lambda invocation that has never run a model is a clean room by construction. It runs the script with <code>child_process</code> in a fresh directory under <code>/tmp</code>, with the hardened git environment, and removes the directory afterwards. The <code>cleanRoomTarget</code> session and the builder Runtime's involvement in pushing disappear. This is #261, and it goes first: it needs no bucket, it removes a session per item, and it brings in the orchestration image that #262 then uses.</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 960 250" role="img" aria-label="Before: Collect reads the bundle from the agent session, then runs the push in a second clean-room session on the builder Runtime, which clones and pushes to GitHub. After: Collect reads the bundle the same way and runs the same push script in its own temporary directory." xmlns="http://www.w3.org/2000/svg" font-family="Public Sans, Helvetica Neue, Arial, sans-serif" font-size="12">
+<defs>
+<marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+</defs>
+<text x="24" y="36" font-weight="700" font-size="13">Before: a second session pushes</text>
+<rect x="24" y="56" width="170" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="109" y="78" text-anchor="middle" font-weight="600">Builder session</text>
+<text x="109" y="96" text-anchor="middle" opacity="0.8">hostile after the run</text>
+<rect x="280" y="56" width="170" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="365" y="78" text-anchor="middle" font-weight="600">Collect (Lambda)</text>
+<text x="365" y="96" text-anchor="middle" opacity="0.8">validates, stores</text>
+<rect x="536" y="56" width="190" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="631" y="78" text-anchor="middle" font-weight="600">Clean-room session</text>
+<text x="631" y="96" text-anchor="middle" opacity="0.8">builder Runtime, root, no model</text>
+<rect x="800" y="56" width="136" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="868" y="86" text-anchor="middle" font-weight="600">GitHub</text>
+<line x1="194" y1="82" x2="280" y2="82" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr3)"/>
+<text x="237" y="74" text-anchor="middle" font-size="11">bundle, base64</text>
+<line x1="450" y1="82" x2="536" y2="82" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr3)"/>
+<text x="493" y="74" text-anchor="middle" font-size="11">script + bundle</text>
+<line x1="726" y1="82" x2="800" y2="82" class="blk-stroke" stroke-width="1.5" marker-end="url(#arr3)"/>
+<text x="763" y="74" text-anchor="middle" font-size="11" class="blk-fill">clone, push</text>
+<line x1="24" y1="140" x2="936" y2="140" stroke="currentColor" opacity="0.3"/>
+<text x="24" y="172" font-weight="700" font-size="13">After: Collect is the clean room</text>
+<rect x="24" y="192" width="170" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="109" y="214" text-anchor="middle" font-weight="600">Builder session</text>
+<text x="109" y="232" text-anchor="middle" opacity="0.8">hostile after the run</text>
+<rect x="280" y="192" width="446" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="503" y="214" text-anchor="middle" font-weight="600">Collect (Lambda, with git)</text>
+<text x="503" y="232" text-anchor="middle" opacity="0.8">validates, stores, then the same push script in a fresh /tmp directory</text>
+<rect x="800" y="192" width="136" height="52" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="868" y="222" text-anchor="middle" font-weight="600">GitHub</text>
+<line x1="194" y1="218" x2="280" y2="218" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#arr3)"/>
+<text x="237" y="210" text-anchor="middle" font-size="11">bundle, base64</text>
+<line x1="726" y1="218" x2="800" y2="218" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr3)"/>
+<text x="763" y="210" text-anchor="middle" font-size="11">clone, push</text>
+</svg>
+<figcaption>Figure 3. One hop fewer, one session fewer, and the only GitHub write in the pipeline now happens in a process that has no network path to a sandbox at all.</figcaption>
+</figure>
+
+<div class="prose">
+<h3>Why a bundle through S3 and not the alternatives</h3>
+</div>
+<div class="scroll">
+<table>
+<thead><tr><th>Option</th><th>What it would take</th><th>Why not</th></tr></thead>
+<tbody>
+<tr><td>NAT with a domain allow-list (Network Firewall)</td><td>Firewall endpoints in each AZ, a rule group for github.com and registry.npmjs.org</td><td>Rules out by the premise. It also costs more than every endpoint in this design together, and the session still has a path to a public host that an injected instruction could abuse.</td></tr>
+<tr><td>A git mirror or CONNECT proxy inside the VPC</td><td>Fargate service, internal load balancer, patching, the proxy's own egress</td><td>A service to run inside the trust boundary, and the push path would need a credential behind it. More parts than the problem deserves.</td></tr>
+<tr><td>A relay Runtime in PUBLIC mode (today's clean room, extended to make the inbound bundle too)</td><td>A third Runtime block, two network modes, data still moving via S3 or base64</td><td>Keeps a root session with a token header in the loop for every stage, adds a microVM start per hop, and doubles the network reasoning. It is the fallback if git in Lambda proves awkward, nothing more.</td></tr>
+<tr><td><strong>Bundle through S3, git in the orchestrator</strong></td><td>One Lambda image with git, one bucket, one gateway endpoint, two script changes</td><td><strong>Recommended.</strong> Uses the carrier Factorial already trusts for commits, removes a session, and makes the GitHub side of the design one sentence: the orchestrator alone.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="prose">
+<h3>Git in a Lambda</h3>
+<p>The orchestration functions are esbuild bundles on the managed Node 24 runtime, which has no git. The clean answer is an orchestration container image: <code>public.ecr.aws/lambda/nodejs:24</code> for arm64, pinned by digest, plus <code>git</code> from the distribution, the bundled handlers copied in. The deploy workflow builds and pushes it next to the invoker and agent images, tagged by a hash of its inputs, and the template switches the functions that run git to <code>PackageType: Image</code> with <code>ImageConfig.Command</code> naming each handler; <code>AutoPublishAlias: live</code> is unchanged. Only the four functions that run git move (Collect in #261; Prepare, ContinueBuild and PrepareReview in #262); the rest stay zips, so the change touches nothing it does not need to. A Lambda layer carrying a static git would also work but drags shared libraries and a second build mechanism along with it.</p>
+</div>
+
+<h2 id="npm">Packages through CodeArtifact</h2>
+<div class="prose">
+<p>The builder installs whatever the target's lockfile says, and that is the one place a session must pull from outside AWS. CodeArtifact with an external connection to npmjs is the serverless answer: a repository in Factorial's account, reached through two interface endpoints, that fetches a package from the public registry the first time anyone asks for it and keeps it. It needs no server, it covers pypi, Maven, NuGet and Cargo when other targets arrive, and it keeps a record of every version a session has ever installed.</p>
+</div>
+
+<figure>
+<svg viewBox="0 0 960 300" role="img" aria-label="At session start the host, as root, requests a CodeArtifact authorisation token with the execution role through the codeartifact.api endpoint and writes it to the agent user's npmrc. The agent's npm ci then resolves metadata through the codeartifact.repositories endpoint and downloads tarballs from the CodeArtifact assets bucket through the S3 gateway. CodeArtifact pulls from npmjs upstream on first request." xmlns="http://www.w3.org/2000/svg" font-family="Public Sans, Helvetica Neue, Arial, sans-serif" font-size="12">
+<defs>
+<marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+</defs>
+<rect x="24" y="40" width="250" height="220" rx="8" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="40" y="62" font-weight="600" font-size="13">Builder session</text>
+<rect x="40" y="80" width="218" height="60" rx="6" fill="none" stroke="currentColor"/>
+<text x="149" y="100" text-anchor="middle" font-weight="600">Host (root), at start</text>
+<text x="149" y="118" text-anchor="middle" opacity="0.8">GetAuthorizationToken</text>
+<text x="149" y="132" text-anchor="middle" opacity="0.8">duration = MaxLifetime</text>
+<rect x="40" y="172" width="218" height="70" rx="6" fill="none" stroke="currentColor"/>
+<text x="149" y="192" text-anchor="middle" font-weight="600">Agent user</text>
+<text x="149" y="210" text-anchor="middle" opacity="0.8">~/.npmrc: registry + token, 0600</text>
+<text x="149" y="226" text-anchor="middle" opacity="0.8">npm ci as the target says</text>
+<line x1="149" y1="140" x2="149" y2="172" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<text x="158" y="160" font-size="11">writes</text>
+<rect x="380" y="80" width="180" height="40" rx="4" fill="none" stroke="currentColor"/>
+<text x="470" y="104" text-anchor="middle">codeartifact.api endpoint</text>
+<rect x="380" y="187" width="180" height="40" rx="4" fill="none" stroke="currentColor"/>
+<text x="470" y="211" text-anchor="middle">codeartifact.repositories</text>
+<rect x="380" y="250" width="180" height="36" rx="4" class="acc-box"/>
+<text x="470" y="272" text-anchor="middle">S3 gateway endpoint</text>
+<rect x="660" y="80" width="276" height="150" rx="6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="798" y="104" text-anchor="middle" font-weight="600" font-size="13">CodeArtifact</text>
+<text x="798" y="124" text-anchor="middle" opacity="0.8">domain factorial, repository factorial-npm</text>
+<text x="798" y="140" text-anchor="middle" opacity="0.8">external connection public:npmjs</text>
+<rect x="680" y="156" width="236" height="56" rx="4" fill="none" stroke="currentColor"/>
+<text x="798" y="178" text-anchor="middle">Assets bucket (service-owned)</text>
+<text x="798" y="196" text-anchor="middle" opacity="0.8">assets-438097961670-eu-west-1</text>
+<rect x="660" y="254" width="276" height="34" rx="4" fill="none" stroke="currentColor" stroke-width="1.5"/>
+<text x="798" y="275" text-anchor="middle" font-weight="600">registry.npmjs.org</text>
+<line x1="258" y1="100" x2="380" y2="100" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<text x="319" y="92" text-anchor="middle" font-size="11">SigV4, execution role</text>
+<line x1="560" y1="100" x2="660" y2="100" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<line x1="258" y1="207" x2="380" y2="207" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<text x="319" y="199" text-anchor="middle" font-size="11">metadata, token</text>
+<line x1="560" y1="207" x2="660" y2="207" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<path d="M258,230 L300,230 L300,268 L380,268" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<text x="330" y="294" text-anchor="middle" font-size="11">tarballs</text>
+<path d="M560,268 L600,268 L600,184 L680,184" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<text x="608" y="176" font-size="11">GetObject</text>
+<path d="M798,230 L798,254" fill="none" stroke="currentColor" stroke-width="1.5" marker-end="url(#arr4)"/>
+<text x="806" y="246" font-size="11">first pull of a version</text>
+</svg>
+<figcaption>Figure 4. The token is minted inside the session by the host, with the execution role, so the capability is on the role and fixed by the Runtime version, and no stage has to seed it. npm tarballs come from CodeArtifact's own S3 bucket, which is why the S3 gateway endpoint policy names it.</figcaption>
+</figure>
+
+<div class="prose">
+<h3>What changes for the builder</h3>
+<ul>
+<li>The builder execution role, and the agent boundary, gain <code>codeartifact:GetAuthorizationToken</code> on the domain and <code>codeartifact:ReadFromRepository</code> on the repository. <code>sts:GetServiceBearerToken</code> is already granted for ECR Public. The reviewer gets nothing: it installs nothing.</li>
+<li>The host writes <code>/home/agent/.npmrc</code> before pi starts: the registry URL and <code>_authToken</code>, owned by the agent user, mode 0600. Yarn and pnpm read the same registry setting. The domain and repository names reach the host as Runtime environment variables, like the model ids.</li>
+<li>Lockfiles that resolve to <code>registry.npmjs.org</code> still install: npm's <code>replace-registry-host</code> defaults to rewriting that host to the configured registry, and the integrity hashes match because CodeArtifact serves the same tarballs.</li>
+<li>The first install of each package version pays an upstream fetch; after that it is in-region.</li>
+</ul>
+<div class="note">
+<p><strong>An accepted divergence to record.</strong> The <code>.npmrc</code> token is the first stored credential in a session. It is tolerable because it is read-only, it reaches a mirror of public packages and nothing else, it expires with the session, and the execution role whose credentials mint it is already reachable from the model's shell today. A prompt-injected builder gains nothing from it that it did not have. Write this into <code>docs/security.md</code> section 7 beside the egress entry it closes. The tokenless alternative, a Verdaccio proxy on Fargate with no authentication, trades a scoped token for a service to run and an open registry inside the boundary, which is worse.</p>
+</div>
+</div>
+
+<h2 id="endpoints">Endpoints, policies and the exfiltration argument</h2>
+<div class="prose">
+<p>With no default route, the only way out of a session subnet is an endpoint. Every endpoint policy therefore does two jobs: it names what Factorial's roles may do, and it pins the principal to Factorial's account, so that credentials smuggled in through a prompt cannot use Factorial's endpoints to reach an attacker's bucket, repository or gateway. The S3 policy goes further and allows no write at all.</p>
+</div>
+<div class="scroll">
+<table>
+<thead><tr><th>Endpoint (eu-west-1)</th><th>Type</th><th>Used by</th><th>Endpoint policy</th></tr></thead>
+<tbody>
+<tr><td><code>com.amazonaws.eu-west-1.s3</code></td><td>Gateway, free</td><td>Transfer bucket GET; AgentCore image layers; CodeArtifact tarballs</td><td><code>s3:GetObject</code> only, on <code>factorial-transfer/*</code>, <code>prod-eu-west-1-starport-layer-bucket/*</code> and <code>assets-438097961670-eu-west-1/*</code></td></tr>
+<tr><td><code>bedrock-runtime</code></td><td>Interface</td><td>Host: model calls</td><td><code>InvokeModel</code>, <code>InvokeModelWithResponseStream</code>; <code>aws:PrincipalAccount</code> = Factorial's</td></tr>
+<tr><td><code>bedrock-agentcore.gateway</code></td><td>Interface, private DNS</td><td>Host: web search</td><td><code>InvokeGateway</code> on <code>gateway/factorial-*</code>; principal account pinned</td></tr>
+<tr><td><code>codeartifact.api</code></td><td>Interface, private DNS</td><td>Host: token</td><td><code>GetAuthorizationToken</code> on <code>domain/factorial</code>; principal account pinned</td></tr>
+<tr><td><code>codeartifact.repositories</code></td><td>Interface, private DNS</td><td>npm in the session</td><td><code>ReadFromRepository</code> on <code>repository/factorial/*</code>; principal account pinned</td></tr>
+<tr><td><code>ecr.api</code>, <code>ecr.dkr</code></td><td>Interface</td><td>AgentCore image refresh</td><td>Pull actions on <code>repository/factorial/agent-runtime</code>; principal account pinned</td></tr>
+<tr><td><code>logs</code></td><td>Interface</td><td>Runtime log delivery</td><td>Put and describe on <code>/aws/bedrock-agentcore/runtimes/*</code>; principal account pinned</td></tr>
+<tr><td><code>xray</code>, <code>monitoring</code></td><td>Interface, optional</td><td>Traces and metrics the role already allows</td><td>Add when traces are exported (an open gap); until then the calls fail quietly</td></tr>
+</tbody>
+</table>
+</div>
+<div class="grid2">
+<div class="card">
+<h3>Security groups</h3>
+<ul>
+<li><code>factorial-session</code> on the Runtime ENIs: no ingress; egress TCP 443 to <code>factorial-endpoints</code>, to the S3 prefix list, and one rule per private API naming that API's security group and port. Never a CIDR, neither the VPC's nor the peer's.</li>
+<li><code>factorial-endpoints</code> on the interface endpoints: ingress TCP 443 from <code>factorial-session</code> only.</li>
+<li>Both roles share the same subnets and both get the session group. A later role that needs less (the verifier Runtime, which may call no model) gets its own group with fewer destinations. Private API rules belong on the group of the role whose work needs them, which is usually the verifier's, not the builder's.</li>
+</ul>
+</div>
+<div class="card">
+<h3>Subnets and routing</h3>
+<ul>
+<li>Two session subnets, one each in <code>euw1-az1</code> and <code>euw1-az2</code>. AgentCore supports all three eu-west-1 zones; two is the documented minimum for availability.</li>
+<li>Their route table holds the local route, the S3 gateway prefix and, once the existing VPC is peered, routes to the subnets that hold the private APIs and no others. No NAT, no internet gateway.</li>
+<li>If account policy insists on a NAT gateway, it lives in a public subnet and nothing routes to it from here. The design does not depend on it.</li>
+<li>AgentCore creates the ENIs itself through its service-linked role; the execution roles need no EC2 permissions. The CloudFormation execution role must be allowed to create that service-linked role once.</li>
+</ul>
+</div>
+</div>
+<div class="prose">
+<h3>The existing VPC and private APIs</h3>
+<p>The original draft created a VPC of its own. With private APIs in an existing VPC the choice is between placing the session subnets in that VPC and peering a Factorial VPC to it. <strong>Peer.</strong> A session is hostile once its agent has run, and VPC mode gives it, for the first time, a network position inside your estate. In a peered VPC the only routes it has are the ones the peering adds, each to a named subnet; in the shared VPC the local route to every address is there from the start and only security groups stand between a session and everything else. The network stack therefore creates the Factorial VPC, takes the existing VPC's id, its API subnets' CIDRs and the API security group ids as parameters, requests the peering, and adds the routes on both sides. The private hosted zones the APIs' names live in are associated with the Factorial VPC so sessions resolve them.</p>
+<ul>
+<li><strong>Egress is a security group rule per API, on the role that needs it.</strong> Each rule names the API's group and port; the API's own group admits <code>factorial-session</code> on that port and nothing wider. Adding an API is one rule on each side and a line in the target's <code>.factorial/</code> saying its tests need it.</li>
+<li><strong>The APIs a session may reach are non-production or read-only.</strong> A session that reaches a system which accepts writes has a way to act, and the output of a build is a pull request, not an action. If a target's tests need a writable API, it should be a test instance.</li>
+<li><strong>Shared endpoints are a cost decision, not a design one.</strong> A production VPC often already has the logs, ECR and S3 endpoints. The session subnets cannot use endpoints in a peered VPC (interface endpoints are not reachable over peering by default, and private DNS does not cross it), so Factorial's VPC has its own, which is also what keeps their policies Factorial's.</li>
+<li><strong>The invoker and the Lambdas are still outside.</strong> They call the AgentCore API, which delivers into the microVM; nothing about the peering concerns them.</li>
+</ul>
+<p><strong>What remains.</strong> Two channels are still open to an injected agent: the model itself (it can put anything into a prompt, but the far end is Bedrock in Factorial's account) and DNS, since the VPC resolver answers for any name. Route 53 Resolver DNS Firewall closes the second if it is ever worth the cost. Neither is new; both are smaller than the open egress they replace.</p>
+</div>
+
+<h2 id="build">What it takes to build</h2>
+<div class="scroll">
+<table>
+<thead><tr><th>Where</th><th>Change</th></tr></thead>
+<tbody>
+<tr><td><code>templates/foundation.yml</code> (human)</td><td>Done for #242: the CodeArtifact actions on the agent boundary and the execution role. For #261: the ECR repository <code>factorial/orchestration</code>. For the VPC: EC2 networking and VPC endpoints, <code>iam:CreateServiceLinkedRole</code> for <code>network.bedrock-agentcore.amazonaws.com</code>.</td></tr>
+<tr><td><code>templates/network.yml</code> (new, stack <code>factorial-network</code>, before the first private target)</td><td>The Factorial VPC, the session subnets, the invoker's public subnets moved here, both security groups, the S3 gateway endpoint with its policy, the seven interface endpoints with theirs. Parameters for the existing VPC: its id, the API subnets' CIDRs, the API security group ids and the private hosted zone ids; the peering connection, the routes on both sides, the zone associations, and one session egress rule per API. The CodeArtifact domain and repository already live in the agent stack (#242) and stay there; the network stack imports their ARNs for its endpoint policies.</td></tr>
+<tr><td><code>templates/agent.yml</code></td><td>Done for #242: domain, repository, the builder role's CodeArtifact statements and the builder's environment. For the VPC: <code>NetworkConfiguration: VPC</code> with the imported subnets and group on both Runtimes (each becomes a new version, promoted as usual).</td></tr>
+<tr><td><code>templates/orchestration.yml</code></td><td>#261: Collect from the orchestration image, with no second session. #262: the Prepare family from the image; the transfer bucket with lifecycle and TLS-only policy; put and get on it for the Prepare-family roles. VPC: the <code>aws:SourceVpce</code> condition, and the VPC resources moved to the network stack.</td></tr>
+<tr><td><code>orchestration/Dockerfile</code> (new, #261)</td><td>Lambda Node 24 base for arm64, pinned by digest, plus git. Built and pushed by the deploy workflow like the invoker and agent images, tagged by a hash of its inputs.</td></tr>
+<tr><td><code>packages/orchestration</code></td><td>#261: <code>cleanRoomPushScript</code> runs locally through a new <code>lib/git.ts</code> (<code>execFile</code> with the hardened environment, a <code>mkdtemp</code> directory, removed afterwards); <code>cleanRoomTarget</code> goes; an end-to-end test against a local bare repository. #262: <code>cloneScript</code> splits into a Lambda-side fetch and bundle and a session script that downloads and fetches from the file, as one seeding helper the three stages and the verifiers of #167 call; <code>lib/transfer.ts</code> for put and presign.</td></tr>
+<tr><td><code>packages/agent-runtime</code></td><td>Done for #242: the token and <code>.npmrc</code> per run, the registry in every agent command's environment. For the VPC: <code>fetch</code> leaves <code>BUILDER_TOOLS</code>.</td></tr>
+<tr><td><code>agent-runtime/Dockerfile</code></td><td>For the VPC, optionally drop <code>gh</code>: it cannot reach GitHub any more.</td></tr>
+<tr><td><code>.github/workflows/deploy.yml</code></td><td>#261: build and push the orchestration image; pass its tag. VPC: stack order <code>network triggers agent orchestration</code>.</td></tr>
+<tr><td>Docs</td><td>Each issue names its own: <code>CLAUDE.md</code> Target architecture and Current stage; <code>docs/current-stage.md</code>; <code>docs/security.md</code> sections 3.2 to 3.4 and 7 (the npm token divergence is recorded; the egress gap closes only with the VPC); <code>docs/bootstrap.md</code> for each foundation step.</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="prose">
+<h3>Order of work</h3>
+<ol>
+<li><strong>CodeArtifact</strong> (#242, done): domain, repository, token per run, <code>.npmrc</code>, registry in the environment. Runtimes PUBLIC; npm goes through CodeArtifact over the public endpoints.</li>
+<li><strong>Clean room in Collect</strong> (#261): foundation redeploy for the ECR repository, the orchestration image, the push in the Lambda, the second session removed. One labelled item and one rework turn.</li>
+<li><strong>Seed from a bundle</strong> (#262): transfer bucket, fetch and bundle in the Lambda, presigned download in the session script. After this no session touches GitHub. One labelled item, a round 2 and a rework turn.</li>
+<li><strong>Replace what the flip removes</strong>: a documentation fetch served through the gateway with a domain allow-list (or evidence that web search alone is enough), and a mirror for every registry a private target's lockfiles name. Done while still <code>PUBLIC</code>, so each is verified on its own.</li>
+<li><strong>Flip to VPC</strong>, before the first private repository or private API is enrolled: foundation permissions for networking and the peering, the network stack, <code>NetworkConfiguration</code>, the <code>aws:SourceVpce</code> condition on the transfer bucket, remove the direct <code>fetch</code>. One labelled item on a public target first, then the private one. Each step is one pull request and reverts cleanly on its own.</li>
+</ol>
+<h3>Cost, list prices, two availability zones</h3>
+</div>
+<div class="scroll">
+<table>
+<thead><tr><th>Item</th><th class="num">Per month, about</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>7 interface endpoints × 2 AZs at $0.011 per hour</td><td class="num">$112</td><td>Plus $0.01 per GB processed. A single-AZ cut halves it. About three times a NAT gateway's hourly charge, which is why the step waits for the first private target rather than running through the proof of concept. They cannot be shared with the existing VPC's endpoints across the peering.</td></tr>
+<tr><td>VPC peering</td><td class="num">$0</td><td>No hourly charge; data between zones at the usual rate, negligible for API calls from tests.</td></tr>
+<tr><td>S3 gateway endpoint</td><td class="num">$0</td><td>Free, including the image-layer traffic AgentCore would otherwise send through the NAT.</td></tr>
+<tr><td>CodeArtifact</td><td class="num">&lt; $5</td><td>$0.05 per GB stored and per 10,000 requests; Factorial's dependency set is small.</td></tr>
+<tr><td>Transfer bucket</td><td class="num">&lt; $1</td><td>Objects live a day.</td></tr>
+<tr><td>Orchestration image, Lambda</td><td class="num">$0</td><td>Same invocations as today; a container cold start adds under a second. One Runtime session fewer per item.</td></tr>
+<tr><td>NAT gateway</td><td class="num">$0</td><td>Not needed: the session subnets have no default route, and no NAT is planned for the proof of concept.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="checks">Checks before the flip</h2>
+<div class="prose">
+<p>Each is one call, and each would otherwise be found by a failing labelled item that costs Bedrock money.</p>
+<ol>
+<li><strong>Global inference profile through the <code>bedrock-runtime</code> endpoint.</strong> AWS documents cross-region inference and PrivateLink separately; the combination is not stated. The eu profiles are still granted to both roles, so the fallback is a one-line change of <code>FACTORIAL_MODEL</code>.</li>
+<li><strong>Gateway private DNS.</strong> <code>*.gateway.bedrock-agentcore.eu-west-1.amazonaws.com</code> must resolve to the endpoint from a session subnet, and <code>InvokeGateway</code> must succeed through it with the endpoint policy attached.</li>
+<li><strong>Command API in VPC mode.</strong> Seed a VPC-mode session with the command API and read a file back. The docs describe it as service-delivered; confirm it before the flip, since Prepare and Collect depend on it.</li>
+<li><strong>Image refresh with only the ECR and S3 endpoints.</strong> Start a session on a fresh version. AgentCore refreshes container images through the VPC and a missing endpoint shows up as a session that never starts.</li>
+<li><strong>Token duration.</strong> Mint a CodeArtifact token for 14,400 seconds, the builder's <code>MaxLifetime</code>, and confirm it is honoured (the documented range is 900 to 43,200).</li>
+<li><strong><code>npm ci</code> against CodeArtifact</strong> with Factorial's own lockfile, which resolves to npmjs. Expect the host rewrite to make it transparent.</li>
+<li><strong>The presigned GET</strong> succeeds from a session and fails from a laptop once the <code>aws:SourceVpce</code> deny is in place. Until then (#262) it fails after five minutes anywhere.</li>
+<li><strong>A private API over the peering.</strong> From a session on the role that needs it, one request to the API by its private name succeeds; from the other role's session it is refused; and from a session, any address in the existing VPC other than the named APIs is unreachable.</li>
+</ol>
+<p>Sources for the facts relied on above: AgentCore's VPC configuration page (service-linked ENIs, required endpoints, supported zones), its PrivateLink page (the three endpoint service names), CodeArtifact's S3 gateway endpoint page (the eu-west-1 assets bucket) and Bedrock's PrivateLink page (the <code>bedrock-runtime</code> endpoint).</p>
+</div>
+
+</main>
+</body>
+</html>
