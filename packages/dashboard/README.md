@@ -17,6 +17,7 @@ It binds to `127.0.0.1:4757` (`DASHBOARD_PORT`) and prints a URL with a fresh to
 | `src/lib/` | Pure modules shared with the browser: the status mapping, the Work items rows and filters, the Overview (`overview.ts`), Metrics and cost (`metrics.ts`, with `usage-facts.ts`), Health (`health.ts`), the run view (`run-view.ts`), run events and the transcript (`transcript.ts`), stage durations, formats, links, sanitising. |
 | `src/client/` | The tab's live stream, the status bar's data, the shared clock, a view's refresh, a run's events and the virtualised list. |
 | `src/components/` | The shell, charts (inline SVG), tiles, pills, meters, chips, tables, and the Overview, Work items, Run & transcript, Metrics & cost and Health views. |
+| `snapshot/` | `npm run snapshot`: captures everything the views show into `snapshot-out/data/` and builds it into one HTML file to share, with the data embedded and `next/*` replaced by shims (`docs/dashboard.md`, "A snapshot to share"). |
 | `src/app/` | Routes: `/`, `/work-items`, `/work-items/<id>`, `/runs`, `/runs/<id>/<stage>/<round>`, `/metrics`, `/health`, and `/api/*`. |
 
-`npm test` runs the tests on the source (`test/register.ts` compiles `.tsx` with esbuild); `npm run build` is `next build`; both run in `npm run ci`.
+`npm test` runs the tests on the source (`test/register.ts` compiles `.tsx` with esbuild); `npm run build` is `next build`; both run in `npm run ci`. `npm run snapshot` (or `npm run dashboard:snapshot` from the root) writes the shareable snapshot.

@@ -1,0 +1,13 @@
+/* The static page's own few rules: the root, the banner and the artefact viewer. Everything else is the app's. */
+/* The shell takes its height from its parent, as it takes the body's in the app; here it is in #root. */
+#root { height: 100%; }
+.snapshot-banner { display: flex; flex-wrap: wrap; gap: 6px 16px; align-items: baseline; margin-bottom: 16px; padding: 10px 14px; border: 1px solid var(--hair-strong); border-left: 3px solid var(--accent); border-radius: var(--radius); background: var(--raised); font-size: 12px; color: var(--ink-2); }
+.snapshot-banner b { color: var(--ink); }
+.snapshot-banner .num { font-family: var(--mono); }
+.snapshot-loading { padding: 40px; color: var(--ink-3); font-size: 13px; }
+.artefact-viewer { width: min(960px, 92vw); max-height: 88vh; padding: 0; border: 1px solid var(--hair-strong); border-radius: var(--radius); background: var(--surface); color: var(--ink); }
+.artefact-viewer::backdrop { background: rgba(0, 0, 0, 0.55); }
+.artefact-viewer .head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--hair); font-size: 12px; }
+.artefact-viewer .head .mono { font-family: var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+.artefact-viewer .head .btn { margin-left: auto; }
+.artefact-viewer pre { margin: 0; padding: 14px; max-height: calc(88vh - 48px); overflow: auto; font-family: var(--mono); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-2); }

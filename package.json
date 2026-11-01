@@ -20,7 +20,8 @@
     "deploy:foundation": "node --disable-warning=ExperimentalWarning scripts/deploy-foundation.ts",
     "check:workflows": "node --disable-warning=ExperimentalWarning scripts/check-workflows.ts",
     "check:bundles": "node --disable-warning=ExperimentalWarning scripts/check-bundles.ts",
-    "dashboard": "npm run start -w @factorial/dashboard"
+    "dashboard": "npm run start -w @factorial/dashboard",
+    "dashboard:snapshot": "npm run snapshot -w @factorial/dashboard"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.1152.0",

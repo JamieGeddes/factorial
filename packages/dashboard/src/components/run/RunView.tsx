@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
@@ -16,6 +17,18 @@ import { Transcript } from './Transcript.tsx';
 
 const ms = (iso: string | undefined) => (iso ? Date.parse(iso) : NaN);
 
+/** The stage's name: a link to its run for an agent stage, marked when it is the run shown. */
+function StageName({ row }: { row: TimelineRow }) {
+  if (!row.href) return <span className="n">{row.name}</span>;
+  return (
+    <span className="n">
+      <Link href={row.href} {...(row.current ? { 'aria-current': 'page' as const } : {})} title={row.current ? `${row.name}: the run shown` : `Open the ${row.name} run`}>
+        {row.name}
+      </Link>
+    </span>
+  );
+}
+
 function Timeline({ rows, now }: { rows: TimelineRow[]; now: number }) {
   const work = (r: TimelineRow) => {
     const start = ms(r.startedAt);
@@ -31,7 +44,7 @@ function Timeline({ rows, now }: { rows: TimelineRow[]; now: number }) {
         if (r.state === 'todo')
           return (
             <div key={r.key} className="tl-row">
-              <span className="n">{r.name}</span>
+              <StageName row={r} />
               <div className="tl-bar" role="img" aria-label={`${r.name}: not reached`}>
                 <i className="todo" style={{ width: '100%' }} />
               </div>
@@ -39,13 +52,16 @@ function Timeline({ rows, now }: { rows: TimelineRow[]; now: number }) {
             </div>
           );
         return (
-          <div key={r.key} className="tl-row">
-            <span className="n">{r.name}</span>
-            <div className="tl-bar" role="img" aria-label={`${r.name}: work ${fmtDur(w)}, wait ${fmtDur(wait)}${r.state === 'live' ? ', running' : ''}`} title={`work ${fmtDur(w)} · wait ${fmtDur(wait)}`}>
+          <div key={r.key} className={`tl-row${r.current ? ' current' : ''}`}>
+            <StageName row={r} />
+            <div className="tl-bar" role="img" aria-label={`${r.name}: work ${fmtDur(w)}, wait ${fmtDur(wait)}${r.state === 'live' ? ', running' : ''}${r.costUsd !== undefined ? `, cost ${fmtUsd(r.costUsd)}` : ''}`} title={`work ${fmtDur(w)} · wait ${fmtDur(wait)}`}>
               {wait ? <i className="wait" style={{ width: `${Math.max(1.5, (wait / max) * 100)}%` }} /> : null}
               <i className={`work ${r.state === 'live' ? 'live' : r.state === 'failed' ? 'done-failed' : 'done-ok'}`} style={{ width: `${Math.max(1.5, (w / max) * 100)}%` }} />
             </div>
-            <span className="v">{fmtDur(w + wait)}</span>
+            <span className="v">
+              {fmtDur(w + wait)}
+              {r.costUsd !== undefined ? <span className="cost">{fmtUsd(r.costUsd)}</span> : null}
+            </span>
           </div>
         );
       })}
