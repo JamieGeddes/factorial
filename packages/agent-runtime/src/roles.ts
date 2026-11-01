@@ -21,7 +21,7 @@ import { reviewerPrompt } from './prompts/reviewer.ts';
 import { PLAN_GATE_CLOSED, planBrief, planCheck, readAgentFile, reportStopCheck, type PlanGate } from './report.ts';
 import { reviewStopCheck } from './review.ts';
 import { decideReviewerToolUse, decideToolUse, type Decision } from './tool-rules.ts';
-import type { ToolCall, ToolKind, ToolNames } from './tools.ts';
+import type { GatewayToolSet, ToolCall, ToolKind, ToolNames } from './tools.ts';
 
 /** Logs a line on the run's log. */
 export type Note = (message: string, fields: Record<string, unknown>) => void;
@@ -46,10 +46,10 @@ export interface SessionDirs {
 
 export interface HostRole {
   systemPrompt(tools: ToolNames): string;
-  /** The tools the role's own loop is offered, in order. Web search is `webSearch` below, not a kind here. */
+  /** The tools the role's own loop is offered, in order. Gateway tools are `gatewayTools` below, not kinds here. */
   tools: readonly ToolKind[];
-  /** Whether the role is offered web search when the Runtime version names a gateway. */
-  webSearch: boolean;
+  /** The gateway tool sets the role is offered, each when the Runtime version names its gateway. */
+  gatewayTools: readonly GatewayToolSet[];
   subagents: Readonly<Record<string, SubagentSpec>>;
   /** `tools` is the harness's names, for the policy's messages. */
   session(dirs: SessionDirs, note: Note, tools: ToolNames): RolePolicy;
@@ -58,13 +58,13 @@ export interface HostRole {
 /** The builder's tools. `fetch` reads a page (no permission rule: the harness must not prompt for it). `agent` starts the subagents in agents.ts (explore and plan). */
 export const BUILDER_TOOLS: readonly ToolKind[] = ['shell', 'read', 'edit', 'write', 'grep', 'glob', 'fetch', 'agent'];
 
-/** The reviewer's: it reads, and its policy lets file writes reach only /workspace/review.json. No subagents and no web search: everything it judges is in the session. */
+/** The reviewer's: it reads, and its policy lets file writes reach only /workspace/review.json. No subagents and no gateway tools: everything it judges is in the session. */
 export const REVIEWER_TOOLS: readonly ToolKind[] = ['shell', 'read', 'grep', 'glob', 'write', 'edit'];
 
 const builder: HostRole = {
   systemPrompt: builderPrompt,
   tools: BUILDER_TOOLS,
-  webSearch: true,
+  gatewayTools: ['webSearch', 'awsDocs'],
   subagents: BUILDER_SUBAGENTS,
   session({ workspace, repository }, note, tools) {
     const planGate: PlanGate = { closed: false };
@@ -90,7 +90,7 @@ const builder: HostRole = {
 const reviewer: HostRole = {
   systemPrompt: reviewerPrompt,
   tools: REVIEWER_TOOLS,
-  webSearch: false,
+  gatewayTools: [],
   subagents: {},
   session({ workspace }, note, tools) {
     return {

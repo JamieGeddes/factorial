@@ -175,6 +175,7 @@ const parts: PiParts = {
   helper: { runner, command: ['node', '--no-warnings', '/opt/factorial/agent-runtime/agent-ops.mjs'], cwd: config.workspace },
   agentDir: `${STATE}/pi`,
   webSearch: undefined,
+  awsDocs: undefined,
   provider: faux.provider,
 };
 mkdirSync(parts.agentDir, { recursive: true, mode: 0o700 });

@@ -76,6 +76,8 @@ export interface Config {
   npmMirror: NpmMirror | undefined;
   /** The AgentCore web search gateway's MCP URL; web search is off when unset. */
   webSearchGatewayUrl: string | undefined;
+  /** The AWS documentation gateway's MCP URL; the AWS documentation tools are off when unset. */
+  awsDocsGatewayUrl: string | undefined;
   port: number;
   workspace: string;
   /** The target repository's clone, inside the workspace: where shell commands start. */
@@ -121,6 +123,7 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
     maxDurationSeconds: positiveNumber(env, 'FACTORIAL_MAX_DURATION_SECONDS'),
     npmMirror: readNpmMirror(env, region),
     webSearchGatewayUrl: env.FACTORIAL_WEB_SEARCH_GATEWAY_URL || undefined,
+    awsDocsGatewayUrl: env.FACTORIAL_AWS_DOCS_GATEWAY_URL || undefined,
     port: 8080,
     workspace: '/workspace',
     repository: '/workspace/repo',

@@ -17,7 +17,7 @@ const env = {
 
 describe('readConfig', () => {
   it('reads the Runtime version settings', () => {
-    const config = readConfig({ ...env, FACTORIAL_WEB_SEARCH_GATEWAY_URL: 'https://gateway.example/mcp' });
+    const config = readConfig({ ...env, FACTORIAL_WEB_SEARCH_GATEWAY_URL: 'https://gateway.example/mcp', FACTORIAL_AWS_DOCS_GATEWAY_URL: 'https://docs-gateway.example/mcp' });
     assert.equal(config.role, 'builder');
     assert.equal(config.model, 'eu.anthropic.claude-sonnet-5-5');
     assert.equal(config.exploreModel, 'eu.anthropic.claude-haiku-5-5');
@@ -26,6 +26,7 @@ describe('readConfig', () => {
     assert.equal(config.maxBudgetUsd, 10);
     assert.equal(config.maxDurationSeconds, 6600);
     assert.equal(config.webSearchGatewayUrl, 'https://gateway.example/mcp');
+    assert.equal(config.awsDocsGatewayUrl, 'https://docs-gateway.example/mcp');
     assert.equal(config.workspace, '/workspace');
   });
 
@@ -39,6 +40,7 @@ describe('readConfig', () => {
 
   it('turns web search off when no gateway is set', () => {
     assert.equal(readConfig(env).webSearchGatewayUrl, undefined);
+    assert.equal(readConfig(env).awsDocsGatewayUrl, undefined);
   });
 
   it('rejects missing or invalid settings', () => {

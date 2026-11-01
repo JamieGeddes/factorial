@@ -46,10 +46,26 @@ describe('pi tools', () => {
 
   it('builds the tools for each kind in order, leaving out search without a gateway', () => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'pi-'));
-    const names = toolsFor(['shell', 'read', 'edit', 'write', 'grep', 'glob', 'webSearch'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, fetch: undefined, agent: undefined }).map((t) => t.name);
+    const names = toolsFor(['shell', 'read', 'edit', 'write', 'grep', 'glob', 'webSearch', 'awsDocs'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, awsDocs: undefined, fetch: undefined, agent: undefined }).map((t) => t.name);
     assert.deepEqual(names, ['bash', 'read', 'edit', 'write', 'grep', 'find']);
-    const withSearch = toolsFor(['webSearch'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: async () => ({}), fetch: undefined, agent: undefined });
+    const withSearch = toolsFor(['webSearch'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: async () => ({}), awsDocs: undefined, fetch: undefined, agent: undefined });
     assert.deepEqual(withSearch.map((t) => t.name), [PI_TOOLS.webSearch]);
+  });
+
+  it('offers the three AWS documentation tools when their gateway is configured, and none otherwise', async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'pi-'));
+    const sent: unknown[] = [];
+    const awsDocs = async (body: unknown) => {
+      sent.push(body);
+      return { result: { content: [{ type: 'text', text: 'page' }] } };
+    };
+    const tools = toolsFor(['awsDocs'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, awsDocs, fetch: undefined, agent: undefined });
+    assert.deepEqual(tools.map((t) => t.name), ['aws_docs_search', 'aws_docs_read', 'aws_regional_availability']);
+    const result = await tools[0]!.execute('call', { search_phrase: 'lambda quotas' }, undefined, undefined, {} as never);
+    assert.deepEqual(result.content, [{ type: 'text', text: 'page' }]);
+    assert.deepEqual(sent, [{ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'aws-docs___aws___search_documentation', arguments: { search_phrase: 'lambda quotas' } } }]);
+    const none = toolsFor(['awsDocs'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, awsDocs: undefined, fetch: undefined, agent: undefined });
+    assert.deepEqual(none, []);
   });
 
   it("runs shell commands in the repository, not the session's directory, so a relative path resolves against it", async () => {
@@ -57,7 +73,7 @@ describe('pi tools', () => {
     const repository = path.join(workspace, 'repo');
     mkdirSync(path.join(repository, 'src'), { recursive: true });
     writeFileSync(path.join(repository, 'src/a.ts'), 'in the repository\n');
-    const [bash] = toolsFor(['shell'], { cwd: workspace, repository, runner, helper: helper(workspace), webSearch: undefined, fetch: undefined, agent: undefined });
+    const [bash] = toolsFor(['shell'], { cwd: workspace, repository, runner, helper: helper(workspace), webSearch: undefined, awsDocs: undefined, fetch: undefined, agent: undefined });
     // pi passes the session's directory (the workspace) in the context.
     const result = await bash!.execute('call', { command: 'pwd && cat src/a.ts' }, undefined, undefined, { cwd: workspace } as never);
     const output = result.content.map((part: { type: string; text?: string }) => part.text ?? '').join('');
@@ -66,7 +82,7 @@ describe('pi tools', () => {
 
   it("says in the bash tool's description that it runs commands and the file tools handle files (#250)", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'pi-'));
-    const [bash] = toolsFor(['shell'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, fetch: undefined, agent: undefined });
+    const [bash] = toolsFor(['shell'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, awsDocs: undefined, fetch: undefined, agent: undefined });
     assert.ok(bash!.description.startsWith(BASH_PURPOSE));
     assert.match(bash!.description, /Not for reading, searching, creating or changing files: use read, grep, find, write and edit/);
     // pi's own description, with its output limits, follows.

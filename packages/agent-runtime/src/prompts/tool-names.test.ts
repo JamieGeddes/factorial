@@ -17,6 +17,7 @@ const OTHER: ToolNames = {
   fetch: 'x_fetch',
   agent: 'x_agent',
   webSearch: 'x_web_search',
+  awsDocs: 'x_aws_docs',
 };
 
 describe('prompts on another harness', () => {
