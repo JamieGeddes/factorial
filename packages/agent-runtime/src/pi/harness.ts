@@ -191,7 +191,7 @@ async function* runPi(
   const queue = new EventQueue<RunEvent>();
   const events = new PiEvents((event) => queue.push(event));
   const startedAt = Date.now();
-  const policy: RolePolicy = role.session(config.workspace, note, PI_TOOLS);
+  const policy: RolePolicy = role.session({ workspace: config.workspace, repository: config.repository }, note, PI_TOOLS);
   const runtime = await ModelRuntime.create({ authPath: path.join(parts.agentDir, 'auth.json'), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
   // On the Runtime, Bedrock with the execution role's credentials (bedrock.ts).
   runtime.registerNativeProvider(parts.provider);
