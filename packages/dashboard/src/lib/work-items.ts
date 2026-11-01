@@ -230,6 +230,12 @@ export function compareItems(a: WorkItemSummary, b: WorkItemSummary): number {
   return rank(a) - rank(b) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '');
 }
 
+/** Newest created first, with no special place for running items; items with no creation time last. */
+export function newestFirst(a: WorkItemSummary, b: WorkItemSummary): number {
+  if (!a.createdAt || !b.createdAt) return a.createdAt ? -1 : b.createdAt ? 1 : 0;
+  return b.createdAt.localeCompare(a.createdAt);
+}
+
 export function isFilter(value: unknown): value is Filter {
   return typeof value === 'string' && (FILTERS as readonly string[]).includes(value);
 }
