@@ -2,7 +2,7 @@
 
 import { Elapsed } from '../Elapsed.tsx';
 import { Pill } from '../Pill.tsx';
-import { SourceLink } from '../SourceLink.tsx';
+import { PullRequestLink, SourceLink } from '../SourceLink.tsx';
 import { Table, type Column } from '../Table.tsx';
 import { clip, fmtUsd, shortId } from '../../lib/format.ts';
 import { runHref } from '../../lib/overview.ts';
@@ -51,11 +51,7 @@ const columns: Column<WorkItemSummary>[] = [
           {i.pullRequest ? (
             <>
               {' → '}
-              {i.pullRequest.url ? (
-                <a href={i.pullRequest.url} target="_blank" rel="noreferrer noopener">{`PR #${i.pullRequest.number}`}</a>
-              ) : (
-                `PR #${i.pullRequest.number}`
-              )}
+              <PullRequestLink pullRequest={i.pullRequest} />
             </>
           ) : null}
         </span>

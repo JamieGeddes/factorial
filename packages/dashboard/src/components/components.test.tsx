@@ -16,6 +16,7 @@ import { RunLine } from './RunLine.tsx';
 import { SourceLink } from './SourceLink.tsx';
 import { WorkItemDetail } from './work-items/WorkItemDetail.tsx';
 import { WorkItemsTable } from './work-items/WorkItemsTable.tsx';
+import { progressFor } from './work-items/WorkItemView.tsx';
 
 const router = { push() {}, replace() {}, refresh() {}, prefetch() {}, back() {}, forward() {} };
 const render = (node: ReactNode) => renderToStaticMarkup(<AppRouterContext.Provider value={router as never}>{node}</AppRouterContext.Provider>);
@@ -77,6 +78,52 @@ test('the source links to the record that triggered it, or shows as text without
   const plain = render(<WorkItemDetail detail={{ row: invalid, thread: null, summary: summarise(invalid, undefined, Date.parse('2026-11-01T10:10:00Z')), artefacts: [], links: {} }} />);
   assert.ok(plain.includes('GitHub issue #42 · by jamie'), plain);
   assert.ok(!plain.includes('/issues/42'));
+});
+
+test('an item with a pull request links to it from the header, the Thread card and the table, never through the recorded prUrl', () => {
+  const pull = 'https://github.com/JamieGeddes/factorial/pull/226';
+  const row = {
+    workItemId: ID,
+    result: 'pr-opened',
+    prNumber: 226,
+    prUrl: 'https://evil.example/pull/226',
+    threadKey: 'jamiegeddes/factorial#factorial/x',
+    workItem: { title: 't', source: { type: 'github-issue', id: '42' }, repository: { owner: 'JamieGeddes', name: 'factorial' } },
+  };
+  const thread = { threadKey: row.threadKey, branch: 'factorial/x', prNumber: 226, outcome: { state: 'merged' as const, by: 'jamie', at: '2026-11-01T11:00:00Z' } };
+  const summary = summarise(row, thread, Date.parse('2026-11-01T10:10:00Z'));
+  const page = render(<WorkItemDetail detail={{ row, thread, summary, artefacts: [], links: {} }} />);
+  assert.ok(page.includes(`<a href="${pull}" class="btn primary" target="_blank" rel="noreferrer noopener">Pull request #226</a>`), page);
+  assert.ok(page.includes('<span class="pill done">merged</span>'));
+  assert.ok(page.includes(`<span class="v"><a href="${pull}" target="_blank" rel="noreferrer noopener">#226</a></span>`));
+  assert.ok(!page.includes('evil.example'));
+  const table = render(<WorkItemsTable items={[summary]} empty="none" />);
+  assert.ok(table.includes(`<a href="${pull}" target="_blank" rel="noreferrer noopener">PR #226</a>`), table);
+  assert.ok(!table.includes('evil.example'));
+});
+
+test('a pull request without a URL the app can build shows as text, and an item without one shows none', () => {
+  const thread = { threadKey: 'k', branch: 'factorial/x', prNumber: 226 };
+  const invalid = { workItemId: ID, prNumber: 226, prUrl: 'https://evil.example/pull/226', threadKey: 'k', workItem: { title: 't', source: { type: 'github-issue', id: '42' }, repository: { owner: 'bad/owner', name: 'factorial' } } };
+  const plain = render(<WorkItemDetail detail={{ row: invalid, thread, summary: summarise(invalid, thread, Date.parse('2026-11-01T10:10:00Z')), artefacts: [], links: {} }} />);
+  assert.ok(!plain.includes('/pull/226'), plain);
+  assert.ok(!plain.includes('Pull request #226'));
+  assert.ok(plain.includes('<span class="v">#226</span>'));
+  assert.ok(render(<WorkItemsTable items={[summarise(invalid, thread)]} empty="none" />).includes('PR #226'));
+
+  const none = { workItemId: ID, threadKey: 'k', workItem: { title: 't', source: { type: 'github-issue', id: '42' }, repository: { owner: 'JamieGeddes', name: 'factorial' } } };
+  const fresh = { threadKey: 'k', branch: 'factorial/x' };
+  const page = render(<WorkItemDetail detail={{ row: none, thread: fresh, summary: summarise(none, fresh), artefacts: [], links: {} }} />);
+  assert.ok(!page.includes('/pull/'), page);
+  assert.ok(!page.includes('btn primary'));
+  assert.ok(page.includes('<span class="v">none yet</span>'));
+});
+
+test('the work item page reads itself again on progress for its item only', () => {
+  const wants = progressFor(ID);
+  assert.equal(wants({ workItemId: ID, stage: 'PullRequest', transition: 'merged' }), true);
+  assert.equal(wants({ workItemId: ID, stage: 'WorkItem', transition: 'ended', status: 'pr-opened' }), true);
+  assert.equal(wants({ workItemId: '84c2d660-d3ec-11f1-92c7-34ac6b750765', stage: 'WorkItem', transition: 'ended' }), false);
 });
 
 test('a row links to the item, and an empty table says what to clear', () => {
