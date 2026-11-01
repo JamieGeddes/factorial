@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "verdict": "request-changes",
+  "scores": { "correctness": 4, "completeness": 3, "tests": 3, "safety": 5 },
+  "comment": "The change is right, but the retry path has no test.",
+  "reviewer": "jamie",
+  "attempt": 1,
+  "at": "2026-11-01T10:15:00.000Z"
+}

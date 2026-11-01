@@ -9,20 +9,21 @@ import { health, type Health, type HealthInput, type QuotaMeter, type Settled } 
 import { isRange, metrics, type Metrics, type Range } from '../lib/metrics.ts';
 import { overview, type Overview } from '../lib/overview.ts';
 import { modelLabel, type UsageFacts } from '../lib/usage-facts.ts';
-import { limitsOf, runDetail as buildRunDetail, type Limits, type RunDetail } from '../lib/run-view.ts';
+import { limitsOf, ownScoreOf, runDetail as buildRunDetail, type Limits, type OwnScore, type RunDetail } from '../lib/run-view.ts';
 import { stageKeyOf } from '../lib/stages.ts';
 import { isPlanWrite, planSteps, type PlanStep } from '../lib/transcript.ts';
 import { compareItems, isFilter, matchesFilter, matchesSearch, sourceLabel, summarise, type Filter, type WorkItemSummary } from '../lib/work-items.ts';
 import { isWorkItemId, itemKey } from './artefacts.ts';
 import { parseChannel, type LiveMessage, type StreamHandle } from './live.ts';
+import { scorePath } from './scores.ts';
 import { FACTORIAL_REPOSITORY, type Services } from './services.ts';
 import type { LedgerRow } from '../lib/records.ts';
 import type { WorkItemDetailData } from '../components/work-items/WorkItemDetail.tsx';
 
 /**
  * What each data route returns (#57): exactly what its view needs, so a
- * hosted API could later serve the same shapes. Every route reads; none
- * writes anything.
+ * hosted API could later serve the same shapes. Every route here reads; the
+ * one write, a human score (#227), is `scores.ts`'s.
  */
 const json = (body: unknown, status = 200): Response =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
@@ -327,17 +328,32 @@ async function storedLimits(services: Services, row: LedgerRow, stage: string, r
   return limitsOf(parseJson(await services.artefacts.once(key)));
 }
 
+/**
+ * The app's reviewer and their stored score on the row's current attempt
+ * (#227). The score is read only when the row has their entry for that
+ * attempt, so a reviewer who has not scored costs no S3 read.
+ */
+async function ownScore(services: Services, row: LedgerRow): Promise<{ reviewer: string; own?: OwnScore }> {
+  const reviewer = await services.scores.reviewer();
+  const attempt = typeof row.attempt === 'number' ? row.attempt : 1;
+  const entry = row.humanScores?.[reviewer];
+  if (entry?.attempt !== attempt) return { reviewer };
+  const own = ownScoreOf(parseJson(await services.artefacts.once(`${row.workItemId}/${attempt}/${scorePath(reviewer)}`)));
+  return { reviewer, ...(own ? { own } : {}) };
+}
+
 /** One run's header and side panels, or undefined when the item does not exist or the run is not a run. */
 export async function runPage(services: Services, id: string, stage: string, round: number): Promise<RunDetail | undefined> {
   if (!isWorkItemId(id) || parseChannel(`/factorial/runs/${id}/${stage}/${round}`)?.kind !== 'run') return undefined;
   const row = await services.ledger.get(id);
   if (!row) return undefined;
-  const [thread, config, running, plan, limits] = await Promise.all([
+  const [thread, config, running, plan, limits, scorer] = await Promise.all([
     row.threadKey ? services.threads.get(row.threadKey) : Promise.resolve(undefined),
     settle(services.config()),
     settle(services.ledger.running()),
     settle(runPlan(services, row, stage, round)),
     settle(storedLimits(services, row, stage, round)),
+    settle(ownScore(services, row)),
   ]);
   return buildRunDetail({
     row,
@@ -348,6 +364,7 @@ export async function runPage(services: Services, id: string, stage: string, rou
     running: running.value ?? [],
     ...(limits.value ? { storedLimits: limits.value } : {}),
     ...(plan.value ? { plan: plan.value } : {}),
+    ...(scorer.value ? { reviewer: scorer.value.reviewer, ...(scorer.value.own ? { own: scorer.value.own } : {}) } : {}),
     now: services.now(),
   });
 }

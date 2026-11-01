@@ -223,3 +223,35 @@ test('/api/overview: a failed deploy in the last hour is under Attention (#59)',
   const notices = body.notices as { tone: string; text: string }[];
   assert.ok(notices.some((n) => n.tone === 'crit' && n.text === 'Deploy of e9c3377 failed'), JSON.stringify(notices));
 });
+
+test("/api/runs/{id}/{stage}/{round}: the score panel, the agent's scores beside the people's on this attempt, and the reviewer's own prefilled (#227)", async () => {
+  const scores = { correctness: 4, completeness: 3, tests: 2, safety: 5 };
+  const row = item(ID, {
+    attempt: 2,
+    result: 'pr-opened',
+    reviewVerdict: 'approve',
+    reviewScores: { correctness: 5, completeness: 4, tests: 4, safety: 5 },
+    humanScores: {
+      'jamie-example.com': { attempt: 2, verdict: 'request-changes', scores, at: '2026-11-01T10:05:00Z' },
+      alex: { attempt: 2, verdict: 'approve', scores: { correctness: 5, completeness: 5, tests: 5, safety: 5 }, at: '2026-11-01T10:01:00Z' },
+      // Another attempt's, and a malformed one: neither shown.
+      sam: { attempt: 1, verdict: 'approve', scores, at: '2026-10-31T10:00:00Z' },
+      kim: { attempt: 2, verdict: 'approve', scores: { correctness: 9 }, at: '2026-11-01T10:00:00Z' },
+    },
+  });
+  const own = { schemaVersion: 1, verdict: 'request-changes', scores, comment: 'No test for the retry.‮', reviewer: 'jamie-example.com', attempt: 2, at: '2026-11-01T10:05:00Z' };
+  const services = stubServices({ rows: [row], objects: { [`${ID}/2/scores/human-jamie-example.com.json`]: JSON.stringify(own) } });
+  const panel = (await read(await getRun(services, ID, 'review', '1'))).body.scores as Record<string, unknown>;
+  assert.equal(panel.attempt, 2);
+  assert.equal(panel.reviewer, 'jamie-example.com');
+  assert.deepEqual(panel.agent, { verdict: 'approve', scores: { correctness: 5, completeness: 4, tests: 4, safety: 5 }, mean: 4.5 });
+  assert.deepEqual((panel.humans as { reviewer: string; mean: number }[]).map((h) => [h.reviewer, h.mean]), [['alex', 5], ['jamie-example.com', 3.5]]);
+  // The comment is shown as sanitised text.
+  assert.deepEqual(panel.own, { verdict: 'request-changes', scores, comment: 'No test for the retry.', at: '2026-11-01T10:05:00Z' });
+
+  // A reviewer with no entry on the attempt costs no S3 read.
+  const fresh = stubServices({ rows: [item(ID, { result: 'pr-opened' })] });
+  const empty = (await read(await getRun(fresh, ID, 'build', '1'))).body.scores as Record<string, unknown>;
+  assert.deepEqual(empty, { attempt: 1, humans: [], reviewer: 'jamie-example.com' });
+  assert.ok(!fresh.clients.s3.calls.some((c) => String(c.input.Key).includes('/scores/')));
+});

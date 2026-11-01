@@ -12,6 +12,7 @@ import { describe, type RunEvent } from '../lib/transcript.ts';
 import { StageGraph } from './overview/StageGraph.tsx';
 import { OverviewView } from './overview/OverviewView.tsx';
 import { RunView } from './run/RunView.tsx';
+import { ScorePanelView } from './run/ScorePanel.tsx';
 import { TranscriptEvent } from './run/TranscriptEvent.tsx';
 
 const router = { push() {}, replace() {}, refresh() {}, prefetch() {}, back() {}, forward() {} };
@@ -94,4 +95,30 @@ test('the Overview and the run view render on the server from their data', () =>
   assert.match(run, /<div>lib<\/div><div class="f">a.ts<\/div>/);
   assert.match(run, /Turns<\/span>.*0 \/ 10/);
   assert.ok(!run.includes('<img'));
+});
+
+test("the score panel: the agent's scores beside the people's, a comment shown as text, and no recording in a snapshot (#227)", () => {
+  const scores = { correctness: 4, completeness: 3, tests: 2, safety: 5 };
+  const panel = {
+    attempt: 2,
+    agent: { verdict: 'approve', scores: { correctness: 5, completeness: 4, tests: 4, safety: 5 }, mean: 4.5 },
+    humans: [{ reviewer: 'jamie', attempt: 2, verdict: 'request-changes' as const, scores, mean: 3.5, at: '2026-11-01T10:05:00Z' }],
+    reviewer: 'jamie',
+    own: { verdict: 'request-changes' as const, scores, comment: HOSTILE, at: '2026-11-01T10:05:00Z' },
+  };
+  const html = render(<ScorePanelView id={ID} panel={panel} onRecorded={() => {}} readOnly={false} />);
+  assert.ok(html.includes('>Agent<') && html.includes('>You<'));
+  assert.ok(html.includes('4.50') && html.includes('3.50'));
+  assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;'));
+  // Prefilled: the verdict and each score chosen.
+  assert.match(html, /<input type="radio" name="verdict" checked="" value="request-changes"/);
+  assert.match(html, /<input type="radio" name="tests" checked="" value="2"/);
+  assert.ok(html.includes('Record again'));
+  assert.ok(!html.includes('A snapshot records nothing'));
+  const snapshot = render(<ScorePanelView id={ID} panel={panel} onRecorded={() => {}} readOnly />);
+  assert.match(snapshot, /<fieldset disabled=""/);
+  assert.ok(snapshot.includes('A snapshot records nothing'));
+  const none = render(<ScorePanelView id={ID} panel={{ attempt: 1, humans: [] }} onRecorded={() => {}} readOnly={false} />);
+  assert.ok(none.includes('No review yet') && none.includes('could not be read') && !none.includes('<form'));
 });

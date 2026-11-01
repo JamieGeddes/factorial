@@ -14,6 +14,7 @@ import { percentile, secondsBetween, STAGES } from './stages.ts';
 import { buildRounds, resultOf, RESULT_SINCE } from './status.ts';
 import { modelLabel, type UsageFacts } from './usage-facts.ts';
 import { summarise, type WorkItemSummary } from './work-items.ts';
+import { humanEntries, meanOf, SCORE_KEYS as HUMAN_SCORE_KEYS } from './human-scores.ts';
 
 export const RANGES = [7, 30, 90] as const;
 export type Range = (typeof RANGES)[number];
@@ -83,7 +84,9 @@ export interface MetricsInput {
 const PR_RESULTS = new Set(['pr-opened', 'pr-updated']);
 const AUTOMATIC = /^github-workflow-run/;
 const REQUESTED = /^github-pull-request/;
-const SCORE_KEYS = ['correctness', 'completeness', 'tests', 'safety'];
+const SCORE_KEYS: string[] = [...HUMAN_SCORE_KEYS];
+/** The review scores chart's line for people's scores (#227), drawn apart from the agent's. */
+export const HUMAN_SERIES = 'Human mean';
 const MAX_MODELS = 5;
 
 const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
@@ -380,6 +383,13 @@ export function metrics(input: MetricsInput): Metrics {
       }))
       .filter((s) => s.values.some((v) => v !== null)),
   };
+  // People's scores (#227) on the same items and weeks: each reviewer's mean on the current attempt, averaged.
+  const human = weeks.map((w) => {
+    const v = finished.filter((i) => isoWeek(i.endedDay as string) === w).flatMap((i) => humanEntries(i.row).map((e) => meanOf(e.scores) as number));
+    const m = mean(v);
+    return m !== undefined ? Math.round(m * 100) / 100 : null;
+  });
+  if (human.some((v) => v !== null)) scores.series.push({ name: HUMAN_SERIES, values: human });
 
   // ---- latency and retries ----
   const timedModels = new Map<string, number[][]>();

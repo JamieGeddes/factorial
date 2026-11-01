@@ -5,7 +5,7 @@ import type { Fetch } from '../src/server/github.ts';
 import type { Upstream } from '../src/server/live.ts';
 
 /** Services over stubbed clients: the ledger, threads and artefact store as given. */
-export function stubServices(data: { rows?: LedgerRow[]; threads?: ThreadRow[]; objects?: Record<string, string>; now?: number; fetch?: Fetch } = {}): Services & { clients: Record<'cfn' | 'documents' | 's3' | 'control' | 'cw' | 'sfn' | 'ecs' | 'quotas' | 'logs' | 'ddb', StubClient> } {
+export function stubServices(data: { rows?: LedgerRow[]; threads?: ThreadRow[]; objects?: Record<string, string>; now?: number; fetch?: Fetch; arn?: string } = {}): Services & { clients: Record<'cfn' | 'documents' | 's3' | 'control' | 'cw' | 'sfn' | 'ecs' | 'quotas' | 'logs' | 'ddb' | 'sts', StubClient> } {
   const rows = data.rows ?? [];
   const objects = data.objects ?? {};
   const clients = {
@@ -24,6 +24,22 @@ export function stubServices(data: { rows?: LedgerRow[]; threads?: ThreadRow[]; 
         const key = input.Key as { workItemId?: string; threadKey?: string };
         return { Item: key.workItemId ? rows.find((r) => r.workItemId === key.workItemId) : data.threads?.find((t) => t.threadKey === key.threadKey) };
       },
+      // The score route's writes (#227), applied to the rows as DynamoDB would apply its two expressions.
+      UpdateCommand: (input) => {
+        const row = rows.find((r) => r.workItemId === (input.Key as { workItemId: string }).workItemId);
+        const failed = () => Object.assign(new Error('The conditional request failed'), { name: 'ConditionalCheckFailedException' });
+        const names = input.ExpressionAttributeNames as Record<string, string>;
+        const values = input.ExpressionAttributeValues as Record<string, unknown>;
+        if (!row) throw failed();
+        if (input.UpdateExpression === 'SET #h.#r = :entry') {
+          if (!row.humanScores) throw failed();
+          row.humanScores = { ...row.humanScores, [names['#r'] as string]: values[':entry'] as never };
+        } else if (input.UpdateExpression === 'SET #h = :map') {
+          if (row.humanScores) throw failed();
+          row.humanScores = values[':map'] as never;
+        } else throw new Error(`unexpected update ${String(input.UpdateExpression)}`);
+        return {};
+      },
     }),
     s3: stubClient({
       ListObjectsV2Command: (input) => ({ Contents: Object.keys(objects).filter((k) => k.startsWith(String(input.Prefix))).map((Key) => ({ Key, Size: objects[Key]?.length ?? 0 })) }),
@@ -31,6 +47,10 @@ export function stubServices(data: { rows?: LedgerRow[]; threads?: ThreadRow[]; 
         const text = objects[String(input.Key)];
         if (text === undefined) throw Object.assign(new Error('missing'), { name: 'NoSuchKey' });
         return { Body: { transformToByteArray: async () => new TextEncoder().encode(text), transformToWebStream: () => new Response(text).body }, ContentType: 'text/html', ContentLength: text.length };
+      },
+      PutObjectCommand: (input) => {
+        objects[String(input.Key)] = String(input.Body);
+        return {};
       },
     }),
     control: stubClient({
@@ -55,6 +75,7 @@ export function stubServices(data: { rows?: LedgerRow[]; threads?: ThreadRow[]; 
     }),
     logs: stubClient({ StartQueryCommand: () => ({ queryId: 'q1' }), GetQueryResultsCommand: () => ({ status: 'Complete', results: [] }), StopQueryCommand: () => ({}) }),
     ddb: stubClient({ DescribeTableCommand: () => ({ Table: { ItemCount: 51 } }) }),
+    sts: stubClient({ GetCallerIdentityCommand: () => ({ Arn: data.arn ?? 'arn:aws:sts::000000000000:assumed-role/AWSReservedSSO_Admin_0123/jamie@example.com' }) }),
   };
   const upstream: Upstream = { current: 'idle', add() {}, remove() {} };
   const fetch: Fetch =

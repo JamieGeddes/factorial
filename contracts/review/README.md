@@ -18,6 +18,19 @@ Lengths and counts are capped in the schema. `additionalProperties` is `false` a
 
 A `request-changes` verdict does not yet start rework; turning it into a rework item belongs to #22.
 
+## Human scores
+
+A human score is a person's judgement of one attempt at a `WorkItem`, recorded in the command centre (#227) with their own AWS credentials: `v1/human-score.schema.json`, validated by `validateHumanScore` in `@factorial/review`. It is stored as `<workItemId>/<attempt>/scores/human-<reviewer>.json`, one object per reviewer per attempt, and summarised on the ledger row as `humanScores.<reviewer>`. It is the human signal beside the reviewer agent's, for the retrospective trigger (#60).
+
+| Field | Purpose |
+|---|---|
+| `schemaVersion` | Contract version. Always `1`. |
+| `verdict`, `scores` | The review's own definitions (`$defs` in `v1/review.schema.json`, referred to by its `$id`), so the two compare field for field. |
+| `comment` | The person's words, at most 8,000 characters, may be empty. Untrusted: redacted before storage and shown as text. |
+| `reviewer` | The last part of the AWS identity's ARN the command centre ran as, made safe for a key (`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`). Set by the server, never by the request. |
+| `attempt` | The attempt scored, from the ledger row. |
+| `at` | When it was recorded, an ISO 8601 date-time. |
+
 ## Sensitive-path rules
 
 A target repository can list changes that need particular care in `.factorial/sensitive-paths.json`, following `v1/sensitive-paths.schema.json`. Each rule has a `reason` and exactly one of:
@@ -37,10 +50,11 @@ Factorial's own rules are in its `.factorial/sensitive-paths.json`.
 
 ## Changing the contract
 
-1. Change the schema, the examples and the tests in `packages/review` in one PR. For the sensitive-path rules, check Factorial's own `.factorial/sensitive-paths.json` still validates (a test does).
+1. Change the schema, the examples and the tests in `packages/review` in one PR. A change to `verdict` or `scores` changes the human score too. For the sensitive-path rules, check Factorial's own `.factorial/sensitive-paths.json` still validates (a test does).
 2. **Additive, optional fields** stay in `v1`. Reviews are produced and consumed within one execution, so an in-flight execution never sees a review from another version; no drain is needed.
 3. **Breaking changes** create `v2/` alongside `v1/` and increment `schemaVersion`, with the reviewer's prompt and the orchestrator moving together.
 
 ## Change log
 
 - **2026-10: v1.** Verdict, four scores, findings and summary. Sensitive-path rules for target repositories.
+- **2026-11: v1, additive.** `verdict` and `scores` moved to `$defs`, unchanged; the human score shares them (#227).

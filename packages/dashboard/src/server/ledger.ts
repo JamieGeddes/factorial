@@ -8,7 +8,8 @@ import { memo, memoByKey } from './cache.ts';
 import type { Sender } from './aws.ts';
 
 /**
- * The `factorial-work-items` ledger, read only. Lists and aggregates scan the
+ * The `factorial-work-items` ledger, read here; the one write, a human score
+ * (#227), is `scores.ts`'s. Lists and aggregates scan the
  * table: at today's volume (hundreds of rows) a scan is enough, and it is
  * read at most once every few seconds however many views want it.
  */
@@ -18,6 +19,10 @@ export interface Ledger {
   /** Rows with no `result` yet, created since #165 (older rows never got one). */
   running(): Promise<LedgerRow[]>;
   get(workItemId: string): Promise<LedgerRow | undefined>;
+  /** One row read afresh and strongly consistent, for a write that depends on it. */
+  fresh(workItemId: string): Promise<LedgerRow | undefined>;
+  /** Drop what is kept of a row and the lists, once it has been written. */
+  forget(workItemId: string): void;
 }
 
 export interface LedgerOptions {
@@ -54,9 +59,20 @@ export function createLedger(documents: Sender, options: LedgerOptions): Ledger 
       }),
     ttl,
   );
-  const one = memoByKey(async (workItemId: string) => {
-    const result = (await documents.send(new GetCommand({ TableName: await options.table(), Key: { workItemId } }))) as { Item?: LedgerRow };
+  const read = async (workItemId: string, consistent: boolean) => {
+    const result = (await documents.send(new GetCommand({ TableName: await options.table(), Key: { workItemId }, ...(consistent ? { ConsistentRead: true } : {}) }))) as { Item?: LedgerRow };
     return result.Item;
-  }, ttl);
-  return { list: () => all.get(), running: () => running.get(), get: one };
+  };
+  const one = memoByKey((workItemId: string) => read(workItemId, false), ttl);
+  return {
+    list: () => all.get(),
+    running: () => running.get(),
+    get: one,
+    fresh: (workItemId) => read(workItemId, true),
+    forget(workItemId) {
+      one.forget(workItemId);
+      all.clear();
+      running.clear();
+    },
+  };
 }

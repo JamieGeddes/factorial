@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { metrics } from './metrics.ts';
+import { HUMAN_SERIES, metrics } from './metrics.ts';
 import type { LedgerRow, ThreadRow } from './records.ts';
 import type { UsageFacts } from './usage-facts.ts';
 
@@ -130,4 +130,14 @@ test('no merge rate when no thread records an outcome, and no cost for items tha
   assert.equal(tile('PR merge rate')?.value, '–');
   assert.equal(tile('PR merge rate')?.delta?.text, '3 opened, no outcome recorded');
   assert.equal(tile('Cost per pull request')?.delta?.text, 'median of 3, 7 days');
+});
+
+test("the review scores chart adds people's weekly mean beside the agent's (#227)", () => {
+  const scored = rows.map((r, i) => (i === 0 ? { ...r, humanScores: { jamie: { attempt: 1, verdict: 'request-changes', scores: { correctness: 3, completeness: 3, tests: 2, safety: 4 }, at: at(31, 13) }, alex: { attempt: 1, verdict: 'approve', scores: { correctness: 4, completeness: 4, tests: 4, safety: 4 }, at: at(31, 14) }, old: { attempt: 9, verdict: 'approve', scores: { correctness: 1, completeness: 1, tests: 1, safety: 1 }, at: at(31, 14) } } } : r));
+  const m = metrics({ rows: scored, threads, records, now: NOW, range: 7, repository: 'JamieGeddes/factorial' });
+  const human = m.scores.series.find((s) => s.name === HUMAN_SERIES);
+  // Jamie's mean 3, Alex's 4; the other attempt's entry is left out.
+  assert.ok(human?.values.includes(3.5));
+  assert.equal(m.scores.series.at(-1)?.name, HUMAN_SERIES);
+  assert.equal(metrics({ rows, threads, records, now: NOW, range: 7, repository: 'JamieGeddes/factorial' }).scores.series.some((s) => s.name === HUMAN_SERIES), false);
 });

@@ -6,6 +6,7 @@ import { Table, type Column } from '../Table.tsx';
 import { clip, fmtUsd, shortId } from '../../lib/format.ts';
 import { runHref } from '../../lib/overview.ts';
 import type { WorkItemSummary } from '../../lib/work-items.ts';
+import { verdictTone } from '../../lib/human-scores.ts';
 
 /** Where a row leads: the item's latest agent run, or its detail while it has none. */
 export function rowHref(item: WorkItemSummary): string {
@@ -91,12 +92,26 @@ const columns: Column<WorkItemSummary>[] = [
     key: 'review',
     header: 'Review',
     render: (i) =>
-      i.review ? (
+      i.review || i.humanReview ? (
         <>
-          <span className={`pill ${i.review.verdict === 'approve' ? 'done' : 'waiting'}`}>{i.review.verdict}</span>{' '}
-          {i.review.mean !== undefined ? (
-            <span className="num" style={{ color: 'var(--ink-2)' }}>
-              {i.review.mean.toFixed(2)}
+          {i.review ? (
+            <span className="review-line">
+              {i.humanReview ? <span className="who">agent</span> : null}
+              <span className={`pill ${verdictTone(i.review.verdict)}`}>{i.review.verdict}</span>{' '}
+              {i.review.mean !== undefined ? (
+                <span className="num" style={{ color: 'var(--ink-2)' }}>
+                  {i.review.mean.toFixed(2)}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
+          {i.humanReview ? (
+            <span className="sub" title={`${i.humanReview.count} ${i.humanReview.count === 1 ? 'person' : 'people'} scored this attempt; the verdict is the latest`}>
+              <span className="who">{i.humanReview.count > 1 ? `human ×${i.humanReview.count}` : 'human'}</span>
+              <span className={`pill ${verdictTone(i.humanReview.verdict)}`}>{i.humanReview.verdict}</span>{' '}
+              <span className="num" style={{ color: 'var(--ink-2)' }}>
+                {i.humanReview.mean.toFixed(2)}
+              </span>
             </span>
           ) : null}
         </>

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { REVIEW_SCHEMA_VERSION, ReviewValidationError, SENSITIVE_PATHS_FILE, assertReview, parseReviewJson, parseSensitivePathsJson, validateReview, type Review } from './index.ts';
+import { HUMAN_COMMENT_MAX, REVIEW_SCHEMA_VERSION, ReviewValidationError, SENSITIVE_PATHS_FILE, assertReview, parseReviewJson, parseSensitivePathsJson, validateHumanScore, validateReview, type HumanScore, type Review } from './index.ts';
 
 const examplesDir = fileURLToPath(new URL('../../../contracts/review/v1/examples/', import.meta.url));
 
@@ -154,5 +154,45 @@ describe('Sensitive-path rules', () => {
   it('reports a syntax error as a validation error', () => {
     const result = parseSensitivePathsJson('{');
     assert.ok(!result.ok && result.errors[0]?.startsWith('(root) is not valid JSON'));
+  });
+});
+
+describe('Human score schema', () => {
+  const humanDir = path.join(examplesDir, 'human-score');
+  const load = async (): Promise<HumanScore> => JSON.parse(await readFile(path.join(humanDir, 'request-changes.json'), 'utf8')) as HumanScore;
+
+  it('accepts every example', async () => {
+    const files = (await readdir(humanDir)).filter((f) => f.endsWith('.json'));
+    assert.ok(files.length > 0);
+    for (const file of files) {
+      const result = validateHumanScore(JSON.parse(await readFile(path.join(humanDir, file), 'utf8')));
+      assert.ok(result.ok, `${file}: ${result.ok ? '' : result.errors.join('; ')}`);
+    }
+  });
+
+  it("shares the review's verdict and scores", async () => {
+    const score = await load();
+    const review = await loadExample('approve.json');
+    assert.equal(validateReview({ ...review, verdict: score.verdict, scores: score.scores }).ok, true);
+    assert.equal(validateHumanScore({ ...score, verdict: 'reject' }).ok, false);
+    for (const correctness of [0, 6, 2.5]) assert.equal(validateHumanScore({ ...score, scores: { ...score.scores, correctness } }).ok, false, String(correctness));
+    assert.equal(validateHumanScore({ ...score, scores: { ...score.scores, style: 3 } }).ok, false);
+  });
+
+  it('caps the comment and allows an empty one', async () => {
+    const score = await load();
+    assert.equal(validateHumanScore({ ...score, comment: '' }).ok, true);
+    assert.equal(validateHumanScore({ ...score, comment: 'x'.repeat(HUMAN_COMMENT_MAX) }).ok, true);
+    assert.equal(validateHumanScore({ ...score, comment: 'x'.repeat(HUMAN_COMMENT_MAX + 1) }).ok, false);
+  });
+
+  it('rejects a reviewer unsafe for a key, a bad attempt or time, and unknown fields', async () => {
+    const score = await load();
+    for (const reviewer of ['', '-x', 'a/b', 'a b', '..', 'x'.repeat(65)]) assert.equal(validateHumanScore({ ...score, reviewer }).ok, false, reviewer);
+    assert.equal(validateHumanScore({ ...score, attempt: 0 }).ok, false);
+    assert.equal(validateHumanScore({ ...score, at: 'yesterday' }).ok, false);
+    assert.equal(validateHumanScore({ ...score, findings: [] }).ok, false);
+    const { comment: _comment, ...missing } = score;
+    assert.equal(validateHumanScore(missing).ok, false);
   });
 });

@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNow } from '../../client/now.tsx';
 import { useRefreshed } from '../../client/refresh.tsx';
 import { fmtUsd, fmtWhen } from '../../lib/format.ts';
-import { RANGES, versionDuration, type Metrics, type Range, type VersionRow } from '../../lib/metrics.ts';
+import { HUMAN_SERIES, RANGES, versionDuration, type Metrics, type Range, type VersionRow } from '../../lib/metrics.ts';
 import { ColumnChart } from '../charts/ColumnChart.tsx';
 import { HBarChart } from '../charts/HBarChart.tsx';
 import { LineChart } from '../charts/LineChart.tsx';
@@ -131,10 +131,10 @@ export function MetricsView({ initial }: { initial: Metrics }) {
         <div className="card span-4">
           <div className="card-head">
             <h2>Review scores</h2>
-            <span className="sub">Weekly mean, automated reviewer</span>
+            <span className="sub">Weekly mean, automated reviewer and people</span>
           </div>
           {data.scores.series.length ? (
-            <LineChart label="Weekly mean review scores" labels={data.scores.labels} series={data.scores.series.map((s, i) => ({ ...s, color: PALETTE[i % PALETTE.length] as string }))} min={1} max={5} fmt={(v) => v.toFixed(1)} />
+            <LineChart label="Weekly mean review scores" labels={data.scores.labels} series={data.scores.series.map((s, i) => ({ ...s, color: s.name === HUMAN_SERIES ? 'var(--ink)' : (PALETTE[i % PALETTE.length] as string) }))} min={1} max={5} fmt={(v) => v.toFixed(1)} />
           ) : (
             <p className="note">No reviewed item finished in the range.</p>
           )}

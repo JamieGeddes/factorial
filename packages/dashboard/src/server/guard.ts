@@ -9,8 +9,8 @@
  * - the URL printed at start carries a random token, exchanged on first use
  *   for an `HttpOnly`, `SameSite=Strict` cookie; anything without the cookie
  *   gets 401;
- * - a request that changes anything (the live stream's channel set) must
- *   come from the app's own origin;
+ * - a request that changes anything (the live stream's channel set, a human
+ *   score) must come from the app's own origin;
  * - every response carries a Content-Security-Policy with a per-request nonce
  *   and `frame-ancestors 'none'`.
  */

@@ -6,6 +6,7 @@ import { isRepository, issueUrl, pullRequestUrl, type Repository } from './links
 import { buildRounds, currentStage, isStale, resultOf, statusPill, RESULT_SINCE, type Pill } from './status.ts';
 import { oneLine, text } from './sanitise.ts';
 import type { LedgerRow, ThreadRow } from './records.ts';
+import { humanSummary, meanOf } from './human-scores.ts';
 
 export const FILTERS = ['all', 'running', 'waiting', 'finished', 'attention', 'refused'] as const;
 export type Filter = (typeof FILTERS)[number];
@@ -55,6 +56,8 @@ export interface WorkItemSummary {
   endedAt?: string;
   costUsd?: number;
   review?: { verdict: string; mean?: number };
+  /** People's scores on the current attempt (#227): the latest verdict, the mean of each reviewer's mean, how many. */
+  humanReview?: { verdict: string; mean: number; count: number };
   /** The run the row opens: the latest agent run. */
   latestRun?: { stage: string; round: number };
 }
@@ -117,11 +120,6 @@ function reference(row: LedgerRow): { ref: string; url?: string; pr?: number } {
   return { ref: oneLine(text(item.source?.id)).slice(0, 40) };
 }
 
-function meanOf(scores: Record<string, number> | undefined): number | undefined {
-  const values = Object.values(scores ?? {}).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
-  return values.length ? values.reduce((a, b) => a + b, 0) / values.length : undefined;
-}
-
 export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), resultSince = RESULT_SINCE): WorkItemSummary {
   const item = row.workItem ?? {};
   const result = resultOf(row, resultSince);
@@ -135,6 +133,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
   const waiting = result === undefined && current?.stage === 'Test';
   const cost = costOf(row);
   const mean = meanOf(row.reviewScores);
+  const human = humanSummary(row);
   const run = latestRun(row);
   const type = text(item.source?.type) || 'unknown';
   const endedAt = result === undefined ? undefined : (row.endedAt ?? row.updatedAt);
@@ -158,6 +157,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
     ...(endedAt ? { endedAt } : {}),
     ...(cost !== undefined ? { costUsd: cost } : {}),
     ...(row.reviewVerdict ? { review: { verdict: oneLine(row.reviewVerdict), ...(mean !== undefined ? { mean } : {}) } } : {}),
+    ...(human ? { humanReview: human } : {}),
     ...(run ? { latestRun: run } : {}),
   };
 }
