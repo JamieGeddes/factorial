@@ -18,7 +18,7 @@ import { bashOperations, editOperations, findOperations, grepOperations, readOpe
 import { PI_SETTINGS, RG_WRAPPER, firstOnPath } from './harness.ts';
 import { PI_TOOLS, toolCallOf, toolsFor } from './tools.ts';
 
-const config = readConfig({
+const configEnv = {
   FACTORIAL_ROLE: 'builder',
   FACTORIAL_MODEL: 'eu.anthropic.claude-sonnet-5-5',
   FACTORIAL_EXPLORE_MODEL: 'eu.anthropic.claude-haiku-5-5',
@@ -28,7 +28,8 @@ const config = readConfig({
   FACTORIAL_MAX_BUDGET_USD: '5',
   FACTORIAL_MAX_DURATION_SECONDS: '6600',
   AWS_REGION: 'eu-west-1',
-});
+};
+const config = readConfig(configEnv);
 
 // Tests run as the current user: no privilege drop, the helper from source.
 const runner: AgentRunner = { prefix: [], env: { PATH: process.env.PATH ?? '/usr/bin:/bin' } };
@@ -117,8 +118,22 @@ describe('shellEnvironment', () => {
       ANTHROPIC_BEDROCK_BASE_URL: 'http://stub',
       GITHUB_TOKEN: 'never',
       HOME: '/root',
+      NPM_CONFIG_AUDIT: 'false',
+      NPM_CONFIG_REGISTRY: 'https://registry.example/',
+      NPM_CONFIG_USERCONFIG: '/workspace/.npmrc',
     });
-    assert.deepEqual(env, { PATH: '/usr/bin', LANG: 'C.UTF-8', HOME: '/home/agent', AWS_REGION: 'eu-west-1' });
+    assert.deepEqual(env, { PATH: '/usr/bin', LANG: 'C.UTF-8', NPM_CONFIG_AUDIT: 'false', HOME: '/home/agent', AWS_REGION: 'eu-west-1' });
+  });
+
+  it("sets npm's registry to the version's mirror, whatever the host's environment says", () => {
+    const mirrored = readConfig({
+      ...configEnv,
+      FACTORIAL_CODEARTIFACT_DOMAIN: 'factorial',
+      FACTORIAL_CODEARTIFACT_DOMAIN_OWNER: '123456789012',
+      FACTORIAL_CODEARTIFACT_REPOSITORY: 'factorial-npm',
+    });
+    const env = shellEnvironment(mirrored, { PATH: '/usr/bin', NPM_CONFIG_REGISTRY: 'https://registry.example/' });
+    assert.equal(env.NPM_CONFIG_REGISTRY, 'https://factorial-123456789012.d.codeartifact.eu-west-1.amazonaws.com/npm/factorial-npm/');
   });
 });
 

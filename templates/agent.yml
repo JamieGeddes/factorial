@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Factorial agents: one block per role (runtime, live endpoint and execution
-  role), plus what the roles share (the agent runtime policy and the web
-  search gateway). Deployed by GitHub Actions.
+  role), plus what the roles share (the agent runtime policy, the web search
+  gateway and the npm mirror). Deployed by GitHub Actions.
 
 Parameters:
   AgentRuntimeImageTag:
@@ -164,6 +164,37 @@ Resources:
       CredentialProviderConfigurations:
         - CredentialProviderType: GATEWAY_IAM_ROLE
 
+  # ---------------------------------------------------------------------------
+  # The npm mirror (#242). Sessions install the target's npm packages from this
+  # CodeArtifact repository, which fetches from npmjs through its external
+  # connection, rather than from registry.npmjs.org. Here because sessions are
+  # its only consumers and the builder's role names it; a later network stack
+  # imports the ARNs for its endpoint policies. Reached over CodeArtifact's
+  # public endpoints while the Runtimes are PUBLIC. The domain is encrypted
+  # with the AWS managed key and has no resource policy, so only this
+  # account's IAM grants reach it.
+  # ---------------------------------------------------------------------------
+  NpmDomain:
+    Type: AWS::CodeArtifact::Domain
+    Properties:
+      DomainName: factorial
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  NpmRepository:
+    Type: AWS::CodeArtifact::Repository
+    Properties:
+      RepositoryName: factorial-npm
+      DomainName: !GetAtt NpmDomain.Name
+      DomainOwner: !GetAtt NpmDomain.Owner
+      Description: Mirror of the public npm registry for Factorial's sessions.
+      ExternalConnections:
+        - public:npmjs
+      Tags:
+        - Key: Project
+          Value: Factorial
+
   # ===========================================================================
   # Role blocks. One block per agent role: its execution role, runtime, live
   # endpoint and outputs. Every role is a runtime from the agent-runtime
@@ -256,6 +287,20 @@ Resources:
                 Effect: Allow
                 Action: bedrock-agentcore:InvokeGateway
                 Resource: !GetAtt WebSearchGateway.GatewayArn
+              # The host mints a read-only token for the npm mirror as each run
+              # starts (packages/agent-runtime/src/npm.ts). The shared runtime
+              # policy already grants sts:GetServiceBearerToken. The agent's
+              # shell shares the role, so could mint one too; that is the same
+              # read of public packages. The reviewer installs nothing and is
+              # granted nothing here.
+              - Sid: NpmMirrorToken
+                Effect: Allow
+                Action: codeartifact:GetAuthorizationToken
+                Resource: !GetAtt NpmDomain.Arn
+              - Sid: NpmMirrorRead
+                Effect: Allow
+                Action: codeartifact:ReadFromRepository
+                Resource: !GetAtt NpmRepository.Arn
       Tags:
         - Key: Project
           Value: Factorial
@@ -317,6 +362,12 @@ Resources:
         # timeout would stop the invoker task and lose uncollected commits.
         FACTORIAL_MAX_DURATION_SECONDS: '6600'
         FACTORIAL_WEB_SEARCH_GATEWAY_URL: !GetAtt WebSearchGateway.GatewayUrl
+        # The npm mirror (#242): the host writes a token for it to the agent's
+        # ~/.npmrc and puts the registry in every agent command's environment.
+        # Without these the host configures no mirror, as on the reviewer.
+        FACTORIAL_CODEARTIFACT_DOMAIN: !GetAtt NpmDomain.Name
+        FACTORIAL_CODEARTIFACT_DOMAIN_OWNER: !GetAtt NpmDomain.Owner
+        FACTORIAL_CODEARTIFACT_REPOSITORY: !GetAtt NpmRepository.Name
       Tags:
         Project: Factorial
 
@@ -478,3 +529,12 @@ Outputs:
     Value: !GetAtt ReviewerRuntimeLiveEndpoint.AgentRuntimeEndpointArn
     Export:
       Name: Factorial-ReviewerRuntimeLiveEndpointArn
+  # For the network stack's endpoint policies when the Runtimes move to VPC mode.
+  NpmDomainArn:
+    Value: !GetAtt NpmDomain.Arn
+    Export:
+      Name: Factorial-NpmDomainArn
+  NpmRepositoryArn:
+    Value: !GetAtt NpmRepository.Arn
+    Export:
+      Name: Factorial-NpmRepositoryArn

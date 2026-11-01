@@ -13,12 +13,17 @@
  *
  * Add `-e AWS_ACCESS_KEY_ID=x -e GITHUB_TOKEN=y` and the like to check that
  * the host's environment stays out of the shell. Exits 1 on any failure.
+ *
+ * The builder's version names an npm mirror (#242); the probe gives it one
+ * with a placeholder token, minted by nothing, and checks that the agent's
+ * ~/.npmrc is its alone and that a project .npmrc cannot redirect npm.
  */
-import { chmodSync, existsSync, mkdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai';
 
 import { readConfig } from '../packages/agent-runtime/src/config.ts';
+import { authTokenLine, configureNpm } from '../packages/agent-runtime/src/npm.ts';
 import { SETPRIV } from '../packages/agent-runtime/src/pi/as-agent.ts';
 import { shellEnvironment } from '../packages/agent-runtime/src/pi/environment.ts';
 import { piHarness, type PiParts } from '../packages/agent-runtime/src/pi/harness.ts';
@@ -54,6 +59,9 @@ symlinkSync(`${STATE}/pwned`, '/workspace/repo/link-to-state');
 symlinkSync(HOST_BUNDLE, '/workspace/repo/link-to-host');
 // The one file the reviewer may write, planted as a link out of the workspace.
 symlinkSync(`${STATE}/pwned`, '/workspace/review.json');
+// A target repository naming its own registry.
+const HOSTILE_REGISTRY = 'https://registry.probe.invalid/';
+writeFileSync('/workspace/repo/.npmrc', `registry=${HOSTILE_REGISTRY}\n`);
 
 const config = readConfig({
   FACTORIAL_ROLE: ROLE,
@@ -65,7 +73,12 @@ const config = readConfig({
   FACTORIAL_MAX_BUDGET_USD: '5',
   FACTORIAL_MAX_DURATION_SECONDS: '600',
   AWS_REGION: 'eu-west-1',
+  ...(ROLE === 'builder'
+    ? { FACTORIAL_CODEARTIFACT_DOMAIN: 'factorial', FACTORIAL_CODEARTIFACT_DOMAIN_OWNER: '123456789012', FACTORIAL_CODEARTIFACT_REPOSITORY: 'factorial-npm' }
+    : {}),
 });
+const MIRROR = config.npmMirror?.registry;
+const NPM_TOKEN = 'probe-token-not-a-credential';
 
 interface Probe {
   name: string;
@@ -81,7 +94,28 @@ const refusedByOs = (text: string, isError: boolean) => isError && /EACCES|permi
 const blocked = (_text: string, isError: boolean) => isError;
 const orDenied = (held: Probe['held']): Probe['held'] => (text, isError) => deniedByPolicy(text, isError) || held(text, isError);
 
+/** What the shell may hold: the allow-list, what the host sets, what bash sets, and the registry only when there is a mirror. */
+const SHELL_VARIABLES = [
+  'PATH', 'LANG', 'TZ', 'NPM_CONFIG_AUDIT', 'NPM_CONFIG_FUND', 'NPM_CONFIG_UPDATE_NOTIFIER',
+  'HOME', 'AWS_REGION', 'PWD', 'SHLVL', '_',
+  ...(MIRROR ? ['NPM_CONFIG_REGISTRY'] : []),
+];
+
+/** The mirror's checks, for a role whose version names one. */
+const npmProbes: Probe[] = MIRROR
+  ? [
+      { name: "the agent's ~/.npmrc is owned by agent, mode 0600", tool: 'bash', input: { command: "stat -c '%U %G %a' /home/agent/.npmrc" }, held: (t) => t.trim() === 'agent agent 600' },
+      {
+        name: "npm's registry is the mirror, despite a project .npmrc naming another",
+        tool: 'bash',
+        input: { command: 'cd /workspace/repo && npm config get registry' },
+        held: (t) => t.trim() === MIRROR,
+      },
+    ]
+  : [{ name: 'no ~/.npmrc without a mirror', tool: 'bash', input: { command: 'test -e /home/agent/.npmrc; echo rc=$?' }, held: (t) => /rc=1/.test(t) }];
+
 const probes: Probe[] = [
+  ...npmProbes,
   { name: 'the shell runs as agent (uid and gid 1000)', tool: 'bash', input: { command: 'id -u; id -g' }, held: (t) => t.trim() === '1000\n1000' },
   {
     name: 'no new privileges, no capabilities',
@@ -93,7 +127,7 @@ const probes: Probe[] = [
     name: "the shell's environment is the allow-list only",
     tool: 'bash',
     input: { command: 'env | cut -d= -f1 | sort | tr "\\n" " "' },
-    held: (t) => t.split(/\s+/).filter((name) => name && !['PATH', 'LANG', 'TZ', 'HOME', 'AWS_REGION', 'PWD', 'SHLVL', '_'].includes(name)).length === 0,
+    held: (t) => t.split(/\s+/).filter((name) => name && !SHELL_VARIABLES.includes(name)).length === 0,
   },
   { name: "the host's state is not listable", tool: 'bash', input: { command: `ls ${STATE} 2>&1` }, held: (t) => /Permission denied/.test(t) },
   { name: 'the host cannot be signalled', tool: 'bash', input: { command: 'kill -0 1 2>&1; echo rc=$?' }, held: (t) => /Operation not permitted/.test(t) && /rc=1/.test(t) },
@@ -145,6 +179,9 @@ const parts: PiParts = {
 };
 mkdirSync(parts.agentDir, { recursive: true, mode: 0o700 });
 
+// What the host does as each run starts (index.ts), with a token minted by nothing.
+await configureNpm(config, async () => NPM_TOKEN);
+
 for await (const _event of piHarness(config, HOST_ROLES[ROLE], new AbortController(), parts).start({ prompt: 'Probe.', round: 1 }, () => {})) {
   // The results are read from the tool results the scripted model sees.
 }
@@ -160,6 +197,9 @@ const checks: [string, boolean, string][] = [
   ['no workspace or home extension ran', !existsSync('/tmp/extension-ran'), ''],
   ['nothing written through the links', !existsSync(`${STATE}/pwned`), ''],
   ["the host's state and pi's directory stay root-only", rootOnly(STATE) && rootOnly(parts.agentDir), ''],
+  ...(MIRROR
+    ? [["~/.npmrc holds the mirror's token line and nothing else", readFileSync('/home/agent/.npmrc', 'utf8') === authTokenLine(MIRROR, NPM_TOKEN), ''] as [string, boolean, string]]
+    : []),
 ];
 for (const [name, held, detail] of checks) console.log(`${held ? 'ok  ' : 'FAIL'} ${name}${held || !detail ? '' : `: ${detail}`}`);
 const failed = checks.filter(([, held]) => !held).length;

@@ -49,4 +49,38 @@ describe('readConfig', () => {
     assert.throws(() => readConfig({ ...env, FACTORIAL_RUN_CONTRACT: '2' }), /FACTORIAL_RUN_CONTRACT must be 1/);
     assert.throws(() => readConfig({ ...env, FACTORIAL_MAX_BUDGET_USD: '0' }), /positive/);
   });
+
+  describe('the npm mirror', () => {
+    const mirror = {
+      FACTORIAL_CODEARTIFACT_DOMAIN: 'factorial',
+      FACTORIAL_CODEARTIFACT_DOMAIN_OWNER: '123456789012',
+      FACTORIAL_CODEARTIFACT_REPOSITORY: 'factorial-npm',
+    };
+
+    it('builds the registry from the three variables and the region', () => {
+      assert.deepEqual(readConfig({ ...env, ...mirror }).npmMirror, {
+        domain: 'factorial',
+        domainOwner: '123456789012',
+        repository: 'factorial-npm',
+        registry: 'https://factorial-123456789012.d.codeartifact.eu-west-1.amazonaws.com/npm/factorial-npm/',
+      });
+    });
+
+    it('is absent when none is set, as on the reviewer', () => {
+      assert.equal(readConfig(env).npmMirror, undefined);
+    });
+
+    it('needs all three', () => {
+      for (const name of Object.keys(mirror)) {
+        assert.throws(() => readConfig({ ...env, ...mirror, [name]: '' }), /must be set together/);
+      }
+    });
+
+    it('rejects values that are not CodeArtifact names', () => {
+      assert.throws(() => readConfig({ ...env, ...mirror, FACTORIAL_CODEARTIFACT_DOMAIN: 'Factorial' }), /DOMAIN is not/);
+      assert.throws(() => readConfig({ ...env, ...mirror, FACTORIAL_CODEARTIFACT_DOMAIN_OWNER: '1234' }), /12-digit/);
+      assert.throws(() => readConfig({ ...env, ...mirror, FACTORIAL_CODEARTIFACT_REPOSITORY: 'npm\n//evil/:_authToken=x' }), /REPOSITORY is not/);
+      assert.throws(() => readConfig({ ...env, ...mirror, FACTORIAL_CODEARTIFACT_REPOSITORY: 'a/b' }), /REPOSITORY is not/);
+    });
+  });
 });

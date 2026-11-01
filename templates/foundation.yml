@@ -277,6 +277,7 @@ Resources:
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-cloudformation-appsync
+              - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-cloudformation-codeartifact
               - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
 
   # ---------------------------------------------------------------------------
@@ -335,6 +336,18 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:aws:tool/web-search.v1
+          # npm installs from Factorial's CodeArtifact mirror of npmjs (#242):
+          # a token for the factorial domain and reads from its repositories,
+          # never a publish or a change. sts:GetServiceBearerToken, which
+          # GetAuthorizationToken also needs, is under RegistryAuth below.
+          - Sid: PackageMirror
+            Effect: Allow
+            Action:
+              - codeartifact:GetAuthorizationToken
+              - codeartifact:ReadFromRepository
+            Resource:
+              - !Sub arn:${AWS::Partition}:codeartifact:${AWS::Region}:${AWS::AccountId}:domain/factorial
+              - !Sub arn:${AWS::Partition}:codeartifact:${AWS::Region}:${AWS::AccountId}:repository/factorial/*
           - Sid: AgentImages
             Effect: Allow
             Action:
@@ -445,6 +458,50 @@ Resources:
                 aws:ResourceTag/aws:cloudformation:stack-name: factorial-*
 
   # ---------------------------------------------------------------------------
+  # CodeArtifact for the CloudFormation execution role (#242): the npm mirror's
+  # domain and repository in the agent stack. Scoped to the factorial domain
+  # and the repositories in it. The actions are the CodeArtifact handlers' for
+  # create, read, update and delete, less the resource policy writes: the
+  # templates set no PermissionsPolicyDocument, so no deploy can open the
+  # mirror to another account. The domain uses the AWS managed key, whose key
+  # policy lets CodeArtifact use it for this account, so no KMS action is
+  # needed. Kept out of the role's inline policy for its size limit.
+  # ---------------------------------------------------------------------------
+  CloudFormationCodeArtifactPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-cloudformation-codeartifact
+      Description: CodeArtifact for the CloudFormation execution role, scoped to the factorial domain.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: ManageFactorialDomain
+            Effect: Allow
+            Action:
+              - codeartifact:CreateDomain
+              - codeartifact:DescribeDomain
+              - codeartifact:DeleteDomain
+              - codeartifact:GetDomainPermissionsPolicy
+              - codeartifact:TagResource
+              - codeartifact:UntagResource
+              - codeartifact:ListTagsForResource
+            Resource: !Sub arn:${AWS::Partition}:codeartifact:${AWS::Region}:${AWS::AccountId}:domain/factorial
+          - Sid: ManageFactorialRepositories
+            Effect: Allow
+            Action:
+              - codeartifact:CreateRepository
+              - codeartifact:DescribeRepository
+              - codeartifact:UpdateRepository
+              - codeartifact:DeleteRepository
+              - codeartifact:AssociateExternalConnection
+              - codeartifact:DisassociateExternalConnection
+              - codeartifact:GetRepositoryPermissionsPolicy
+              - codeartifact:TagResource
+              - codeartifact:UntagResource
+              - codeartifact:ListTagsForResource
+            Resource: !Sub arn:${AWS::Partition}:codeartifact:${AWS::Region}:${AWS::AccountId}:repository/factorial/*
+
+  # ---------------------------------------------------------------------------
   # CloudFormation execution role. CloudFormation assumes this to create the
   # resources in Factorial's stacks, so the deploy role itself never needs
   # permissions on individual services. Scoped to factorial-* resource names.
@@ -459,6 +516,7 @@ Resources:
       # policies, each listed in both foundation deny lists.
       ManagedPolicyArns:
         - !Ref CloudFormationAppSyncPolicy
+        - !Ref CloudFormationCodeArtifactPolicy
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -568,6 +626,7 @@ Resources:
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-permissions-boundary
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-agent-permissions-boundary
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-cloudformation-appsync
+                  - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:policy/factorial-cloudformation-codeartifact
                   - !Sub arn:${AWS::Partition}:iam::${AWS::AccountId}:oidc-provider/token.actions.githubusercontent.com
               # Deployments create credential providers but never read what
               # they hold.
