@@ -5,6 +5,7 @@ import { Elapsed } from '../Elapsed.tsx';
 import { MeterRow } from '../Meter.tsx';
 import { Pill } from '../Pill.tsx';
 import { RunLine } from '../RunLine.tsx';
+import { SourceLink } from '../SourceLink.tsx';
 import { Tag } from '../Tag.tsx';
 import { fmtDur, fmtK, fmtUsd, refAndTitle, shortId } from '../../lib/format.ts';
 import { branchUrl } from '../../lib/links.ts';
@@ -165,7 +166,16 @@ export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
         <div className="card span-7">
           <div className="card-head">
             <h2>Request</h2>
-            <span className="sub">{summary.incomplete ? 'none recorded' : `${summary.source.label} · by ${summary.requester || 'unknown'}`}</span>
+            <span className="sub">
+              {summary.incomplete ? (
+                'none recorded'
+              ) : (
+                <>
+                  <SourceLink source={summary.source} withLabel />
+                  {` · by ${summary.requester || 'unknown'}`}
+                </>
+              )}
+            </span>
           </div>
           {summary.incomplete ? <p className="note">{summary.status.note}</p> : <pre className="detail-body">{text(row.workItem?.body) || '(no text)'}</pre>}
         </div>

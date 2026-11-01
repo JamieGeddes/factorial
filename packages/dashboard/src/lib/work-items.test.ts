@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { compareItems, costOf, matchesFilter, matchesSearch, summarise } from './work-items.ts';
+import { compareItems, costOf, matchesFilter, matchesSearch, sourceLabel, SOURCES, summarise } from './work-items.ts';
 import type { LedgerRow } from './records.ts';
 
 const NOW = Date.parse('2026-11-01T10:10:00Z');
@@ -26,6 +26,47 @@ test('a rework names its pull request', () => {
   const s = summarise(base({ workItem: { title: 't', source: { type: 'github-pull-request-comment', id: '9' }, inReplyTo: { kind: 'pull-request', number: 189 }, repository: { owner: 'a', name: 'b' } } }), undefined, NOW);
   assert.equal(s.source.label, 'PR comment');
   assert.equal(s.source.ref, 'PR #189');
+});
+
+const REPO = { provider: 'github', owner: 'JamieGeddes', name: 'factorial' };
+const PR_URL = 'https://github.com/JamieGeddes/factorial/pull/189';
+const RECORDED = 'https://evil.example/phish';
+
+test('every registered source type has its label, reference and link built by the app', () => {
+  const cases: Record<string, { label: string; ref: string; url: string; workItem?: Record<string, unknown>; reworkOf?: { prNumber: number } }> = {
+    'github-issue': { label: 'GitHub issue', ref: '#42', url: 'https://github.com/JamieGeddes/factorial/issues/42' },
+    'github-pull-request': { label: 'Pull request', ref: 'PR #189', url: PR_URL, workItem: { context: { pullRequest: { number: 189 } } } },
+    'github-pull-request-review': { label: 'PR review', ref: 'PR #189', url: PR_URL, workItem: { inReplyTo: { kind: 'pull-request', number: 189 } } },
+    'github-pull-request-review-comment': { label: 'PR review comment', ref: 'PR #189', url: PR_URL, workItem: { inReplyTo: { kind: 'pull-request', number: 189 } } },
+    'github-pull-request-comment': { label: 'PR comment', ref: 'PR #189', url: PR_URL, workItem: { inReplyTo: { kind: 'pull-request', number: 189 } } },
+    'github-workflow-run': { label: 'Checks failed', ref: 'PR #189', url: PR_URL, reworkOf: { prNumber: 189 } },
+  };
+  assert.deepEqual(Object.keys(cases).sort(), Object.keys(SOURCES).sort());
+  for (const [type, c] of Object.entries(cases)) {
+    const workItem = { title: 't', source: { type, id: '42', url: RECORDED }, repository: REPO, ...c.workItem };
+    const s = summarise(base({ workItem, ...(c.reworkOf ? { reworkOf: c.reworkOf } : {}) }), undefined, NOW);
+    assert.deepEqual(s.source, { type, label: c.label, ref: c.ref, url: c.url }, type);
+    assert.equal(sourceLabel(type), c.label);
+  }
+});
+
+test('an unknown source type shows its raw type and source id as text, never a link', () => {
+  for (const type of ['jira-ticket', 'constructor', '__proto__']) {
+    const workItem = { title: 't', source: { type, id: 'OPS-7', url: RECORDED }, repository: REPO, inReplyTo: { kind: 'pull-request', number: 189 } };
+    assert.deepEqual(summarise(base({ workItem }), undefined, NOW).source, { type, label: type, ref: 'OPS-7' }, type);
+  }
+  const missing = summarise(base({ workItem: { title: 't', source: { id: 'x' }, repository: REPO } }), undefined, NOW);
+  assert.deepEqual(missing.source, { type: 'unknown', label: 'unknown', ref: 'x' });
+});
+
+test('a recorded source.url is never used: no repository, an invalid one, or no number means no link', () => {
+  const issue = (repository: { owner: string; name: string } | undefined, id = '42') =>
+    summarise(base({ workItem: { title: 't', source: { type: 'github-issue', id, url: RECORDED }, ...(repository ? { repository } : {}) } }), undefined, NOW).source;
+  assert.deepEqual(issue(undefined), { type: 'github-issue', label: 'GitHub issue', ref: '#42' });
+  assert.deepEqual(issue({ owner: 'a/../b', name: 'c' }), { type: 'github-issue', label: 'GitHub issue', ref: '#42' });
+  assert.deepEqual(issue(REPO, 'abc'), { type: 'github-issue', label: 'GitHub issue', ref: '#abc' });
+  const comment = summarise(base({ workItem: { title: 't', source: { type: 'github-pull-request-comment', id: '9', url: RECORDED }, repository: REPO } }), undefined, NOW);
+  assert.deepEqual(comment.source, { type: 'github-pull-request-comment', label: 'PR comment', ref: '9' });
 });
 
 test('a row without a WorkItem is an incomplete record: no source, reference or requester', () => {
