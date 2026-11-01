@@ -15,6 +15,7 @@ import path from 'node:path';
 import type { RoleName } from '@factorial/roles';
 
 import { BUILDER_SUBAGENTS, type SubagentSpec } from './agents.ts';
+import { builderShellRule } from './builder-shell.ts';
 import { builderPrompt } from './prompts/builder.ts';
 import { reviewerPrompt } from './prompts/reviewer.ts';
 import { PLAN_GATE_CLOSED, planBrief, planCheck, readAgentFile, reportStopCheck, type PlanGate } from './report.ts';
@@ -37,6 +38,12 @@ export interface RolePolicy {
   prompt(requestPrompt: string): string;
 }
 
+/** The run's workspace, and the target repository's clone inside it, where shell commands start. */
+export interface SessionDirs {
+  workspace: string;
+  repository: string;
+}
+
 export interface HostRole {
   systemPrompt(tools: ToolNames): string;
   /** The tools the role's own loop is offered, in order. Web search is `webSearch` below, not a kind here. */
@@ -45,7 +52,7 @@ export interface HostRole {
   webSearch: boolean;
   subagents: Readonly<Record<string, SubagentSpec>>;
   /** `tools` is the harness's names, for the policy's messages. */
-  session(workspace: string, note: Note, tools: ToolNames): RolePolicy;
+  session(dirs: SessionDirs, note: Note, tools: ToolNames): RolePolicy;
 }
 
 /** The builder's tools. `fetch` reads a page (no permission rule: the harness must not prompt for it). `agent` starts the subagents in agents.ts (explore and plan). */
@@ -59,10 +66,16 @@ const builder: HostRole = {
   tools: BUILDER_TOOLS,
   webSearch: true,
   subagents: BUILDER_SUBAGENTS,
-  session(workspace, note) {
+  session({ workspace, repository }, note, tools) {
     const planGate: PlanGate = { closed: false };
     return {
-      decide: (call, agentType) => (planGate.closed ? { allow: false, reason: PLAN_GATE_CLOSED } : decideToolUse(workspace, call, agentType)),
+      decide(call, agentType) {
+        if (planGate.closed) return { allow: false, reason: PLAN_GATE_CLOSED };
+        const decision = decideToolUse(workspace, call, agentType);
+        if (!decision.allow || call.kind !== 'shell') return decision;
+        const reason = builderShellRule(repository, call.command, tools);
+        return reason === undefined ? decision : { allow: false, reason };
+      },
       afterFileChange: planCheck(workspace, planGate, (errors, closed) => note(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
       beforeStop: reportStopCheck(workspace, planGate, (reason) => note('report incomplete; builder sent back', { reason })),
       // A later round starts with the plan's steps in full.
@@ -79,7 +92,7 @@ const reviewer: HostRole = {
   tools: REVIEWER_TOOLS,
   webSearch: false,
   subagents: {},
-  session(workspace, note, tools) {
+  session({ workspace }, note, tools) {
     return {
       decide: (call) => decideReviewerToolUse(workspace, call, tools.write),
       beforeStop: reviewStopCheck(workspace, (reason) => note('reviewer sent back', { reason })),

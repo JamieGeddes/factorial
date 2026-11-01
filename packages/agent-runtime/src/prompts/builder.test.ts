@@ -39,6 +39,7 @@ describe('builder prompt', () => {
     assert.match(section, new RegExp(`- ${PI_TOOLS.grep} to search file contents and ${PI_TOOLS.glob} to find files by name`));
     assert.match(section, new RegExp(`- ${PI_TOOLS.shell} for commands: git, \`quiet\``));
     assert.match(section, /Never edit a file through bash: no python or node one-off scripts, sed -i, perl -i/);
+    assert.match(section, /The host refuses those, and printing or searching the repository's files with cat, head, tail, sed -n, grep, rg or find in bash/);
     assert.ok(builderPrompt.includes('Write a whole function, test or section in one edit'));
   });
 

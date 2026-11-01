@@ -1,0 +1,182 @@
+/**
+ * The builder's shell rules (#250): the shell runs commands, and the file
+ * tools read, search and change files. The prompt said so and the model kept
+ * its habits (PR #259's build: 31 bash calls, 1 edit, 10 python edits), so
+ * the host refuses the habits, each with a reason naming the tool to use:
+ *
+ * - editing a file from the shell: `sed -i`, `perl -i`, `awk -i inplace`,
+ *   or an inline python, node, perl or ruby script that writes a file, which
+ *   misses silently where the edit tool fails loudly and returns the diff;
+ * - writing into the repository by redirection or `tee` (a new file is the
+ *   write tool's), and running a one-off script from outside it;
+ * - printing or searching the repository's files with cat, head, tail, nl,
+ *   `sed -n`, grep, rg or find, which floods the context where read takes
+ *   `offset` and `limit` and grep and find cap their results.
+ *
+ * A command reading its input from a pipe is not reading files, so
+ * `git log | head` and `git ls-files | grep x` stay allowed, as do files
+ * outside the repository (/workspace/notes.md, /workspace/logs, /tmp) and
+ * its generated directories (node_modules, .git, dist). These steer a
+ * cooperative model; they are not an access control, and a determined
+ * command can get round them (docs/security.md section 9 has the gates).
+ */
+import path from 'node:path';
+
+import { redirectionsIn, splitHeredocs, unquoted } from './shell-text.ts';
+import type { ToolNames } from './tools.ts';
+
+/** Separators between simple commands; a `|` means the next one reads a pipe. */
+const SEPARATOR = /(\|\||&&|\|&|\||;|&|\n|\$\(|[()`])/;
+
+/** Words that run the command after them. */
+const WRAPPERS = new Set(['sudo', 'env', 'time', 'command', 'nice', 'nohup', 'exec', 'xargs']);
+
+const INTERPRETER = /^(?:python[\d.]*|node|perl|ruby|deno|bun|tsx|ts-node)$/;
+const INLINE_SCRIPT = new Set(['-c', '-e', '--eval', '-p', '--print', '-']);
+const SCRIPT_FILE = /\.(?:py|[cm]?[jt]s|pl|rb)$/;
+
+/** A script that writes, renames or deletes a file. */
+const WRITES_FILE =
+  /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][^'"]*[wax+]|\.write_(?:text|bytes)\s*\(|\b(?:write|append)File(?:Sync)?\b|\bcreateWriteStream\b|\b(?:rename|copyFile|rm|unlink)Sync\b|\bFile\.(?:write|open)\b|\bopen\s*\(?\s*(?:my\s+)?\$?\w+\s*,\s*['"]\+?>|\bshutil\.(?:copy|move)|\bos\.(?:rename|replace|remove)\b/;
+
+const READERS = new Set(['cat', 'head', 'tail', 'nl', 'less', 'more', 'bat']);
+const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
+
+/** Options that take the next word as their value, per command. */
+const VALUE_OPTIONS: Record<string, Set<string>> = {
+  head: new Set(['-n', '-c']),
+  tail: new Set(['-n', '-c']),
+  sed: new Set(['-e', '-f', '-l', '--expression', '--file']),
+  grep: new Set(['-e', '-f', '-m', '-A', '-B', '-C', '-d', '-D', '--max-count', '--regexp', '--file', '--context']),
+  rg: new Set(['-e', '-f', '-g', '-t', '-T', '-m', '-A', '-B', '-C', '-M', '-j', '--glob', '--type', '--type-not', '--max-count', '--regexp', '--file', '--context']),
+};
+
+/** Directories in the repository the file tools skip, so the shell may read them. */
+const GENERATED = /(?:^|\/)(?:node_modules|\.git|dist|\.next|coverage)(?:\/|$)/;
+
+function isInside(directory: string, target: string): boolean {
+  const relative = path.relative(directory, target);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+/** A path as the shell would resolve it, or undefined when it is not a plain word or the directory is unknown. */
+function resolveIn(cwd: string | undefined, word: string): string | undefined {
+  if (word === '' || word === "''" || word === '""' || /[$`*?~{]/.test(word)) return undefined;
+  if (path.isAbsolute(word)) return path.normalize(word);
+  return cwd === undefined ? undefined : path.resolve(cwd, word);
+}
+
+/** The words of one simple command, its redirections taken out, from the command name on. */
+function wordsOf(piece: string): string[] {
+  const words = piece
+    .replace(/<<<?-?\s*\S+/g, ' ')
+    .replace(/(?:\d*|&)>>?&?\s*[^\s;&|<>()]*/g, ' ')
+    .replace(/<\s*\S+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  let start = 0;
+  while (start < words.length && (/^\w+=/.test(words[start]!) || WRAPPERS.has(words[start]!) || (start > 0 && WRAPPERS.has(words[start - 1]!) && words[start]!.startsWith('-')))) start++;
+  return words.slice(start);
+}
+
+/** The operands after the command name: not options, their values or numbers. `skipFirst` drops a pattern or script. */
+function operands(name: string, words: string[], skipFirst: boolean): string[] {
+  const values = VALUE_OPTIONS[name] ?? new Set<string>();
+  const found: string[] = [];
+  let skip = skipFirst;
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i]!;
+    if (values.has(word)) {
+      i++;
+      continue;
+    }
+    if (word.startsWith('-') && word !== '-') continue;
+    if (/^\+?\d+$/.test(word)) continue;
+    if (skip) {
+      skip = false;
+      continue;
+    }
+    found.push(word);
+  }
+  return found;
+}
+
+const hasShort = (words: string[], letters: RegExp) => words.slice(1).some((w) => new RegExp(`^-[A-Za-z]*${letters.source}`).test(w));
+
+export function builderShellRule(repository: string, command: string, tools: ToolNames): string | undefined {
+  const editReason = (what: string) =>
+    `Change files with the ${tools.edit} tool and create them with ${tools.write}, not by running ${what} in ${tools.shell}: ${tools.edit} fails when its text does not match and returns the diff, where a shell edit misses silently.`;
+  const writeReason = (target: string) =>
+    `${tools.shell} writes no file in the repository (${target}): create a file with ${tools.write} and change one with ${tools.edit}. Redirection outside the repository, such as appending to /workspace/notes.md, is fine.`;
+  const scriptReason = (script: string) =>
+    `Run only the repository's own scripts in ${tools.shell}, not ${script}: change files with ${tools.edit} and ${tools.write}, and answer questions about the code with ${tools.read}, ${tools.grep} and ${tools.glob}.`;
+  const readReason = (name: string) =>
+    `Read the repository's files with the ${tools.read} tool, using \`offset\` and \`limit\` for part of a large one, not by running ${name} in ${tools.shell}: everything printed stays in your context. To run a command over a file, give the command the file.`;
+  const searchReason = (name: string) =>
+    `Search the repository with the ${tools.grep} tool and find files by name with the ${tools.glob} tool, not by running ${name} in ${tools.shell}. When a question means reading more than two files, ask the explore subagent through ${tools.agent}.`;
+
+  const readable = (target: string | undefined) => target !== undefined && isInside(repository, target) && !GENERATED.test(path.relative(repository, target));
+
+  // Quoted literal redirection targets are unquoted, so `> "src/a.ts"` is judged too.
+  const { shell } = splitHeredocs(command);
+  const text = unquoted(shell.replace(/(>>?\s*)(['"])([^'"$`\\\s]+)\2/g, '$1$3'));
+  const parts = text.split(SEPARATOR);
+  let cwd: string | undefined = repository;
+
+  for (let i = 0; i < parts.length; i += 2) {
+    const piece = parts[i]!;
+    const piped = parts[i - 1] === '|' || parts[i - 1] === '|&';
+    const words = wordsOf(piece);
+    const name = words[0] ? path.basename(words[0]) : undefined;
+
+    for (const { target } of redirectionsIn(piece)) {
+      const resolved = resolveIn(cwd, target);
+      if (resolved !== undefined && isInside(repository, resolved)) return writeReason(`> ${target}`);
+    }
+    if (name === undefined) continue;
+
+    if (name === 'cd' || name === 'pushd') {
+      cwd = words[1] === undefined ? undefined : resolveIn(cwd, words[1]);
+      continue;
+    }
+    if (name === 'sed' && (hasShort(words, /i/) || words.some((w) => w.startsWith('--in-place')))) return editReason('sed -i');
+    if (name === 'perl' && hasShort(words, /i/)) return editReason('perl -i');
+    if ((name === 'awk' || name === 'gawk') && words.some((w, j) => w === '-iinplace' || (w === '-i' && words[j + 1] === 'inplace'))) return editReason('awk -i inplace');
+    if (INTERPRETER.test(name)) {
+      const inline = words.length === 1 || words.slice(1).some((w) => INLINE_SCRIPT.has(w));
+      if (inline && WRITES_FILE.test(command)) return editReason(`a ${name} script`);
+      const script = words.slice(1).find((w) => SCRIPT_FILE.test(w));
+      const resolved = script === undefined ? undefined : resolveIn(cwd, script);
+      if (resolved !== undefined && !isInside(repository, resolved)) return scriptReason(`${name} ${script}`);
+    }
+    if (name === 'tee') {
+      for (const target of operands(name, words, false)) {
+        const resolved = resolveIn(cwd, target);
+        if (resolved !== undefined && isInside(repository, resolved)) return writeReason(`tee ${target}`);
+      }
+    }
+
+    // Reading or searching files, not a pipe.
+    if (piped) continue;
+    const quietSed = name === 'sed' && (hasShort(words, /n/) || words.includes('--quiet') || words.includes('--silent'));
+    if (READERS.has(name) || quietSed) {
+      const files = operands(name, words, quietSed && !words.some((w) => w === '-e' || w === '-f' || w.startsWith('--expression')));
+      if (files.some((f) => readable(resolveIn(cwd, f)))) return readReason(quietSed ? 'sed -n' : name);
+    }
+    if (SEARCHERS.has(name)) {
+      const key = name === 'rg' || name === 'ag' || name === 'ack' ? 'rg' : 'grep';
+      const patternGiven = words.some((w) => w === '-e' || w === '-f' || w.startsWith('--regexp') || w.startsWith('--file'));
+      const paths = operands(key, words, !patternGiven);
+      const recursive = key === 'rg' || hasShort(words, /[rR]/) || words.includes('--recursive');
+      const searched = paths.length > 0 ? paths : recursive ? ['.'] : [];
+      if (searched.some((p) => readable(resolveIn(cwd, p)))) return searchReason(name);
+    }
+    if (name === 'find') {
+      const end = words.findIndex((w, j) => j > 0 && /^[-(!\\]/.test(w));
+      const paths = words.slice(1, end === -1 ? undefined : end);
+      if ((paths.length > 0 ? paths : ['.']).some((p) => readable(resolveIn(cwd, p)))) return searchReason('find');
+    }
+  }
+  return undefined;
+}

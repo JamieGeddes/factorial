@@ -9,6 +9,7 @@
 import path from 'node:path';
 
 import { PLAN_AGENT } from './agents.ts';
+import { redirections, unquoted, withoutHeredocBodies } from './shell-text.ts';
 import type { ToolCall } from './tools.ts';
 
 export type Decision = { allow: true } | { allow: false; reason: string };
@@ -87,47 +88,6 @@ const REVIEWER_DENIED_COMMANDS: RegExp[] = [
   new RegExp(`${COMMAND_START}sed\\s+(?:-\\w*\\s+)*-i`),
   /\b(?:(?:ba|z)?sh\s+-c|eval|python3?\s+-c|node\s+-e)\b/,
 ];
-
-/** The command with quoted text emptied. */
-function unquoted(command: string): string {
-  return command.replace(/'[^']*'/g, "''").replace(/"(?:[^"\\]|\\.)*"/g, '""');
-}
-
-/** A heredoc whose delimiter is quoted, so its body is literal text: `<<'E'`, `<<"E"`, `<<\E`, `<<-'E'`. */
-const QUOTED_HEREDOC = /(?<!<)<<-?\s*(?:'(\w+)'|"(\w+)"|\\(\w+))/;
-
-/**
- * The command with the bodies of quoted heredocs removed, delimiter lines
- * included. A body is data (here, the review's text, which holds `>` and
- * words like `rm`), not shell, so it is not scanned. The body of a heredoc
- * with an unquoted delimiter is kept: the shell expands `$(...)` in it.
- * Must run on the raw command, before unquoted() erases the delimiter's quotes.
- */
-function withoutHeredocBodies(command: string): string {
-  const kept: string[] = [];
-  let delimiter: string | undefined;
-  for (const line of command.split('\n')) {
-    if (delimiter !== undefined) {
-      if (line.trim() === delimiter) delimiter = undefined;
-      continue;
-    }
-    kept.push(line);
-    const match = QUOTED_HEREDOC.exec(line);
-    // A `<<` inside quotes is text, not a heredoc: the quotes before it must balance.
-    if (match && !/['"]/.test(unquoted(line.slice(0, match.index)).replace(/''|""/g, ''))) {
-      delimiter = match[1] ?? match[2] ?? match[3];
-    }
-  }
-  return kept.join('\n');
-}
-
-type Redirection = { operator: string; target: string };
-
-/** The output redirections in a command: heredoc bodies, quoted text and harmless redirections are ignored. */
-function redirections(command: string): Redirection[] {
-  const harmless = unquoted(withoutHeredocBodies(command)).replace(/\d*>>?\s*\/dev\/null\b/g, '').replace(/\d*>&\d\b/g, '');
-  return [...harmless.matchAll(/(\d*|&)(>>?)\s*([^\s;&|<>()]*)/g)].map((match) => ({ operator: (match[1] ?? '') + (match[2] ?? ''), target: match[3] ?? '' }));
-}
 
 /** The files a command redirects output to (an empty string for a target that is not a plain word). */
 export function redirectionTargets(command: string): string[] {
