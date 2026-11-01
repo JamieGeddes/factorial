@@ -10,7 +10,7 @@ The foundation stack (`templates/foundation.yml`) creates:
 | `factorial-deploy` role | Assumed only by Actions jobs in the `production` environment of this repository, which only `main` may use. Drives CloudFormation (always through the execution role), publishes artefacts, and is the only principal that may move `live` aliases. It is explicitly denied from touching the foundation stack. |
 | `factorial-cloudformation` role | Assumed by CloudFormation to create resources in Factorial's stacks. Scoped to `factorial-*` resource names (`factorial_*` for AgentCore, the `factorial` domain for CodeArtifact), and may only create IAM roles that carry one of the two permissions boundaries. Roles named `factorial-agent` or `factorial-agent-*` must carry the agent boundary, and only they may be passed to AgentCore. |
 | `factorial-permissions-boundary` | Upper bound for every runtime role (Lambdas, the state machine, Fargate tasks). An allowlist of the services Factorial uses at runtime, so IAM, CloudFormation changes and everything else are outside it by construction, plus explicit denies on promotion, credentials, deployment artefacts and the foundation itself. |
-| `factorial-agent-permissions-boundary` | Upper bound for every agent execution role. Allows only running a Runtime: calls to Anthropic models on Bedrock, pulling its image, web search through a `factorial-*` gateway, reading the `factorial` CodeArtifact domain's npm mirror and telemetry; no credentials beyond the mirror's read-only token. Also carried by the web search gateway's service role, which AgentCore assumes. |
+| `factorial-agent-permissions-boundary` | Upper bound for every agent execution role. Allows only running a Runtime: calls to Anthropic models on Bedrock, pulling its image, web search through a `factorial-*` gateway, the AWS MCP Server's read-only knowledge tools through the AWS documentation gateway, reading the `factorial` CodeArtifact domain's npm mirror and telemetry; no credentials beyond the mirror's read-only token. Also carried by the web search and AWS documentation gateways' service roles, which AgentCore assumes. |
 | Artefact bucket | Packaged templates and Lambda bundles. |
 | `factorial/invoker` ECR repository | The Fargate task that invokes an agent and records its run. |
 | `factorial/agent-runtime` ECR repository | The AgentCore Runtime image: Factorial's host process around pi (`docs/pi-plan.md`). |
@@ -114,3 +114,11 @@ What needs a foundation change:
 | A runtime role or agent needing an action outside its boundary | Yes, in the relevant boundary |
 
 When a pull request changes both the foundation and templates that depend on it (for example, a new export), deploy the foundation from the pull request branch first, then merge. The deploy workflow then finds what the templates need.
+
+### AWS documentation gateway (#264)
+
+The agent permissions boundary gains `aws-mcp:InvokeMcp` and `aws-mcp:CallReadOnlyTool`, because the AWS documentation gateway's service role (`factorial-agent-aws-docs-gateway`) carries it and calls the AWS MCP Server. `aws-mcp:CallReadWriteTool` stays outside it. Order:
+
+1. From the pull request branch, redeploy the foundation by hand: `npm run deploy:foundation` (step 1 above). The CloudFormation execution role already creates `factorial-*` gateways and targets, so it needs no change.
+2. Merge. The deploy workflow creates the `factorial-aws-docs` gateway and target and gives the builder Runtime `FACTORIAL_AWS_DOCS_GATEWAY_URL`.
+3. Before any labelled item, make one signed `tools/call` of `aws-docs___aws___search_documentation` through the gateway (with the builder's execution role from a session command, or a role with `InvokeGateway` from a laptop): it should return results, which also confirms the signing service name `aws-mcp`. Then remove `aws-mcp:CallReadOnlyTool` from the gateway role and repeat it: it should be refused, which shows the gateway role, not the caller, is what the server authorises. Restore the permission by redeploying. Also check the AWS MCP Server's pricing page for any charge.
