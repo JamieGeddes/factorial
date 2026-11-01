@@ -10,7 +10,7 @@ import type { ToolKind, ToolNames } from './tools.ts';
 export interface SubagentSpec {
   description: string;
   prompt: (tools: ToolNames) => string;
-  /** In this order. `webSearch` is dropped when the gateway is not configured. */
+  /** In this order. A gateway tool set (`webSearch`, `awsDocs`) is dropped when its gateway is not configured. */
   tools: readonly ToolKind[];
   /** `inherit` runs on the role's main model; `explore` on the Runtime version's explore model. */
   model: 'inherit' | 'explore';
@@ -52,7 +52,7 @@ export const PLAN: SubagentSpec = {
   description:
     'Planner. Run it once, before any change, with the request and anything already on the branch; it writes /workspace/plan.json and /workspace/plan.md and replies with a short summary.',
   prompt: planPrompt,
-  tools: [...READ_ONLY_TOOLS, 'write', 'fetch', 'webSearch'],
+  tools: [...READ_ONLY_TOOLS, 'write', 'fetch', 'webSearch', 'awsDocs'],
   model: 'inherit',
   maxTurns: 40,
 };

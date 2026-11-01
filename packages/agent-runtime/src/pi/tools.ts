@@ -24,6 +24,7 @@ import {
 export type AnyTool = ToolDefinition<any, any, any>;
 
 import type { ToolCall, ToolKind, ToolNames } from '../tools.ts';
+import { AWS_DOCS_TOOLS, callAwsDocsTool, type AwsDocsTool } from '../aws-docs.ts';
 import { MAX_RESULTS_DESCRIPTION, QUERY_DESCRIPTION, WEB_SEARCH_DESCRIPTION, WEB_SEARCH_TOOL, search, type GatewayCall } from '../web-search.ts';
 import type { AgentRunner } from './as-agent.ts';
 import { bashOperations, editOperations, findOperations, grepOperations, readOperations, writeOperations, type Helper } from './operations.ts';
@@ -38,6 +39,7 @@ export const PI_TOOLS: ToolNames = {
   fetch: 'web_fetch',
   agent: 'task',
   webSearch: WEB_SEARCH_TOOL,
+  awsDocs: 'aws_docs',
 };
 
 /**
@@ -75,6 +77,20 @@ export function webSearchTool(call: GatewayCall): AnyTool {
   });
 }
 
+/** One of the AWS documentation tools, its parameters the schema pinned in aws-docs.ts. */
+export function awsDocsTool(call: GatewayCall, tool: AwsDocsTool): AnyTool {
+  return defineTool({
+    name: tool.name,
+    label: tool.name.replaceAll('_', ' '),
+    description: tool.description,
+    parameters: Type.Unsafe<Record<string, unknown>>(tool.parameters),
+    async execute(_id, params) {
+      const result = await callAwsDocsTool(call, tool, params);
+      return { content: result.content, details: undefined, ...(result.isError ? { isError: true } : {}) };
+    },
+  });
+}
+
 export interface ToolDeps {
   /** Where the file tools resolve a relative path: the workspace, as the rules do (tool-rules.ts). */
   cwd: string;
@@ -84,6 +100,8 @@ export interface ToolDeps {
   helper: Helper;
   /** Present when the gateway is configured and the role or subagent is offered search. */
   webSearch: GatewayCall | undefined;
+  /** Present when the AWS documentation gateway is configured and the role or subagent is offered it. */
+  awsDocs: GatewayCall | undefined;
   /** The fetch tool (fetch.ts), and the subagent tool for a role with subagents (subagents.ts). */
   fetch: AnyTool | undefined;
   agent: AnyTool | undefined;
@@ -93,6 +111,12 @@ export interface ToolDeps {
 export function toolsFor(kinds: readonly ToolKind[], deps: ToolDeps): AnyTool[] {
   const tools: AnyTool[] = [];
   for (const kind of kinds) {
+    // `awsDocs` is one kind of several tools, so it is handled here, not in the switch.
+    if (kind === 'awsDocs') {
+      const call = deps.awsDocs;
+      if (call) tools.push(...AWS_DOCS_TOOLS.map((tool) => awsDocsTool(call, tool)));
+      continue;
+    }
     const tool = ((): AnyTool | undefined => {
       switch (kind) {
         case 'shell': {

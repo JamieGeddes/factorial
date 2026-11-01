@@ -40,7 +40,7 @@ const configWith = (limits: { maxTurns?: number; maxBudgetUsd?: number }) => ({
 const role: HostRole = {
   systemPrompt: () => 'You are a test.',
   tools: ['shell'],
-  webSearch: false,
+  gatewayTools: [],
   subagents: {},
   session: () => ({ decide: () => ({ allow: true }), beforeStop: () => undefined, prompt: (p) => p }),
 };
@@ -94,6 +94,7 @@ async function run(
     helper: { runner, command: ['false'], cwd: root },
     agentDir: mkdtempSync(path.join(root, 'agent-')),
     webSearch: undefined,
+    awsDocs: undefined,
     provider: faux.provider,
   };
   const harness = piHarness(config, role, abortController, parts);
@@ -163,6 +164,7 @@ describe("the reviewer's role on pi", () => {
       helper: { runner, command: [process.execPath, '--no-warnings', fileURLToPath(new URL('./agent-ops.ts', import.meta.url))], cwd: workspace },
       agentDir: mkdtempSync(path.join(root, 'agent-')),
       webSearch: undefined,
+      awsDocs: undefined,
       provider: faux.provider,
     };
     const sentBack: string[] = [];

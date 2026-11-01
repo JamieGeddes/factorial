@@ -7,9 +7,20 @@
  */
 
 /** The tools a role may be offered. */
-export type ToolKind = 'shell' | 'read' | 'edit' | 'write' | 'grep' | 'glob' | 'fetch' | 'agent' | 'webSearch';
+export type ToolKind = 'shell' | 'read' | 'edit' | 'write' | 'grep' | 'glob' | 'fetch' | 'agent' | 'webSearch' | 'awsDocs';
 
-/** What a harness calls each kind, as the model sees it. */
+/**
+ * The kinds offered through a gateway: web search (one tool) and AWS
+ * documentation (three, aws-docs.ts). Each is offered only when the Runtime
+ * version names its gateway's URL. A role definition lists them in one place
+ * (HostRole.gatewayTools, roles.ts).
+ */
+export type GatewayToolSet = Extract<ToolKind, 'webSearch' | 'awsDocs'>;
+
+/**
+ * What a harness calls each kind, as the model sees it. For `awsDocs`, which
+ * stands for several tools, the prefix of their names.
+ */
 export type ToolNames = Readonly<Record<ToolKind, string>>;
 
 /**

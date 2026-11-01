@@ -2,7 +2,8 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   Factorial agents: one block per role (runtime, live endpoint and execution
   role), plus what the roles share (the agent runtime policy, the web search
-  gateway and the npm mirror). Deployed by GitHub Actions.
+  and AWS documentation gateways and the npm mirror). Deployed by GitHub
+  Actions.
 
 Parameters:
   AgentRuntimeImageTag:
@@ -165,6 +166,107 @@ Resources:
         - CredentialProviderType: GATEWAY_IAM_ROLE
 
   # ---------------------------------------------------------------------------
+  # AWS documentation. The AWS MCP Server's knowledge tools (documentation
+  # search and reads, regional availability) behind a second gateway, called
+  # by the builder's host as its in-process aws_docs_* tools (signed with the
+  # builder's execution role). A gateway of its own, not a second target on
+  # the web search gateway: the service role is shared by every
+  # GATEWAY_IAM_ROLE target on a gateway, and a gateway is one trust
+  # boundary. This role signs the calls to the server and so holds the only
+  # permission to it; no credential enters a session. The server's quotas, 10
+  # authenticated requests per second per account per region and 100
+  # concurrent connections, are shared by every session through this role; a
+  # 429 reaches the model as a tool error. Under the agent boundary like the
+  # web search role.
+  # ---------------------------------------------------------------------------
+  AwsDocsGatewayRole:
+    Type: AWS::IAM::Role
+    # cfn-lint's IAM action list (through 1.59.0) does not know the aws-mcp
+    # service, so W3037 fires on the AwsMcpReadOnly statement. Ignored for
+    # this resource only; remove once cfn-lint's data has the service.
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3037
+    Properties:
+      RoleName: factorial-agent-aws-docs-gateway
+      Description: Service role of the Factorial AWS documentation gateway.
+      PermissionsBoundary: !ImportValue Factorial-AgentPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-aws-docs-*
+      Policies:
+        - PolicyName: factorial-agent-aws-docs-gateway
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # Required for IAM outbound authorisation. Named rather than
+              # referenced: the gateway takes this role's ARN, so the role
+              # cannot take the gateway's.
+              - Sid: InvokeGateway
+                Effect: Allow
+                Action: bedrock-agentcore:InvokeGateway
+                Resource: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-aws-docs-*
+              # The service accepts no resource ARN. Deliberately absent:
+              # aws-mcp:CallReadWriteTool. The server's aws___run_script,
+              # aws___get_presigned_url and aws___get_tasks tools run AWS
+              # APIs, so this role cannot call them whatever the gateway
+              # lists.
+              - Sid: AwsMcpReadOnly
+                Effect: Allow
+                Action:
+                  - aws-mcp:InvokeMcp
+                  - aws-mcp:CallReadOnlyTool
+                Resource: '*'
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  AwsDocsGateway:
+    Type: AWS::BedrockAgentCore::Gateway
+    Properties:
+      Name: factorial-aws-docs
+      Description: AWS documentation for Factorial's agents.
+      ProtocolType: MCP
+      # Callers sign with SigV4; only roles granted InvokeGateway on this
+      # gateway (the builder's execution role) can call it.
+      AuthorizerType: AWS_IAM
+      RoleArn: !GetAtt AwsDocsGatewayRole.Arn
+      Tags:
+        Project: Factorial
+
+  # The AWS MCP Server's Ireland endpoint. The gateway names its tools
+  # aws-docs___aws___<tool>; the host offers three of them. The signing
+  # service name aws-mcp is inferred from the hostname, as the MCP Proxy for
+  # AWS does, and is unconfirmed until the first signed call.
+  AwsDocsTarget:
+    Type: AWS::BedrockAgentCore::GatewayTarget
+    Properties:
+      GatewayIdentifier: !GetAtt AwsDocsGateway.GatewayIdentifier
+      Name: aws-docs
+      Description: AWS MCP Server knowledge tools.
+      TargetConfiguration:
+        Mcp:
+          McpServer:
+            Endpoint: https://aws-mcp.eu-west-1.api.aws/mcp
+      CredentialProviderConfigurations:
+        - CredentialProviderType: GATEWAY_IAM_ROLE
+          CredentialProvider:
+            IamCredentialProvider:
+              Service: aws-mcp
+              Region: eu-west-1
+
+  # ---------------------------------------------------------------------------
   # The npm mirror (#242). Sessions install the target's npm packages from this
   # CodeArtifact repository, which fetches from npmjs through its external
   # connection, rather than from registry.npmjs.org. Here because sessions are
@@ -287,6 +389,13 @@ Resources:
                 Effect: Allow
                 Action: bedrock-agentcore:InvokeGateway
                 Resource: !GetAtt WebSearchGateway.GatewayArn
+              # The host's aws_docs_* tools sign gateway calls with this role.
+              # The shell shares the role, so could call the gateway directly
+              # too; that is the same read-only documentation.
+              - Sid: AwsDocsGateway
+                Effect: Allow
+                Action: bedrock-agentcore:InvokeGateway
+                Resource: !GetAtt AwsDocsGateway.GatewayArn
               # The host mints a read-only token for the npm mirror as each run
               # starts (packages/agent-runtime/src/npm.ts). The shared runtime
               # policy already grants sts:GetServiceBearerToken. The agent's
@@ -362,6 +471,7 @@ Resources:
         # timeout would stop the invoker task and lose uncollected commits.
         FACTORIAL_MAX_DURATION_SECONDS: '6600'
         FACTORIAL_WEB_SEARCH_GATEWAY_URL: !GetAtt WebSearchGateway.GatewayUrl
+        FACTORIAL_AWS_DOCS_GATEWAY_URL: !GetAtt AwsDocsGateway.GatewayUrl
         # The npm mirror (#242): the host writes a token for it to the agent's
         # ~/.npmrc and puts the registry in every agent command's environment.
         # Without these the host configures no mirror, as on the reviewer.
@@ -387,7 +497,7 @@ Resources:
   # writes /workspace/review.json (contracts/review). Advisory: the review goes
   # into the artefact store and the pull request body and never blocks the
   # pull request. It makes no changes, and only review.json is read out of its
-  # session. No web search: everything it judges is in the session. The
+  # session. No gateways: everything it judges is in the session. The
   # Review stage, after Test, runs it.
   # Factorial's host in review mode (FACTORIAL_ROLE: reviewer), on Claude
   # through Bedrock with this role and no model key, as the builder is. The
@@ -473,7 +583,7 @@ Resources:
         MaxLifetime: 3600
       # As for the builder: part of the immutable runtime version, fixed here
       # rather than parameters. No FACTORIAL_EXPLORE_MODEL (no subagents) and
-      # no web search gateway.
+      # no gateways.
       EnvironmentVariables:
         FACTORIAL_ROLE: reviewer
         # As the builder's.

@@ -118,6 +118,7 @@ export interface PiParts {
   /** Where pi keeps its auth and settings files: root-owned, never the workspace or a home directory. */
   agentDir: string;
   webSearch: GatewayCall | undefined;
+  awsDocs: GatewayCall | undefined;
   /** The models' provider: Bedrock on the Runtime (bedrock.ts). */
   provider: Provider<Api>;
 }
@@ -152,6 +153,7 @@ export function runtimeParts(config: Config): PiParts {
     helper: { runner, command: ['node', '--no-warnings', fileURLToPath(new URL('./agent-ops.mjs', import.meta.url))], cwd: config.workspace },
     agentDir,
     webSearch: config.webSearchGatewayUrl ? signedGatewayCall(config.webSearchGatewayUrl, config.region) : undefined,
+    awsDocs: config.awsDocsGatewayUrl ? signedGatewayCall(config.awsDocsGatewayUrl, config.region) : undefined,
     provider: bedrockProvider(),
   };
 }
@@ -276,6 +278,7 @@ async function* runPi(
       runner: parts.runner,
       helper: parts.helper,
       webSearch: parts.webSearch,
+      awsDocs: parts.awsDocs,
       fetch: fetchTool(parts.runner, config.workspace, answer(agentId)),
       agent: extra.agent,
     });
@@ -367,7 +370,7 @@ async function* runPi(
     });
   };
 
-  const tools: ToolKind[] = [...role.tools, ...(role.webSearch ? (['webSearch'] as const) : [])];
+  const tools: ToolKind[] = [...role.tools, ...role.gatewayTools];
   const outcome = (async (): Promise<RunEnded> => {
     let main: AgentSession | undefined;
     try {

@@ -27,7 +27,7 @@ On the SDK the root host started Claude Code once as `agent`, through a `setpriv
 
 The user split protects the host, its record and its code. The model's real reach is set by the layers outside the session, which no harness changes.
 
-- **IAM: the execution role and the permissions boundary.** Only the named Bedrock profiles and the web search gateway. The boundary denies deploying or promoting Factorial.
+- **IAM: the execution role and the permissions boundary.** Only the named Bedrock profiles, the web search gateway and the AWS documentation gateway. The boundary denies deploying or promoting Factorial.
 - **The orchestrator: what leaves the session.** Only named, capped and validated files. Commits leave as a git bundle and are pushed from a clean-room clone. No GitHub credentials enter the session.
 - **The in-session policy: a guard rail, not the gate.** Denying `git push` or writes outside `/workspace` narrows what a prompt injection can drive. The gates are the two layers above.
 
