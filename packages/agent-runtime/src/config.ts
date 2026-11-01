@@ -12,6 +12,49 @@ export type Role = RoleName;
 export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 export type Effort = (typeof EFFORTS)[number];
 
+/**
+ * The CodeArtifact repository npm installs from (#242), named by three
+ * variables on the Runtime version. The builder's version names it; the
+ * reviewer's names none and installs nothing.
+ */
+export interface NpmMirror {
+  domain: string;
+  /** The account that owns the domain. */
+  domainOwner: string;
+  repository: string;
+  /** The repository's npm endpoint, built from the three and the region, ending in a slash. */
+  registry: string;
+}
+
+/** The variables that name the mirror: all three or none. */
+export const NPM_MIRROR_VARIABLES = {
+  domain: 'FACTORIAL_CODEARTIFACT_DOMAIN',
+  domainOwner: 'FACTORIAL_CODEARTIFACT_DOMAIN_OWNER',
+  repository: 'FACTORIAL_CODEARTIFACT_REPOSITORY',
+} as const;
+
+// CodeArtifact's own name rules, so nothing else reaches the registry URL or the .npmrc line built from it.
+const DOMAIN_NAME = /^[a-z][a-z0-9-]{0,48}[a-z0-9]$/;
+const ACCOUNT_ID = /^[0-9]{12}$/;
+const REPOSITORY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{1,99}$/;
+const REGION = /^[a-z]{2}(-[a-z]+)+-[0-9]$/;
+
+export function readNpmMirror(env: NodeJS.ProcessEnv, region: string): NpmMirror | undefined {
+  const names = Object.values(NPM_MIRROR_VARIABLES);
+  const set = names.filter((name) => env[name]);
+  if (set.length === 0) return undefined;
+  if (set.length < names.length) throw new Error(`${names.join(', ')} must be set together; only ${set.join(', ')} is set`);
+  const domain = env[NPM_MIRROR_VARIABLES.domain]!;
+  const domainOwner = env[NPM_MIRROR_VARIABLES.domainOwner]!;
+  const repository = env[NPM_MIRROR_VARIABLES.repository]!;
+  if (!DOMAIN_NAME.test(domain)) throw new Error(`${NPM_MIRROR_VARIABLES.domain} is not a CodeArtifact domain name`);
+  if (!ACCOUNT_ID.test(domainOwner)) throw new Error(`${NPM_MIRROR_VARIABLES.domainOwner} must be a 12-digit account id`);
+  if (!REPOSITORY_NAME.test(repository)) throw new Error(`${NPM_MIRROR_VARIABLES.repository} is not a CodeArtifact repository name`);
+  if (!REGION.test(region)) throw new Error(`AWS_REGION (${region}) is not a region name`);
+  const registry = `https://${domain}-${domainOwner}.d.codeartifact.${region}.amazonaws.com/npm/${repository}/`;
+  return { domain, domainOwner, repository, registry };
+}
+
 export interface Config {
   role: Role;
   effort: Effort | undefined;
@@ -29,6 +72,8 @@ export interface Config {
   maxBudgetUsd: number;
   /** Wall-clock limit for the run, below the state machine's Build timeout. */
   maxDurationSeconds: number;
+  /** Where npm installs from; npm's default registry when unset (#242). */
+  npmMirror: NpmMirror | undefined;
   /** The AgentCore web search gateway's MCP URL; web search is off when unset. */
   webSearchGatewayUrl: string | undefined;
   port: number;
@@ -61,16 +106,18 @@ export function readConfig(env: NodeJS.ProcessEnv): Config {
   if (!Number.isInteger(maxTurns)) throw new Error('FACTORIAL_MAX_TURNS must be an integer');
   const effort = env.FACTORIAL_EFFORT || undefined;
   if (effort !== undefined && !(EFFORTS as readonly string[]).includes(effort)) throw new Error(`FACTORIAL_EFFORT must be one of ${EFFORTS.join(', ')}`);
+  const region = required(env, 'AWS_REGION');
   return {
     role,
     effort: effort as Effort | undefined,
     model: required(env, 'FACTORIAL_MODEL'),
     exploreModel: ROLES[role].models.includes('explore') ? required(env, modelVariable('explore')) : undefined,
     backgroundModel: required(env, 'FACTORIAL_BACKGROUND_MODEL'),
-    region: required(env, 'AWS_REGION'),
+    region,
     maxTurns,
     maxBudgetUsd: positiveNumber(env, 'FACTORIAL_MAX_BUDGET_USD'),
     maxDurationSeconds: positiveNumber(env, 'FACTORIAL_MAX_DURATION_SECONDS'),
+    npmMirror: readNpmMirror(env, region),
     webSearchGatewayUrl: env.FACTORIAL_WEB_SEARCH_GATEWAY_URL || undefined,
     port: 8080,
     workspace: '/workspace',

@@ -10,6 +10,7 @@
     "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
   },
   "dependencies": {
+    "@aws-sdk/client-codeartifact": "^3.1161.0",
     "@aws-sdk/credential-provider-node": "^3.972.86",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",

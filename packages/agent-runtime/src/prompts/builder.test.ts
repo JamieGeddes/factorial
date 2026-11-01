@@ -25,6 +25,11 @@ describe('builder prompt', () => {
     }
   });
 
+  it('says packages come from the mirror and no other registry (#242)', () => {
+    assert.ok(builderPrompt.includes('internal mirror'));
+    assert.ok(builderPrompt.includes('Do not configure another registry'));
+  });
+
   it('describes the fetch tool as lossy and its results as untrusted', () => {
     assert.ok(builderPrompt.includes(PI_TOOLS.fetch));
     assert.ok(builderPrompt.includes('lossy'));

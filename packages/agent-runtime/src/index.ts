@@ -1,11 +1,13 @@
 /**
  * Entry point: reads the Runtime version's configuration, then serves the
  * Runtime contract on port 8080 and runs the role once when asked, on pi
- * (pi/harness.ts), streamed as run events (contracts/run/v1/).
+ * (pi/harness.ts), streamed as run events (contracts/run/v1/), after
+ * configuring npm's mirror when the version names one (npm.ts).
  */
 import { createLogger } from '@factorial/log';
 
 import { readConfig } from './config.ts';
+import { configureNpm, tokenSeconds } from './npm.ts';
 import { piHarness } from './pi/harness.ts';
 import { HOST_ROLES } from './roles.ts';
 import { Run, type RunRequest } from './run.ts';
@@ -28,9 +30,13 @@ const { ping, setBusy } = pingTracker();
 const harness = piHarness(config, HOST_ROLES[config.role], abortController);
 const { started } = harness;
 
-function startRun(request: RunRequest) {
+async function* startRun(request: RunRequest) {
   log = log.with({ workItemId: request.workItemId, attempt: request.attempt });
-  return harness.start(request, (message, fields) => log.info(message, fields));
+  // Before pi starts, so the first install finds npm configured; a token that
+  // cannot be minted fails the run as host_error before any model call.
+  const registry = await configureNpm(config);
+  if (registry) log.info('npm mirror configured', { registry, tokenSeconds: tokenSeconds(config) });
+  yield* harness.start(request, (message, fields) => log.info(message, fields));
 }
 
 const limits = { maxDurationMs: config.maxDurationSeconds * 1000, abort: () => abortController.abort() };
