@@ -37,19 +37,24 @@ export function outcomeOf(closed: PullRequestClosed): PullRequestOutcome {
 }
 
 /** Why a close was not recorded, from the thread as the failed condition found it. */
-function notRecordedReason(target: OutcomeTarget, thread: OutcomeResult['thread']): string {
+function notRecordedReason(target: OutcomeTarget, outcome: PullRequestOutcome, thread: OutcomeResult['thread']): string {
   if (!thread) return 'the thread no longer exists';
   if (thread.prNumber !== target.prNumber) return `the thread records pull request #${String(thread.prNumber)}`;
   if (thread.branch !== target.branch) return `the thread is for branch ${String(thread.branch)}`;
-  return `the thread records a later close, at ${String(thread.outcome?.at)}`;
+  const recorded = thread.outcome?.at;
+  return `the thread records ${typeof recorded === 'string' && recorded > outcome.at ? 'a later close' : 'this close already'}, at ${String(recorded)}`;
 }
 
-/** Record one PullRequestClosed event. Throws only for a failure worth retrying. */
-export async function recordPullRequestClosed(detail: unknown, deps: ThreadOutcomeDeps): Promise<void> {
+/**
+ * Record one PullRequestClosed event. Resolves whether the thread recorded
+ * it (whatever became of the announcement); throws only for a failure worth
+ * retrying.
+ */
+export async function recordPullRequestClosed(detail: unknown, deps: ThreadOutcomeDeps): Promise<boolean> {
   const parsed = validatePullRequestClosed(detail);
   if (!parsed.ok) {
     deps.log.error('event invalid; ignored', { errors: parsed.errors.slice(0, 5) });
-    return;
+    return false;
   }
   const closed = parsed.value;
   const pullRequestKey = keyFor(closed.repository, closed.number);
@@ -57,26 +62,27 @@ export async function recordPullRequestClosed(detail: unknown, deps: ThreadOutco
   const threadKey = await deps.threadKeyFor(pullRequestKey);
   if (!threadKey) {
     deps.log.info('ignored: no thread records the pull request', fields);
-    return;
+    return false;
   }
   const target = { threadKey, prNumber: closed.number, branch: closed.headBranch };
   const outcome = outcomeOf(closed);
   const result = await deps.recordOutcome(target, outcome);
   const log = typeof result.thread?.prOpenedBy === 'string' ? deps.log.with({ workItemId: result.thread.prOpenedBy }) : deps.log;
   if (!result.recorded) {
-    log.info('ignored: outcome not recorded', { ...fields, threadKey, reason: notRecordedReason(target, result.thread) });
-    return;
+    log.info('ignored: outcome not recorded', { ...fields, threadKey, reason: notRecordedReason(target, outcome, result.thread) });
+    return false;
   }
   log.info('outcome recorded', { ...fields, threadKey, state: outcome.state });
   const openedBy = result.thread?.prOpenedBy;
   if (typeof openedBy !== 'string') {
     log.error('outcome not announced: the thread names no item that opened the pull request', { threadKey });
-    return;
+    return true;
   }
   const row = await deps.ledgerRow(openedBy);
   if (!row) {
     log.error('outcome not announced: no ledger row for the item that opened the pull request', { threadKey });
-    return;
+    return true;
   }
   await deps.announce(row, closed.number, outcome);
+  return true;
 }

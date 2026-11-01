@@ -711,6 +711,11 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-thread-outcome
       RetentionInDays: !Ref LogRetentionDays
+  ThreadReconcileLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-thread-reconcile
+      RetentionInDays: !Ref LogRetentionDays
   LiveForwardLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -1027,6 +1032,50 @@ Resources:
               Effect: Allow
               Action: sqs:SendMessage
               Resource: !GetAtt ThreadOutcomeFailedQueue.Arn
+        - !Ref ProgressEventsPolicy
+
+  # The thread reconciler (#237): reached hourly by ThreadReconcileSchedule,
+  # it reads the pull request of every thread that records one and no
+  # outcome, with a read-only token (pull requests: read, one repository),
+  # and records a close GitHub never sent through the thread outcome's own
+  # path, only where the thread still holds no outcome. Each one is counted
+  # in Factorial/MissedPullRequestCloses. No artefacts, no GitHub writes.
+  ThreadReconcileFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-thread-reconcile
+      Description: Record pull request closes GitHub never sent, and count them.
+      CodeUri: ../packages/orchestration/dist/thread-reconcile/
+      Handler: index.handler
+      Timeout: 300
+      LoggingConfig:
+        LogGroup: !Ref ThreadReconcileLogGroup
+      Policies:
+        - Statement:
+            - Sid: ThreadsAwaitingOutcome
+              Effect: Allow
+              Action: dynamodb:Scan
+              Resource: !GetAtt ThreadsTable.Arn
+            - Sid: ThreadIndex
+              Effect: Allow
+              Action: dynamodb:Query
+              Resource: !Sub ${ThreadsTable.Arn}/index/pullRequestKey-index
+            - Sid: ThreadOutcome
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt ThreadsTable.Arn
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:GetItem
+              Resource: !GetAtt WorkItemsTable.Arn
+            - Sid: MissedCloses
+              Effect: Allow
+              Action: cloudwatch:PutMetricData
+              Resource: '*'
+              Condition:
+                StringEquals:
+                  cloudwatch:namespace: Factorial
+        - !Ref GitHubAppPolicy
         - !Ref ProgressEventsPolicy
 
   # Work-item progress on the live feed (#194): reached by LiveExecutionRule
@@ -1950,6 +1999,76 @@ Resources:
       DestinationConfig:
         OnFailure:
           Destination: !GetAtt ThreadOutcomeFailedQueue.Arn
+
+  # The reconciler's schedule, on the default bus like every scheduled rule.
+  ThreadReconcileSchedule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: factorial-thread-reconcile
+      Description: Hourly, record the Factorial pull request closes GitHub never sent.
+      ScheduleExpression: rate(1 hour)
+      State: ENABLED
+      Targets:
+        - Id: thread-reconcile
+          Arn: !Ref ThreadReconcileFunction.Alias
+
+  ThreadReconcileSchedulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref ThreadReconcileFunction.Alias
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt ThreadReconcileSchedule.Arn
+
+  # No retries: the next hour's run is the retry, and a failed run raises
+  # ThreadReconcileErrorsAlarm.
+  ThreadReconcileFunctionInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    DependsOn: ThreadReconcileFunctionAliaslive
+    Properties:
+      FunctionName: !Ref ThreadReconcileFunction
+      Qualifier: live
+      MaximumRetryAttempts: 0
+
+  # A close the reconciler recorded is one the webhook path missed: the App
+  # not subscribed to the Pull request event, a failed delivery, or the
+  # adapter dropping it (docs/github-app.md). No action yet: the alerts topic
+  # comes with #16.
+  MissedPullRequestClosesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: factorial-missed-pull-request-closes
+      AlarmDescription: >-
+        factorial-thread-reconcile recorded a pull request close that GitHub's webhook never delivered.
+        In the GitHub App's settings check that Permissions & events > Subscribe to events has Pull request ticked,
+        then Advanced > Recent Deliveries for failed pull_request deliveries.
+        Its log group names each pull request. See docs/github-app.md.
+      Namespace: Factorial
+      MetricName: MissedPullRequestCloses
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  # A reconciler that fails can miss nothing, so its own failures alarm too.
+  ThreadReconcileErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: factorial-thread-reconcile-errors
+      AlarmDescription: factorial-thread-reconcile failed, so missed pull request closes are not being recorded. See its log group and docs/github-app.md.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: factorial-thread-reconcile
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
 
   # AWS sends Step Functions' execution status changes to the default bus
   # only, so this rule is there, matching only this state machine. Executions

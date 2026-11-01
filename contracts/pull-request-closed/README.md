@@ -10,6 +10,8 @@ It is internal to Factorial, not part of the `WorkItem` API, but other component
 
 The GitHub adapter (`packages/triggers-github-issues`), for a `pull_request` webhook with action `closed` on a pull request opened by `<slug>[bot]` from a `factorial/<id>` branch in the same repository. Every other `pull_request` action, and a closed pull request anyone else opened, is ignored and logged with the reason.
 
+`factorial-thread-reconcile` (#237) builds the same event, from the pulls and issues APIs, for a close the adapter never received, and records it in process without putting it on the bus. Its `by` is `ghost` when GitHub names nobody (a deleted account).
+
 ## Fields
 
 | Field | Purpose |

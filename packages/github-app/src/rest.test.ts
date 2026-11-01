@@ -125,6 +125,66 @@ describe('GitHubClient', () => {
     assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/26');
   });
 
+  it('reads how a pull request closed: a merge, with its commit and who merged it', async () => {
+    const seen: Seen[] = [];
+    const sha = 'a'.repeat(40);
+    const client = new GitHubClient({
+      token: 't',
+      fetchImpl: fakeFetch(
+        200,
+        {
+          number: 26,
+          html_url: 'https://github.com/JamieGeddes/factorial/pull/26',
+          state: 'closed',
+          head: { ref: 'factorial/a' },
+          merged: true,
+          closed_at: '2026-10-31T15:29:00Z',
+          merged_at: '2026-10-31T15:29:00Z',
+          merge_commit_sha: sha,
+          merged_by: { login: 'alice' },
+        },
+        seen,
+      ),
+    });
+    assert.deepEqual(await client.getPullRequestClose(repo, 26), {
+      number: 26,
+      htmlUrl: 'https://github.com/JamieGeddes/factorial/pull/26',
+      state: 'closed',
+      headRef: 'factorial/a',
+      merged: true,
+      closedAt: '2026-10-31T15:29:00Z',
+      mergedAt: '2026-10-31T15:29:00Z',
+      mergeCommit: sha,
+      mergedBy: 'alice',
+    });
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/pulls/26');
+  });
+
+  it('reads an open pull request without the test merge commit GitHub reports for it', async () => {
+    const client = new GitHubClient({
+      token: 't',
+      fetchImpl: fakeFetch(
+        200,
+        { number: 26, html_url: 'u', state: 'open', head: { ref: 'factorial/a' }, merged: false, closed_at: null, merged_at: null, merge_commit_sha: 'b'.repeat(40), merged_by: null },
+        [],
+      ),
+    });
+    const close = await client.getPullRequestClose(repo, 26);
+    assert.equal(close.merged, false);
+    assert.equal(close.closedAt, undefined);
+    assert.equal(close.mergeCommit, undefined);
+    assert.equal(close.mergedBy, undefined);
+  });
+
+  it('reads who closed a pull request from the issues API', async () => {
+    const seen: Seen[] = [];
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { closed_by: { login: 'bob' } }, seen) });
+    assert.equal(await client.closedBy(repo, 26), 'bob');
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/26');
+    const deleted = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { closed_by: null }, []) });
+    assert.equal(await deleted.closedBy(repo, 26), undefined);
+  });
+
   it("lists one review's inline comments, falling back to the original line", async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({

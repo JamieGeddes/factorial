@@ -41,6 +41,22 @@ export interface PullRequestState {
   baseRepoId: number;
 }
 
+/** Whether and how a pull request closed: the facts a PullRequestClosed event carries. */
+export interface PullRequestClose {
+  number: number;
+  htmlUrl: string;
+  /** `open` or `closed`. */
+  state: string;
+  headRef: string;
+  merged: boolean;
+  closedAt: string | undefined;
+  mergedAt: string | undefined;
+  /** When merged: the commit the merge made on the base branch. */
+  mergeCommit: string | undefined;
+  /** When merged: who merged it; undefined when that account no longer exists. */
+  mergedBy: string | undefined;
+}
+
 /** An inline comment on a pull request's diff. */
 export interface ReviewComment {
   authorLogin: string;
@@ -135,6 +151,43 @@ export class GitHubClient {
       baseRef: pr.base.ref,
       baseRepoId: pr.base.repo.id,
     };
+  }
+
+  /** Whether a pull request has closed and, if it has, when, whether merged and by whom. */
+  async getPullRequestClose(repo: Repo, pullNumber: number): Promise<PullRequestClose> {
+    const pr = await this.#request<{
+      number: number;
+      html_url: string;
+      state: string;
+      head: { ref: string };
+      merged?: boolean;
+      closed_at: string | null;
+      merged_at: string | null;
+      merge_commit_sha: string | null;
+      merged_by?: { login: string } | null;
+    }>('GET', `/repos/${repo.owner}/${repo.name}/pulls/${pullNumber}`);
+    const merged = pr.merged === true || pr.merged_at !== null;
+    return {
+      number: pr.number,
+      htmlUrl: pr.html_url,
+      state: pr.state,
+      headRef: pr.head.ref,
+      merged,
+      closedAt: pr.closed_at ?? undefined,
+      mergedAt: pr.merged_at ?? undefined,
+      mergeCommit: merged ? (pr.merge_commit_sha ?? undefined) : undefined,
+      mergedBy: pr.merged_by?.login,
+    };
+  }
+
+  /**
+   * Who closed an issue or pull request, from the issues API: the pulls API
+   * names only who merged. Undefined while open, or when that account no
+   * longer exists.
+   */
+  async closedBy(repo: Repo, issueNumber: number): Promise<string | undefined> {
+    const issue = await this.#request<{ closed_by?: { login: string } | null }>('GET', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}`);
+    return issue.closed_by?.login;
   }
 
   /**

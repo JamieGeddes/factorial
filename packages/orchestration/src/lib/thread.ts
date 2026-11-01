@@ -8,7 +8,7 @@
  * are conditional on the version read, so two turns cannot both claim it.
  */
 import { ConditionalCheckFailedException, DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand, type UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand, UpdateCommand, type UpdateCommandInput } from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 
 import type { PullRequestOutcome } from '@factorial/progress';
@@ -178,20 +178,34 @@ export interface OutcomeTarget {
   branch: string;
 }
 
+/** How an outcome may be written: `first` only where the thread records none yet (the reconciler's write). */
+export interface OutcomeWriteOptions {
+  first?: boolean;
+}
+
 /**
  * The write that records a pull request's outcome on its thread: only if the
  * thread records that pull request from that branch, and holds no later
  * close. A repeat of the same close sets the same values. It leaves
- * `version` alone: the outcome is not an admission.
+ * `version` alone: the outcome is not an admission. With `first`, only if
+ * the thread holds no outcome at all, so a close the webhook path already
+ * recorded is never recorded again.
  */
-export function outcomeUpdate(table: string, target: OutcomeTarget, outcome: PullRequestOutcome): UpdateCommandInput {
+export function outcomeUpdate(table: string, target: OutcomeTarget, outcome: PullRequestOutcome, options: OutcomeWriteOptions = {}): UpdateCommandInput {
+  const noLaterClose = options.first ? 'attribute_not_exists(#outcome)' : '(attribute_not_exists(#outcome) OR #outcome.#at <= :at)';
   return {
     TableName: table,
     Key: { threadKey: target.threadKey },
     UpdateExpression: 'SET #outcome = :outcome, updatedAt = :now',
-    ConditionExpression: 'prNumber = :number AND #branch = :branch AND (attribute_not_exists(#outcome) OR #outcome.#at <= :at)',
-    ExpressionAttributeNames: { '#outcome': 'outcome', '#branch': 'branch', '#at': 'at' },
-    ExpressionAttributeValues: { ':outcome': outcome, ':number': target.prNumber, ':branch': target.branch, ':at': outcome.at, ':now': new Date().toISOString() },
+    ConditionExpression: `prNumber = :number AND #branch = :branch AND ${noLaterClose}`,
+    ExpressionAttributeNames: { '#outcome': 'outcome', '#branch': 'branch', ...(options.first ? {} : { '#at': 'at' }) },
+    ExpressionAttributeValues: {
+      ':outcome': outcome,
+      ':number': target.prNumber,
+      ':branch': target.branch,
+      ...(options.first ? {} : { ':at': outcome.at }),
+      ':now': new Date().toISOString(),
+    },
     ReturnValues: 'ALL_NEW',
     ReturnValuesOnConditionCheckFailure: 'ALL_OLD',
   };
@@ -203,9 +217,9 @@ export interface OutcomeResult {
   thread?: Partial<Thread>;
 }
 
-export async function recordThreadOutcome(target: OutcomeTarget, outcome: PullRequestOutcome): Promise<OutcomeResult> {
+export async function recordThreadOutcome(target: OutcomeTarget, outcome: PullRequestOutcome, options: OutcomeWriteOptions = {}): Promise<OutcomeResult> {
   try {
-    const result = await documents.send(new UpdateCommand(outcomeUpdate(tableName(), target, outcome)));
+    const result = await documents.send(new UpdateCommand(outcomeUpdate(tableName(), target, outcome, options)));
     return { recorded: true, thread: result.Attributes as Partial<Thread> };
   } catch (error) {
     if (!(error instanceof ConditionalCheckFailedException)) throw error;
@@ -213,4 +227,31 @@ export async function recordThreadOutcome(target: OutcomeTarget, outcome: PullRe
     const item = (error as { Item?: Parameters<typeof unmarshall>[0] }).Item;
     return { recorded: false, ...(item ? { thread: unmarshall(item) as Partial<Thread> } : {}) };
   }
+}
+
+/** A thread that records a pull request and no outcome: the parts the reconciler reads. */
+export type ThreadAwaitingOutcome = Pick<Thread, 'threadKey' | 'owner' | 'name' | 'branch' | 'prOpenedBy'> & { prNumber: number; outcome?: PullRequestOutcome };
+
+/**
+ * Every thread that records a pull request and no outcome (#237). A scan:
+ * the table holds one row per branch Factorial has worked on, and this runs
+ * hourly.
+ */
+export async function threadsAwaitingOutcome(): Promise<ThreadAwaitingOutcome[]> {
+  const threads: ThreadAwaitingOutcome[] = [];
+  let start: Record<string, unknown> | undefined;
+  do {
+    const page = await documents.send(
+      new ScanCommand({
+        TableName: tableName(),
+        FilterExpression: 'attribute_exists(prNumber) AND attribute_not_exists(#outcome)',
+        ProjectionExpression: 'threadKey, #owner, #name, #branch, prNumber, prOpenedBy',
+        ExpressionAttributeNames: { '#outcome': 'outcome', '#owner': 'owner', '#name': 'name', '#branch': 'branch' },
+        ...(start ? { ExclusiveStartKey: start } : {}),
+      }),
+    );
+    threads.push(...((page.Items ?? []) as ThreadAwaitingOutcome[]));
+    start = page.LastEvaluatedKey;
+  } while (start);
+  return threads;
 }

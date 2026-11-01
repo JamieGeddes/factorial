@@ -46,6 +46,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 - `/aws/lambda/factorial-report`
 - `/aws/lambda/factorial-report-github` (every comment, reply and review re-request on GitHub: the "started" notice on a labelled issue, whose ledger row's `startedNotifiedAt` says it was sent, and the turn's outcome, whose `outcomeDelivery.deliveredAt` says it was delivered)
 - `/aws/lambda/factorial-thread-outcome` (the pull request's outcome on its thread; lines carry the id of the item that opened the pull request, and one the function ignored names the pull request, `<owner>/<name>#<number>`, instead)
+- `/aws/lambda/factorial-thread-reconcile` (hourly, an outcome GitHub never sent, #237: `missed close recorded` with the pull request, `state`, `closedAt` and `by`, and the webhook path's own `outcome recorded`, both carrying the id of the item that opened the pull request; `not reconciled` names a pull request GitHub could not be read for; `reconciled` sums up each run)
 - `/aws/lambda/factorial-live-forward` (work-item progress on the live feed, section 6; `forwarded` lines carry the id as a field, and `not forwarded` says why an event was skipped)
 
 Set the time range to cover the run, then run:
