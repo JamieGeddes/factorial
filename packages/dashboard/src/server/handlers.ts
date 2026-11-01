@@ -12,7 +12,7 @@ import { modelLabel, type UsageFacts } from '../lib/usage-facts.ts';
 import { limitsOf, runDetail as buildRunDetail, type Limits, type RunDetail } from '../lib/run-view.ts';
 import { stageKeyOf } from '../lib/stages.ts';
 import { isPlanWrite, planSteps, type PlanStep } from '../lib/transcript.ts';
-import { compareItems, isFilter, matchesFilter, matchesSearch, sourceLabel, summarise, type Filter, type WorkItemSummary } from '../lib/work-items.ts';
+import { compareItems, isFilter, matchesFilter, matchesSearch, newestFirst, sourceLabel, summarise, type Filter, type WorkItemSummary } from '../lib/work-items.ts';
 import { isWorkItemId, itemKey } from './artefacts.ts';
 import { parseChannel, type LiveMessage, type StreamHandle } from './live.ts';
 import { FACTORIAL_REPOSITORY, type Services } from './services.ts';
@@ -106,15 +106,14 @@ export async function workItemDetail(services: Services, id: string): Promise<Wo
   };
 }
 
-/** The `/runs` list: the latest agent run of every item that has one, running first, at most 50. */
+/** The `/runs` list: the latest agent run of every item that has one, newest created first. No row limit: the page sorts and filters them all. */
 export async function runsPage(services: Services): Promise<WorkItemSummary[]> {
   const [rows, threads] = await Promise.all([services.ledger.list(), services.threads.all()]);
   const now = services.now();
   return rows
     .map((row) => summarise(row, row.threadKey ? threads.get(row.threadKey) : undefined, now))
     .filter((i) => i.latestRun)
-    .sort(compareItems)
-    .slice(0, 50);
+    .sort(newestFirst);
 }
 
 export function getWorkItem(services: Services, id: string): Promise<Response> {

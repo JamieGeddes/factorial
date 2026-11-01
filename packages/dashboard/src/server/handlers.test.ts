@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { stubServices } from '../../test/services.ts';
 import { ID, ID2 } from '../../test/stubs.ts';
 import type { LedgerRow } from '../lib/records.ts';
-import { getArtefact, getHealth, getLive, getMetrics, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, safeContentType } from './handlers.ts';
+import { getArtefact, getHealth, getLive, getMetrics, getOverview, getRun, getRunning, getStatus, getWorkItem, getWorkItems, postLiveChannels, runsPage, safeContentType } from './handlers.ts';
 
 const item = (id: string, fields: Partial<LedgerRow>): LedgerRow => ({
   workItemId: id,
@@ -36,6 +36,20 @@ test('/api/work-items: running first, filtered, with sources and counts', async 
   assert.deepEqual((running.body.items as Array<{ id: string }>).map((i) => i.id), [ID2]);
   const page = await read(await getWorkItems(new Request('http://h/api/work-items?limit=1'), services));
   assert.equal(page.body.nextCursor, '1');
+});
+
+test('runsPage: every item with a run, newest created first whether or not it is running', async () => {
+  const noRun = item(ID3, { createdAt: '2026-11-02T00:00:00Z', result: 'refused' });
+  const many = Array.from({ length: 60 }, (_, n) =>
+    item(`00000000-d53d-11f1-8851-${String(n).padStart(12, '0')}`, { createdAt: `2026-10-01T10:${String(n).padStart(2, '0')}:00Z`, stages: { Build: { startedAt: '2026-10-01T10:00:00Z' } } }),
+  );
+  const finished = item(ID, { result: 'pr-opened', stages: { Build: { startedAt: '2026-11-01T10:01:00Z' } } });
+  const list = await runsPage(stubServices({ rows: [rows[1]!, noRun, ...many, finished] }));
+  assert.equal(list.length, 62);
+  assert.deepEqual(list.slice(0, 2).map((i) => i.id), [ID, ID2]);
+  assert.equal(list[1]?.running, true);
+  assert.ok(!list.some((i) => i.id === ID3));
+  assert.deepEqual(list.slice(2).map((i) => i.createdAt), many.map((m) => m.createdAt).reverse());
 });
 
 test('/api/work-items: a row without a WorkItem is listed under all and attention, and adds no source', async () => {
