@@ -50,3 +50,6 @@ export function fmtWhen(iso: string, now: number): string {
   if (days === 1) return `yesterday ${time}`;
   return `${days} days ago`;
 }
+
+/** "ref · title", or the title alone when the item has no reference. */
+export const refAndTitle = (ref: string, title: string): string => (ref ? `${ref} · ${title}` : title);

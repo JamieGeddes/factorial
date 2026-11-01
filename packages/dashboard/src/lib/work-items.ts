@@ -57,7 +57,12 @@ export interface WorkItemSummary {
   review?: { verdict: string; mean?: number };
   /** The run the row opens: the latest agent run. */
   latestRun?: { stage: string; round: number };
+  /** The row has no `workItem`: a stage update wrote it for an id that was never accepted. */
+  incomplete?: true;
 }
+
+export const INCOMPLETE_TITLE = 'No WorkItem recorded';
+export const INCOMPLETE_NOTE = 'Written by a stage update; no WorkItem was accepted';
 
 const RUN_FOLDERS: Record<string, string> = { Build: 'build', Review: 'review' };
 
@@ -123,25 +128,27 @@ function meanOf(scores: Record<string, number> | undefined): number | undefined 
 }
 
 export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), resultSince = RESULT_SINCE): WorkItemSummary {
+  const incomplete = !row.workItem;
   const item = row.workItem ?? {};
   const result = resultOf(row, resultSince);
   const current = currentStage(row);
   const repository = isRepository(item.repository) ? { owner: item.repository.owner, name: item.repository.name } : undefined;
-  const { ref, url } = reference(row);
+  const { ref, url } = incomplete ? { ref: '', url: undefined } : reference(row);
   const prNumber = typeof row.prNumber === 'number' ? row.prNumber : thread?.prNumber;
   const prUrl = repository && prNumber ? pullRequestUrl(repository, prNumber) : undefined;
-  const status = statusPill(row, thread, resultSince);
+  const pill = statusPill(row, thread, resultSince);
+  const status = incomplete ? { ...pill, note: INCOMPLETE_NOTE } : pill;
   const running = result === undefined && current?.stage !== 'Test';
   const waiting = result === undefined && current?.stage === 'Test';
   const cost = costOf(row);
   const mean = meanOf(row.reviewScores);
   const run = latestRun(row);
-  const type = text(item.source?.type) || 'unknown';
+  const type = incomplete ? '' : text(item.source?.type) || 'unknown';
   const endedAt = result === undefined ? undefined : (row.endedAt ?? row.updatedAt);
   return {
     id: row.workItemId,
-    title: oneLine(text(item.title)) || '(no title)',
-    source: { type, label: sourceLabel(type), ref, ...(url ? { url } : {}) },
+    title: incomplete ? INCOMPLETE_TITLE : oneLine(text(item.title)) || '(no title)',
+    source: { type, label: type ? sourceLabel(type) : '', ref, ...(url ? { url } : {}) },
     requester: oneLine(text(item.requestedBy)),
     ...(repository ? { repository } : {}),
     ...(row.branch ? { branch: oneLine(row.branch) } : {}),
@@ -159,6 +166,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
     ...(cost !== undefined ? { costUsd: cost } : {}),
     ...(row.reviewVerdict ? { review: { verdict: oneLine(row.reviewVerdict), ...(mean !== undefined ? { mean } : {}) } } : {}),
     ...(run ? { latestRun: run } : {}),
+    ...(incomplete ? { incomplete: true as const } : {}),
   };
 }
 

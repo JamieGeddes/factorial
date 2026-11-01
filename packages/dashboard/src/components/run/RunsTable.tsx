@@ -1,6 +1,6 @@
 'use client';
 
-import { clip, shortId } from '../../lib/format.ts';
+import { clip, refAndTitle, shortId } from '../../lib/format.ts';
 import { runHref } from '../../lib/overview.ts';
 import type { WorkItemSummary } from '../../lib/work-items.ts';
 import { Pill } from '../Pill.tsx';
@@ -13,7 +13,7 @@ const COLUMNS: Column<WorkItemSummary>[] = [
     render: (i) => (
       <>
         <span className="mono">{shortId(i.id)}</span>
-        <span className="sub">{`${i.source.ref} · ${clip(i.title, 60)}`}</span>
+        <span className="sub">{refAndTitle(i.source.ref, clip(i.title, 60))}</span>
       </>
     ),
   },

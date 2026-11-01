@@ -28,6 +28,17 @@ test('a rework names its pull request', () => {
   assert.equal(s.source.ref, 'PR #189');
 });
 
+test('a row without a WorkItem is an incomplete record: no source, reference or requester', () => {
+  const s = summarise({ workItemId: '7f93ccb0-d53d-11f1-8851-ff488f20a8b2', status: 'failed', savedWork: true }, undefined, NOW);
+  assert.equal(s.incomplete, true);
+  assert.equal(s.title, 'No WorkItem recorded');
+  assert.deepEqual(s.source, { type: '', label: '', ref: '' });
+  assert.equal(s.requester, '');
+  assert.deepEqual(s.status, { label: 'failed', tone: 'failed', note: 'Written by a stage update; no WorkItem was accepted' });
+  assert.equal(matchesFilter(s, 'attention'), true);
+  assert.equal(summarise(base(), undefined, NOW).incomplete, undefined);
+});
+
 test('cost sums the runs, and the live run while it has no record', () => {
   const stages = { Build: { startedAt: '1', run: { costUsd: 0.5 } }, Review: { startedAt: '2' } };
   assert.equal(costOf(base({ stages })), 0.5);

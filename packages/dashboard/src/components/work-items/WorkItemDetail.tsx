@@ -6,7 +6,7 @@ import { MeterRow } from '../Meter.tsx';
 import { Pill } from '../Pill.tsx';
 import { RunLine } from '../RunLine.tsx';
 import { Tag } from '../Tag.tsx';
-import { fmtDur, fmtK, fmtUsd, shortId } from '../../lib/format.ts';
+import { fmtDur, fmtK, fmtUsd, refAndTitle, shortId } from '../../lib/format.ts';
 import { branchUrl } from '../../lib/links.ts';
 import type { LedgerRow, ThreadRow } from '../../lib/records.ts';
 import { text } from '../../lib/sanitise.ts';
@@ -42,7 +42,7 @@ export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
       <div className="run-head">
         <div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <h1>{`${summary.source.ref} · ${summary.title}`}</h1>
+            <h1>{refAndTitle(summary.source.ref, summary.title)}</h1>
             <Pill pill={summary.status} />
           </div>
           <div className="ids">
@@ -165,9 +165,9 @@ export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
         <div className="card span-7">
           <div className="card-head">
             <h2>Request</h2>
-            <span className="sub">{`${summary.source.label} · by ${summary.requester || 'unknown'}`}</span>
+            <span className="sub">{summary.incomplete ? 'none recorded' : `${summary.source.label} · by ${summary.requester || 'unknown'}`}</span>
           </div>
-          <pre className="detail-body">{text(row.workItem?.body) || '(no text)'}</pre>
+          {summary.incomplete ? <p className="note">{summary.status.note}</p> : <pre className="detail-body">{text(row.workItem?.body) || '(no text)'}</pre>}
         </div>
         <div className="card span-5">
           <div className="card-head">
