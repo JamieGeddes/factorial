@@ -71,7 +71,8 @@ export interface WorkItemSummary {
   requester: string;
   repository?: Repository;
   branch?: string;
-  pullRequest?: { number: number; url?: string };
+  /** From the ledger row's `prNumber`, or its thread's; `state` only when the thread records this pull request. */
+  pullRequest?: { number: number; url?: string; state?: PullRequestState };
   status: Pill;
   /** Running and not in Test. */
   running: boolean;
@@ -91,6 +92,15 @@ export interface WorkItemSummary {
   latestRun?: { stage: string; round: number };
   /** The row has no `workItem`: a stage update wrote it for an id that was never accepted. */
   incomplete?: true;
+}
+
+export type PullRequestState = 'open' | 'merged' | 'closed';
+
+/** What the thread says of pull request `number`: merged or closed once recorded, open until then; nothing when it records another. */
+function pullRequestState(thread: ThreadRow | undefined, number: number): PullRequestState | undefined {
+  if (thread?.prNumber !== number) return undefined;
+  const state = thread.outcome?.state;
+  return state === 'merged' || state === 'closed' ? state : 'open';
 }
 
 export const INCOMPLETE_TITLE = 'No WorkItem recorded';
@@ -152,6 +162,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
   const { ref, url } = incomplete ? { ref: '', url: undefined } : sourceType(type).reference(row, repository);
   const prNumber = typeof row.prNumber === 'number' ? row.prNumber : thread?.prNumber;
   const prUrl = repository && prNumber ? pullRequestUrl(repository, prNumber) : undefined;
+  const prState = prNumber ? pullRequestState(thread, prNumber) : undefined;
   const pill = statusPill(row, thread, resultSince);
   const status = incomplete ? { ...pill, note: INCOMPLETE_NOTE } : pill;
   const running = result === undefined && current?.stage !== 'Test';
@@ -167,7 +178,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
     requester: oneLine(text(item.requestedBy)),
     ...(repository ? { repository } : {}),
     ...(row.branch ? { branch: oneLine(row.branch) } : {}),
-    ...(prNumber ? { pullRequest: { number: prNumber, ...(prUrl ? { url: prUrl } : {}) } } : {}),
+    ...(prNumber ? { pullRequest: { number: prNumber, ...(prUrl ? { url: prUrl } : {}), ...(prState ? { state: prState } : {}) } } : {}),
     status,
     running,
     waiting,

@@ -22,6 +22,20 @@ test('a row becomes the table row: source, reference, links built by the app, re
   assert.deepEqual(s.review, { verdict: 'approve', mean: 4.5 });
 });
 
+test("a pull request's state comes from its thread, and a rework shows its pull request from the start", () => {
+  const thread = (fields = {}) => ({ threadKey: 'k', prNumber: 226, ...fields });
+  const opened = base({ result: 'pr-opened', prNumber: 226, prUrl: 'https://evil.example/pull/226' });
+  assert.deepEqual(summarise(opened, thread(), NOW).pullRequest, { number: 226, url: 'https://github.com/JamieGeddes/factorial/pull/226', state: 'open' });
+  assert.equal(summarise(opened, thread({ outcome: { state: 'merged', by: 'jamie', at: '2026-11-01T11:00:00Z' } }), NOW).pullRequest?.state, 'merged');
+  assert.equal(summarise(opened, thread({ outcome: { state: 'closed', by: 'jamie', at: '2026-11-01T11:00:00Z' } }), NOW).pullRequest?.state, 'closed');
+  // A thread that records another pull request says nothing of this one.
+  assert.equal(summarise(opened, thread({ prNumber: 300 }), NOW).pullRequest?.state, undefined);
+  assert.equal(summarise(opened, undefined, NOW).pullRequest?.state, undefined);
+
+  const rework = base({ threadKey: 'k', workItem: { title: 't', source: { type: 'github-pull-request-review', id: '9' }, inReplyTo: { kind: 'pull-request', number: 226 }, repository: { owner: 'JamieGeddes', name: 'factorial' } } });
+  assert.deepEqual(summarise(rework, thread(), NOW).pullRequest, { number: 226, url: 'https://github.com/JamieGeddes/factorial/pull/226', state: 'open' });
+});
+
 test('a rework names its pull request', () => {
   const s = summarise(base({ workItem: { title: 't', source: { type: 'github-pull-request-comment', id: '9' }, inReplyTo: { kind: 'pull-request', number: 189 }, repository: { owner: 'a', name: 'b' } } }), undefined, NOW);
   assert.equal(s.source.label, 'PR comment');

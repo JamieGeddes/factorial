@@ -5,15 +5,15 @@ import { Elapsed } from '../Elapsed.tsx';
 import { MeterRow } from '../Meter.tsx';
 import { Pill } from '../Pill.tsx';
 import { RunLine } from '../RunLine.tsx';
-import { SourceLink } from '../SourceLink.tsx';
+import { PullRequestLink, SourceLink } from '../SourceLink.tsx';
 import { Tag } from '../Tag.tsx';
 import { fmtDur, fmtK, fmtUsd, refAndTitle, shortId } from '../../lib/format.ts';
-import { branchUrl } from '../../lib/links.ts';
+import { branchUrl, pullRequestUrl } from '../../lib/links.ts';
 import type { LedgerRow, ThreadRow } from '../../lib/records.ts';
 import { text } from '../../lib/sanitise.ts';
 import { parseStageKey } from '../../lib/stage-key.ts';
 import { RUN_FOLDERS } from '../../lib/stages.ts';
-import type { WorkItemSummary } from '../../lib/work-items.ts';
+import type { PullRequestState, WorkItemSummary } from '../../lib/work-items.ts';
 
 /** What `/api/work-items/{id}` returns: the row, its thread, its summary and a listing of every object under `<id>/`. */
 export interface WorkItemDetailData {
@@ -30,6 +30,8 @@ const seconds = (start?: string, end?: string): number | undefined => {
   return Number.isFinite(a) && Number.isFinite(b) ? (b - a) / 1000 : undefined;
 };
 
+const PR_PILL: Record<PullRequestState, string> = { open: 'running', merged: 'done', closed: 'refused' };
+
 /** One work item: its row, thread and artefacts. Work items rows open the latest run; its header links here. */
 export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
   const id = detail.row.workItemId;
@@ -38,6 +40,9 @@ export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
   const live = row.live;
   const branch = summary.repository && summary.branch ? branchUrl(summary.repository, summary.branch) : undefined;
   const prefix = `${id}/`;
+  const pr = summary.pullRequest;
+  const url = summary.repository && thread?.prNumber ? pullRequestUrl(summary.repository, thread.prNumber) : undefined;
+  const threadPrUrl = url ? { url } : {};
   return (
     <section>
       <div className="run-head">
@@ -67,15 +72,20 @@ export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
                 Branch on GitHub
               </a>
             ) : null}
-            {summary.pullRequest?.url ? (
-              <a href={summary.pullRequest.url} target="_blank" rel="noreferrer noopener">{`PR #${summary.pullRequest.number}`}</a>
-            ) : null}
           </div>
           {summary.status.note ? <p className="note">{summary.status.note}</p> : null}
         </div>
-        <Link className="btn" href="/work-items">
-          All work items
-        </Link>
+        <div className="head-actions">
+          {pr?.url ? (
+            <>
+              <PullRequestLink pullRequest={pr} label={`Pull request #${pr.number}`} className="btn primary" />
+              {pr.state ? <span className={`pill ${PR_PILL[pr.state]}`}>{pr.state}</span> : null}
+            </>
+          ) : null}
+          <Link className="btn" href="/work-items">
+            All work items
+          </Link>
+        </div>
       </div>
       <div className="detail-grid">
         <div className="card span-7 flush">
@@ -192,7 +202,7 @@ export function WorkItemDetail({ detail }: { detail: WorkItemDetailData }) {
               </div>
               <div>
                 <span className="k">Pull request</span>
-                <span className="v">{thread.prNumber ? `#${thread.prNumber}` : 'none yet'}</span>
+                <span className="v">{thread.prNumber ? <PullRequestLink pullRequest={{ number: thread.prNumber, ...threadPrUrl }} label={`#${thread.prNumber}`} /> : 'none yet'}</span>
               </div>
               <div>
                 <span className="k">Outcome</span>

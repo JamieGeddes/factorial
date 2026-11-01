@@ -174,10 +174,12 @@ select.search { appearance: none; }
 .btn { border: 1px solid var(--hair-strong); background: var(--raised); border-radius: var(--radius); padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--ink-2); }
 .btn:hover { color: var(--ink); border-color: var(--accent); }
 .btn[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); }
+.btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--ink); font-weight: 700; }
 
 /* Run view */
 .run-head { display: grid; grid-template-columns: 1fr auto; gap: 14px; align-items: start; margin-bottom: 14px; }
 .run-head .ids { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; align-items: center; }
+.head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .run-layout { display: grid; grid-template-columns: 340px 1fr; gap: 14px; align-items: start; }
 .run-side { display: grid; gap: 14px; }
 .timeline { display: grid; gap: 7px; }
