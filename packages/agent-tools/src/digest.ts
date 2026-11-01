@@ -39,6 +39,22 @@ export function looksLikeFailure(line: string): boolean {
   return FAILURE.test(counted) || ERROR_CLASS.test(counted) || DETAIL.test(line);
 }
 
+// ANSI escape sequences: CSI (colours, cursor moves) and OSC (titles, links),
+// for a tool that ignores NO_COLOR.
+const ANSI = /\x1b\[[0-?]*[ -\/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[@-_]/g;
+// npm's notices, such as the upgrade notice when the update check is not off.
+const NPM_NOTICE = /^npm notice\b/;
+
+/** The output as plain lines: escape sequences, carriage-return redraws and npm notices removed. */
+export function plainLines(output: string): string[] {
+  return output
+    .replace(ANSI, '')
+    .replace(/\n$/, '')
+    .split('\n')
+    .map((line) => line.replace(/^.*\r(?=.)/, '').replace(/\r$/, ''))
+    .filter((line) => !NPM_NOTICE.test(line));
+}
+
 function clip(line: string, max: number): string {
   return line.length > max ? `${line.slice(0, max)} …` : line;
 }
@@ -51,11 +67,12 @@ export function digest(params: {
   options?: DigestOptions;
 }): string {
   const options = params.options ?? DEFAULT_OPTIONS;
-  const lines = params.output.replace(/\n$/, '').split('\n');
-  const total = params.output === '' ? 0 : lines.length;
+  // The count is the log file's, so a line number the agent reads there is right.
+  const total = params.output === '' ? 0 : params.output.replace(/\n$/, '').split('\n').length;
+  const lines = params.output === '' ? [] : plainLines(params.output);
   const failed = params.exitCode !== 0;
-  const tailSize = Math.min(total, failed ? options.tailOnFailure : options.tailOnSuccess);
-  const tailStart = total - tailSize;
+  const tailSize = Math.min(lines.length, failed ? options.tailOnFailure : options.tailOnSuccess);
+  const tailStart = lines.length - tailSize;
 
   const report = [
     `$ ${params.command}`,
