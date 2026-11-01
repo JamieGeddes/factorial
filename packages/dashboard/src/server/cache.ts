@@ -25,9 +25,9 @@ export function memo<T>(load: () => Promise<T>, ttlMs: number, now: () => number
 }
 
 /** `memo` per key, with at most `max` keys kept (the oldest dropped first). */
-export function memoByKey<T>(load: (key: string) => Promise<T>, ttlMs: number, max = 1000, now: () => number = Date.now): (key: string) => Promise<T> {
+export function memoByKey<T>(load: (key: string) => Promise<T>, ttlMs: number, max = 1000, now: () => number = Date.now): ((key: string) => Promise<T>) & { forget(key: string): void } {
   const entries = new Map<string, { at: number; promise: Promise<T> }>();
-  return (key) => {
+  const get = (key: string): Promise<T> => {
     const hit = entries.get(key);
     if (hit && now() - hit.at < ttlMs) return hit.promise;
     const promise = load(key);
@@ -40,6 +40,7 @@ export function memoByKey<T>(load: (key: string) => Promise<T>, ttlMs: number, m
     });
     return promise;
   };
+  return Object.assign(get, { forget: (key: string) => void entries.delete(key) });
 }
 
 /** Bytes kept for the life of the process, up to `maxBytes` in all (least recently used dropped first). */
@@ -59,6 +60,13 @@ export class ByteCache {
       this.entries.set(key, hit);
     }
     return hit;
+  }
+
+  delete(key: string): void {
+    const old = this.entries.get(key);
+    if (!old) return;
+    this.size -= old.bytes.byteLength;
+    this.entries.delete(key);
   }
 
   set(key: string, bytes: Uint8Array, contentType: string): void {

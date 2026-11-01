@@ -71,3 +71,18 @@ test('untrusted text loses control and bidirectional characters', () => {
   const s = summarise(base({ workItem: { title: 'a‮b\u0007c', source: { type: 'github-issue', id: '1' } } }), undefined, NOW);
   assert.equal(s.title, 'abc');
 });
+
+test("people's scores on the current attempt: the latest verdict, the mean of each reviewer's mean, how many (#227)", () => {
+  const scores = (n: number) => ({ correctness: n, completeness: n, tests: n, safety: n });
+  const row = base({
+    attempt: 2,
+    humanScores: {
+      jamie: { attempt: 2, verdict: 'request-changes', scores: scores(3), at: '2026-11-01T10:05:00Z' },
+      alex: { attempt: 2, verdict: 'approve', scores: scores(4), at: '2026-11-01T10:01:00Z' },
+      sam: { attempt: 1, verdict: 'comment', scores: scores(1), at: '2026-11-01T10:09:00Z' },
+    },
+  });
+  assert.deepEqual(summarise(row, undefined, NOW).humanReview, { verdict: 'request-changes', mean: 3.5, count: 2 });
+  assert.equal(summarise(base(), undefined, NOW).humanReview, undefined);
+  assert.equal(summarise(base({ humanScores: { x: { attempt: 1, verdict: 'approve', scores: { correctness: 3 }, at: 'a' } } }), undefined, NOW).humanReview, undefined);
+});

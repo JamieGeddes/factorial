@@ -64,6 +64,14 @@ export interface LiveProgress {
   ended?: boolean;
 }
 
+/** One reviewer's entry in `humanScores`; the comment is only in the artefact, `<attempt>/scores/human-<reviewer>.json`. */
+export interface HumanScoreEntry {
+  attempt?: number;
+  verdict?: string;
+  scores?: Record<string, number>;
+  at?: string;
+}
+
 export interface LedgerWorkItem {
   id?: string;
   title?: string;
@@ -103,6 +111,8 @@ export interface LedgerRow {
   reviewVerdict?: string;
   reviewScores?: Record<string, number>;
   reviewFindings?: Record<string, number>;
+  /** People's scores (#227), one entry per reviewer, set by the command centre's score route. */
+  humanScores?: Record<string, HumanScoreEntry>;
   reworkOf?: { previousWorkItemId?: string; prNumber?: number };
   resumedFrom?: string;
   [field: string]: unknown;

@@ -13,6 +13,7 @@ import { isPlanWrite, type Tally } from '../../lib/transcript.ts';
 import { MeterRow } from '../Meter.tsx';
 import { Pill } from '../Pill.tsx';
 import { Tag } from '../Tag.tsx';
+import { ScorePanel } from './ScorePanel.tsx';
 import { Transcript } from './Transcript.tsx';
 
 const ms = (iso: string | undefined) => (iso ? Date.parse(iso) : NaN);
@@ -281,6 +282,7 @@ export function RunView({ initial }: { initial: RunDetail }) {
               <p className="note" style={{ margin: 0 }}>{detail.stage === 'build' ? 'No plan yet: the builder writes plan.json after its plan subagent.' : 'No stored plan for this attempt.'}</p>
             )}
           </div>
+          <ScorePanel id={detail.id} panel={detail.scores} onRecorded={reload} />
         </div>
         <Transcript run={run} channel={detail.channel} paused={paused} onPause={setPaused} />
       </div>

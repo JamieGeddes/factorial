@@ -11,42 +11,8 @@
       "description": "Version of this contract. Incremented only for breaking changes.",
       "const": 1
     },
-    "verdict": {
-      "description": "approve: ready for a human to merge. request-changes: something must change first. comment: neither, with points worth reading.",
-      "enum": ["approve", "request-changes", "comment"]
-    },
-    "scores": {
-      "description": "Each from 1 (poor) to 5 (excellent).",
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["correctness", "completeness", "tests", "safety"],
-      "properties": {
-        "correctness": {
-          "description": "Does the change do what it claims, without bugs?",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5
-        },
-        "completeness": {
-          "description": "Does it cover everything the request and the plan asked for?",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5
-        },
-        "tests": {
-          "description": "Do the tests exercise the change, including its failure cases?",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5
-        },
-        "safety": {
-          "description": "Is it free of security problems, data loss and weakened safety limits?",
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 5
-        }
-      }
-    },
+    "verdict": { "$ref": "#/$defs/verdict" },
+    "scores": { "$ref": "#/$defs/scores" },
     "findings": {
       "description": "Specific points, most important first. At most 50; may be empty.",
       "type": "array",
@@ -86,6 +52,44 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 2000
+    }
+  },
+  "$defs": {
+    "verdict": {
+      "description": "approve: ready for a human to merge. request-changes: something must change first. comment: neither, with points worth reading.",
+      "enum": ["approve", "request-changes", "comment"]
+    },
+    "scores": {
+      "description": "Each from 1 (poor) to 5 (excellent).",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["correctness", "completeness", "tests", "safety"],
+      "properties": {
+        "correctness": {
+          "description": "Does the change do what it claims, without bugs?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "completeness": {
+          "description": "Does it cover everything the request and the plan asked for?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "tests": {
+          "description": "Do the tests exercise the change, including its failure cases?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        },
+        "safety": {
+          "description": "Is it free of security problems, data loss and weakened safety limits?",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5
+        }
+      }
     }
   }
 }

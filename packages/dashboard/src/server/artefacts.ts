@@ -6,7 +6,8 @@ import { ByteCache } from './cache.ts';
 import type { Sender } from './aws.ts';
 
 /**
- * The artefact store, read only. A finished item's records never change, so
+ * The artefact store, read here; the one write, a human score (#227), is
+ * `scores.ts`'s. A finished item's records never change, so
  * what has been read of one is kept in memory for the life of the process; a
  * running item's objects are read afresh, except catch-up chunks, each
  * written once.
@@ -38,6 +39,8 @@ export interface Artefacts {
   chunk(key: string): Promise<string | undefined>;
   /** Any object written once (a chunk, the stored plan, a run's `usage.json`) as text, kept once it exists. */
   once(key: string): Promise<string | undefined>;
+  /** Drop what is kept of one object: a human score (#227), the one kind written while the app runs, has a new version. */
+  forget(key: string): void;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -126,5 +129,6 @@ export function createArtefacts(s3: Sender, bucket: () => Promise<string>, maxBy
     },
     chunk: (key) => once(key),
     once: (key) => once(key),
+    forget: (key) => cache.delete(key),
   };
 }

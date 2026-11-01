@@ -4,6 +4,7 @@
  * item's stages as work and wait, the run's limits, record and session, and
  * the runs a reader can switch to.
  */
+import { humanEntries, isVerdict, meanOf, scoresOf, type HumanEntry, type Scores, type Verdict } from './human-scores.ts';
 import { artefactsUrl, executionUrl } from './links.ts';
 import type { LedgerRow, LiveProgress, RunEntry, ThreadRow } from './records.ts';
 import { oneLine, text } from './sanitise.ts';
@@ -57,6 +58,24 @@ export interface RunRecord {
   usage?: Record<string, number>;
 }
 
+/** A reviewer's own last score on the attempt, to prefill the form. */
+export interface OwnScore {
+  verdict: Verdict;
+  scores: Scores;
+  comment: string;
+  at: string;
+}
+
+/** The score panel (#227): the reviewer agent's judgement of the attempt beside the people's, and the form. */
+export interface ScorePanel {
+  attempt: number;
+  agent?: { verdict: string; scores: Record<string, number>; mean?: number };
+  humans: (HumanEntry & { mean: number })[];
+  /** Who the form records as: absent when the app's AWS identity could not be read. */
+  reviewer?: string;
+  own?: OwnScore;
+}
+
 export interface RunDetail {
   id: string;
   stage: string;
@@ -84,6 +103,7 @@ export interface RunDetail {
   transcript?: string;
   plan?: { steps: PlanStep[]; source: string };
   options: RunOption[];
+  scores: ScorePanel;
 }
 
 /** A run's folder under the attempt, as `runFolder` in `@factorial/live` (whose index a browser bundle cannot take). */
@@ -212,8 +232,33 @@ export interface RunDetailInput {
   /** The limits from the run's `usage.json`, once it has ended. */
   storedLimits?: Limits;
   plan?: { steps: PlanStep[]; source: string };
+  /** The app's reviewer name, and their stored score on this attempt. */
+  reviewer?: string;
+  own?: OwnScore;
   now: number;
   resultSince?: string;
+}
+
+/** The panel's figures from the row: the agent's review fields and the people's entries on the current attempt. */
+export function scorePanel(row: LedgerRow, reviewer?: string, own?: OwnScore): ScorePanel {
+  const agentScores = row.reviewScores && typeof row.reviewScores === 'object' ? Object.fromEntries(Object.entries(row.reviewScores).filter(([k, v]) => /^[a-z]+$/.test(k) && num(v) !== undefined)) : undefined;
+  const mean = meanOf(agentScores);
+  return {
+    attempt: typeof row.attempt === 'number' ? row.attempt : 1,
+    ...(row.reviewVerdict ? { agent: { verdict: oneLine(text(row.reviewVerdict)), scores: agentScores ?? {}, ...(mean !== undefined ? { mean } : {}) } } : {}),
+    humans: humanEntries(row).map((e) => ({ ...e, mean: meanOf(e.scores) as number })),
+    ...(reviewer ? { reviewer } : {}),
+    ...(own ? { own } : {}),
+  };
+}
+
+/** A stored human score as the form shows it, or undefined unless it is well formed. */
+export function ownScoreOf(value: unknown): OwnScore | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  const v = value as Record<string, unknown>;
+  const scores = scoresOf(v.scores);
+  if (!isVerdict(v.verdict) || !scores || typeof v.at !== 'string') return undefined;
+  return { verdict: v.verdict, scores, comment: typeof v.comment === 'string' ? text(v.comment) : '', at: v.at };
 }
 
 export function runDetail(input: RunDetailInput): RunDetail {
@@ -271,5 +316,6 @@ export function runDetail(input: RunDetailInput): RunDetail {
     ...(ended ? { transcript: artefactRoute(id, transcriptPath(row, stage, round)) } : {}),
     ...(input.plan ? { plan: input.plan } : {}),
     options,
+    scores: scorePanel(row, input.reviewer, input.own),
   };
 }

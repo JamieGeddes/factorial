@@ -9,6 +9,7 @@ import { ECSClient } from '@aws-sdk/client-ecs';
 import { S3Client } from '@aws-sdk/client-s3';
 import { ServiceQuotasClient } from '@aws-sdk/client-service-quotas';
 import { SFNClient } from '@aws-sdk/client-sfn';
+import { STSClient } from '@aws-sdk/client-sts';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { connectAuthorization, connectProtocols, realtimeDomainOf, subscribeAuthorization, type LiveEndpoint } from '@factorial/live';
 
@@ -23,6 +24,7 @@ import { LiveConnection, type SocketLike } from './live-connection.ts';
 import { LiveHub } from './live.ts';
 import { createOps, type Ops } from './ops.ts';
 import { createRuntimes, type Runtimes } from './runtimes.ts';
+import { createScoreWriter, type ScoreWriter } from './scores.ts';
 import { createStacks, type Stacks } from './stacks.ts';
 import { createThreads, type Threads } from './threads.ts';
 import { createUsageRecords, type UsageRecords } from './usage-records.ts';
@@ -46,6 +48,8 @@ export interface Services {
   ops: Ops;
   /** The deploy workflow's runs on Factorial's own repository (#59). */
   github: GitHub;
+  /** Human scores (#227): the app's only write. */
+  scores: ScoreWriter;
   live: LiveHub;
   now: () => number;
 }
@@ -61,6 +65,7 @@ export interface Clients {
   quotas: Sender;
   logs: Sender;
   ddb: Sender;
+  sts: Sender;
 }
 
 /** Factorial's own repository, where `FactorialVersion` is a commit and the deploy workflow runs. */
@@ -117,6 +122,10 @@ export function createServices(clients: Clients, options: { env?: Env; upstream?
     cloudwatch: createCloudWatch(clients.cw),
     usage: createUsageRecords(artefacts),
     ops: createOps(clients, stacks, config),
+    scores: createScoreWriter(clients, async () => {
+      const c = await config();
+      return { bucket: c.bucket, workItemsTable: c.workItemsTable };
+    }),
     github: createGitHub({ repository: env.FACTORIAL_REPOSITORY ?? FACTORIAL_REPOSITORY, token: env.GITHUB_TOKEN, ...(options.fetch ? { fetch: options.fetch } : {}) }),
     live,
     now: Date.now,
@@ -152,6 +161,7 @@ export function services(): Services {
       quotas: new ServiceQuotasClient({ region: REGION }),
       logs: new CloudWatchLogsClient({ region: REGION }),
       ddb: new DynamoDBClient({ region: REGION }),
+      sts: new STSClient({ region: REGION }),
     });
     closeOnSignals(created.live, process);
     holder[KEY] = created;

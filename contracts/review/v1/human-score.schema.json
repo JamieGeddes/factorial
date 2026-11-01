@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:review:v1:human-score",
+  "title": "Human score",
+  "description": "A person's judgement of one attempt at a WorkItem, recorded in the command centre with their own AWS credentials and stored as <workItemId>/<attempt>/scores/human-<reviewer>.json. Shares verdict and scores with the review contract, so the two compare field for field. Internal to Factorial, changed with the same care as the review contract.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "verdict", "scores", "comment", "reviewer", "attempt", "at"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "verdict": { "$ref": "urn:factorial:contracts:review:v1#/$defs/verdict" },
+    "scores": { "$ref": "urn:factorial:contracts:review:v1#/$defs/scores" },
+    "comment": {
+      "description": "The reviewer's own words, untrusted text: redacted before storage and shown as text. May be empty.",
+      "type": "string",
+      "maxLength": 8000
+    },
+    "reviewer": {
+      "description": "Who scored: the last part of the AWS identity's ARN the command centre ran as (an IAM user or role session name), made safe for a key. Never taken from the request.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "attempt": {
+      "description": "The attempt scored, from the ledger row when the score was recorded.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "at": {
+      "description": "When the score was recorded.",
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
