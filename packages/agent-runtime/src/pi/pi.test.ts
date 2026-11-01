@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -46,10 +46,22 @@ describe('pi tools', () => {
 
   it('builds the tools for each kind in order, leaving out search without a gateway', () => {
     const cwd = mkdtempSync(path.join(tmpdir(), 'pi-'));
-    const names = toolsFor(['shell', 'read', 'edit', 'write', 'grep', 'glob', 'webSearch'], { cwd, runner, helper: helper(cwd), webSearch: undefined, fetch: undefined, agent: undefined }).map((t) => t.name);
+    const names = toolsFor(['shell', 'read', 'edit', 'write', 'grep', 'glob', 'webSearch'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: undefined, fetch: undefined, agent: undefined }).map((t) => t.name);
     assert.deepEqual(names, ['bash', 'read', 'edit', 'write', 'grep', 'find']);
-    const withSearch = toolsFor(['webSearch'], { cwd, runner, helper: helper(cwd), webSearch: async () => ({}), fetch: undefined, agent: undefined });
+    const withSearch = toolsFor(['webSearch'], { cwd, repository: cwd, runner, helper: helper(cwd), webSearch: async () => ({}), fetch: undefined, agent: undefined });
     assert.deepEqual(withSearch.map((t) => t.name), [PI_TOOLS.webSearch]);
+  });
+
+  it("runs shell commands in the repository, not the session's directory, so a relative path resolves against it", async () => {
+    const workspace = mkdtempSync(path.join(tmpdir(), 'pi-'));
+    const repository = path.join(workspace, 'repo');
+    mkdirSync(path.join(repository, 'src'), { recursive: true });
+    writeFileSync(path.join(repository, 'src/a.ts'), 'in the repository\n');
+    const [bash] = toolsFor(['shell'], { cwd: workspace, repository, runner, helper: helper(workspace), webSearch: undefined, fetch: undefined, agent: undefined });
+    // pi passes the session's directory (the workspace) in the context.
+    const result = await bash!.execute('call', { command: 'pwd && cat src/a.ts' }, undefined, undefined, { cwd: workspace } as never);
+    const output = result.content.map((part: { type: string; text?: string }) => part.text ?? '').join('');
+    assert.equal(output.trim(), `${realpathSync(repository)}\nin the repository`);
   });
 });
 

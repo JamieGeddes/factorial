@@ -68,7 +68,10 @@ export function webSearchTool(call: GatewayCall): AnyTool {
 }
 
 export interface ToolDeps {
+  /** Where the file tools resolve a relative path: the workspace, as the rules do (tool-rules.ts). */
   cwd: string;
+  /** Where every shell command starts: the repository, whatever the session's own directory. */
+  repository: string;
   runner: AgentRunner;
   helper: Helper;
   /** Present when the gateway is configured and the role or subagent is offered search. */
@@ -85,7 +88,12 @@ export function toolsFor(kinds: readonly ToolKind[], deps: ToolDeps): AnyTool[] 
     const tool = ((): AnyTool | undefined => {
       switch (kind) {
         case 'shell':
-          return createBashToolDefinition(deps.cwd, { operations: bashOperations(deps.runner), exposeSessionEnvironment: false });
+          // pi runs a tool in the session's directory when it has one; the hook overrides that.
+          return createBashToolDefinition(deps.repository, {
+            operations: bashOperations(deps.runner),
+            exposeSessionEnvironment: false,
+            spawnHook: (context) => ({ ...context, cwd: deps.repository }),
+          });
         case 'read':
           return createReadToolDefinition(deps.cwd, { operations: readOperations(deps.helper) });
         case 'edit':

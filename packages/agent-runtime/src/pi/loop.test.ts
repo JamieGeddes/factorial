@@ -33,6 +33,7 @@ const configWith = (limits: { maxTurns?: number; maxBudgetUsd?: number }) => ({
     AWS_REGION: 'eu-west-1',
   }),
   workspace: root,
+  repository: root,
 });
 
 /** A role with the shell only, every call allowed and nothing to check before it ends. */

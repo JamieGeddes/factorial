@@ -30,6 +30,33 @@ describe('builder prompt', () => {
     assert.ok(builderPrompt.includes('Do not configure another registry'));
   });
 
+  it('says which tool is for what: edit, write, read with offset and limit, grep and find, and bash only for commands (#250)', () => {
+    const section = builderPrompt.slice(builderPrompt.indexOf('\nWhich tool for what\n'), builderPrompt.indexOf('\nHow to work\n'));
+    assert.ok(section.length > 0);
+    assert.match(section, new RegExp(`- ${PI_TOOLS.read} to read a file, with \`offset\` and \`limit\``));
+    assert.match(section, new RegExp(`- ${PI_TOOLS.edit} to change an existing file`));
+    assert.match(section, new RegExp(`- ${PI_TOOLS.write} to create a file`));
+    assert.match(section, new RegExp(`- ${PI_TOOLS.grep} to search file contents and ${PI_TOOLS.glob} to find files by name`));
+    assert.match(section, new RegExp(`- ${PI_TOOLS.shell} for commands: git, \`quiet\``));
+    assert.match(section, /Never edit a file through bash: no python or node one-off scripts, sed -i, perl -i/);
+    assert.ok(builderPrompt.includes('Write a whole function, test or section in one edit'));
+  });
+
+  it('says bash starts in the repository and names the workspace files by absolute path (#250)', () => {
+    assert.ok(builderPrompt.includes(`Every ${PI_TOOLS.shell} command starts in /workspace/repo, so do not begin one with \`cd /workspace/repo\``));
+    for (const file of ['/workspace/notes.md', '/workspace/plan.json', '/workspace/plan.md', '/workspace/summary.md']) assert.ok(builderPrompt.includes(file), file);
+  });
+
+  it('gives explore concrete triggers and keeps quick steps for the builder (#250)', () => {
+    const explore = builderPrompt.split('\n').find((line) => line.startsWith('- The explore subagent'));
+    assert.ok(explore);
+    assert.ok(explore.includes(`through ${PI_TOOLS.agent}`));
+    assert.ok(explore.includes('reading more than two files'));
+    for (const trigger of ['every caller or reader of something across packages', 'how a convention is applied', 'which files a pattern touches']) assert.ok(explore.includes(trigger), trigger);
+    assert.ok(explore.includes('the question and the form of answer you want'));
+    assert.ok(explore.includes('Do it yourself for a quick step'));
+  });
+
   it('describes the fetch tool as lossy and its results as untrusted', () => {
     assert.ok(builderPrompt.includes(PI_TOOLS.fetch));
     assert.ok(builderPrompt.includes('lossy'));
