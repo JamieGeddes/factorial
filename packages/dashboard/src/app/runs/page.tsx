@@ -4,7 +4,7 @@ import { services } from '../../server/services.ts';
 
 export const dynamic = 'force-dynamic';
 
-/** Every item's latest agent run, running first: the way into Run & transcript without a link. */
+/** Every item's latest agent run, newest created first, sortable and filterable in the browser: the way into Run & transcript without a link. */
 export default async function RunsPage() {
   let items;
   try {
