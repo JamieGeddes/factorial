@@ -297,6 +297,15 @@ Resources:
   # ---------------------------------------------------------------------------
   AgentPermissionsBoundary:
     Type: AWS::IAM::ManagedPolicy
+    # cfn-lint's IAM action list (through 1.59.0, the newest release) does not
+    # know the aws-mcp service the AwsDocs statement names, so W3037 fires on
+    # it. Ignored for this resource only, until cfn-lint's data has the
+    # service; remove then so the other statements' actions are checked again.
+    Metadata:
+      cfn-lint:
+        config:
+          ignore_checks:
+            - W3037
     Properties:
       ManagedPolicyName: factorial-agent-permissions-boundary
       Description: >-
@@ -336,6 +345,18 @@ Resources:
             Resource:
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:gateway/factorial-*
               - !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:aws:tool/web-search.v1
+          # The AWS MCP Server's knowledge tools (documentation search and
+          # reads, regional availability) through Factorial's aws-docs gateway,
+          # whose service role carries this boundary. The service accepts no
+          # resource ARN. Read-only only: aws-mcp:CallReadWriteTool, which the
+          # server's script, presigned-URL and task tools need, is
+          # deliberately absent.
+          - Sid: AwsDocs
+            Effect: Allow
+            Action:
+              - aws-mcp:InvokeMcp
+              - aws-mcp:CallReadOnlyTool
+            Resource: '*'
           # npm installs from Factorial's CodeArtifact mirror of npmjs (#242):
           # a token for the factorial domain and reads from its repositories,
           # never a publish or a change. sts:GetServiceBearerToken, which
