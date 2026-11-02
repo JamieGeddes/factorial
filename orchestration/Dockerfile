@@ -1,6 +1,8 @@
 # Orchestration image: the Lambda functions that run git (Collect's
-# clean-room push, lib/clean-room.ts), which the managed nodejs24.x runtime
-# cannot, since it has no git. Every other orchestration function stays a zip.
+# clean-room push, lib/clean-room.ts, and the repository bundle that Prepare,
+# ContinueBuild and PrepareReview seed sessions from, lib/repo-seed.ts),
+# which the managed nodejs24.x runtime cannot, since it has no git. Every
+# other orchestration function stays a zip.
 #
 # The handlers are the esbuild bundles packages/orchestration/build.ts writes
 # to orchestration/dist/<name>/, the AWS SDK included, as for the zips. The

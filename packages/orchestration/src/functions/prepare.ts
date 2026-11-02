@@ -1,6 +1,6 @@
 /**
  * Prepare: set up the builder's session deterministically for an item Intake
- * admitted: clone the repository, put the session on the thread's branch (a
+ * admitted: seed the repository, put the session on the thread's branch (a
  * fresh branch off the default head, or the existing branch of a resumed
  * attempt or a pull request), and leave the WorkItem on disk for the agent to
  * read, with the request copied to the top of /workspace/notes.md so it stays
@@ -13,8 +13,9 @@
  * reviewer's session are seeded the same way, from their own lists of providers.
  *
  * The session is brand new at this point, so no agent code can be running.
- * The read-only token is sent as an HTTP header for the clone only and is not
- * written anywhere in the session.
+ * The repository reaches it as a git bundle this function fetched with a
+ * short-lived read-only token (`lib/repo-seed.ts`): the session never
+ * contacts GitHub and no token enters it.
  */
 import { putJsonArtefact } from '@factorial/artefacts';
 import type { GitHubClient } from '@factorial/github-app';
@@ -24,20 +25,14 @@ import type { ReworkTurn, WorkContext } from '../lib/context.ts';
 import { unvalidatedId, type RunKey } from '../lib/log.ts';
 import { staged, type ProgressInput } from '../lib/progress.ts';
 import type { Attempt } from '../lib/resume.ts';
-import { repositoryClient, repositoryToken } from '../lib/github.ts';
+import { repositoryClient } from '../lib/github.ts';
+import { seedRepository, type SeedRepositoryDeps } from '../lib/repo-seed.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
 import { notesProvider, requestProvider, reworkProvider } from '../lib/seed-providers.ts';
-import { handOverWorkspace, mustRun, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
-import {
-  HARDENED_GIT_ENV,
-  assertCommitSha,
-  assertGitHubName,
-  assertGitBranch,
-  assertUuid,
-  gitAuthHeader,
-  shellQuote,
-} from '../lib/shell.ts';
+import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
+import { assertGitBranch, assertUuid } from '../lib/shell.ts';
+import { transferKey } from '../lib/transfer.ts';
 import { recordProgress } from '../lib/table.ts';
 
 import type { IntakeResult } from './intake.ts';
@@ -47,77 +42,6 @@ interface PrepareInput extends ProgressInput {
   factorialVersion: string;
   /** Intake's result; the state machine reaches Prepare only for the change route. */
   intake: IntakeResult;
-}
-
-/**
- * Fetch the repository into the session and put it on the branch; print the
- * head commit and the default branch. It clears the session's files but writes
- * none: those are the seed's (`lib/seed.ts`).
- *
- * It is not a `git clone`, which would bring every branch. It runs `git init`,
- * asks the remote for its default branch (`ls-remote --symref`), and fetches
- * only the branches the session uses, at full depth: the default branch (so
- * `origin/HEAD` is real), a rework's base branch when it differs, and, in
- * checkout mode, the work branch. `origin/HEAD` is then set by hand. A lazy
- * filter (`--filter=blob:none`) is not used: the token is sent for the network
- * commands only and is in no file, so git could not fetch a missing object
- * later.
- */
-export function cloneScript(params: {
-  owner: string;
-  name: string;
-  branch: string;
-  token: string;
-  /** Checkout mode: a new branch off the default head, or an existing remote branch. */
-  mode: 'create' | 'checkout';
-  /**
-   * The commit the session must start from, when another session has already
-   * fixed it: a new branch is created there, and an existing branch must still
-   * be there.
-   */
-  at?: string;
-  /** A rework's base branch, when it is not the default branch: fetched as `origin/<baseBranch>` for three-dot diffs. */
-  baseBranch?: string;
-}): string {
-  const owner = assertGitHubName(params.owner, 'repository owner');
-  const name = assertGitHubName(params.name, 'repository name');
-  const branch = assertGitBranch(params.branch, 'work branch');
-  const baseBranch = params.baseBranch === undefined ? undefined : assertGitBranch(params.baseBranch, 'base branch');
-  const url = `https://github.com/${owner}/${name}.git`;
-  const at = params.at === undefined ? undefined : assertCommitSha(params.at, 'start commit');
-  // the token goes on the commands that reach the network, and is not written to the repository's config
-  const auth = `-c http.extraHeader=${shellQuote(gitAuthHeader(params.token))}`;
-  const refspec = (b: string): string => shellQuote(`+refs/heads/${b}:refs/remotes/origin/${b}`);
-  const fetch = [
-    `git ${auth} fetch --quiet origin "$default_refspec"`,
-    ...(baseBranch ? [`"$base_refspec"`] : []),
-    ...(params.mode === 'checkout' ? [refspec(branch)] : []),
-  ];
-  const checkout =
-    params.mode === 'create'
-      ? `git checkout --quiet --no-track -b ${shellQuote(branch)} ${at ? shellQuote(at) : '"origin/$default"'}`
-      : [
-          `git checkout --quiet ${shellQuote(`origin/${branch}`)}`,
-          `git branch --quiet ${shellQuote(branch)}`,
-          ...(at ? [`test "$(git rev-parse HEAD)" = ${shellQuote(at)} || { echo ${shellQuote(`branch ${branch} is not at the expected commit ${at}`)} >&2; exit 1; }`] : []),
-        ].join('\n');
-  return [
-    'set -euo pipefail',
-    HARDENED_GIT_ENV,
-    'rm -rf /workspace/repo /workspace/summary.md /workspace/workitem.json /workspace/rework.md /workspace/notes.md /workspace/logs /workspace/plan.md /workspace/plan.json /workspace/diff.patch /workspace/review.json',
-    'git init --quiet /workspace/repo',
-    'cd /workspace/repo',
-    `git remote add origin ${shellQuote(url)}`,
-    `default=$(git ${auth} ls-remote --symref origin HEAD | awk '$1 == "ref:" && $3 == "HEAD" { sub("^refs/heads/", "", $2); print $2 }')`,
-    `test -n "$default" || { echo 'the repository has no default branch' >&2; exit 1; }`,
-    `default_refspec="+refs/heads/$default:refs/remotes/origin/$default"`,
-    ...(baseBranch ? [`base_refspec=${refspec(baseBranch)}`, `test ${shellQuote(baseBranch)} != "$default" || base_refspec="$default_refspec"`] : []),
-    fetch.join(' '),
-    'git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$default"',
-    checkout,
-    'git rev-parse HEAD',
-    `git symbolic-ref --short refs/remotes/origin/HEAD | sed 's#^origin/##'`,
-  ].join('\n');
 }
 
 /** What seeding a session takes from the stage. */
@@ -133,78 +57,77 @@ export interface SessionParams {
   sessionId?: string;
   /** For a turn on a pull request, as Intake established it. */
   rework?: ReworkTurn;
+  /** The run's `<workItemId>/<attempt>/`, and the stage's directory under it, for the transfer key of the repository bundle. */
+  artefactPrefix: string;
+  stage: string;
 }
 
-/** What a stage supplies to its providers beyond the item and the clone. */
+/** What a stage supplies to its providers beyond the item and the checkout. */
 export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive'>>;
 
-export interface ClonedSession {
+export interface SeededCheckout {
   target: SessionTarget;
   baseCommit: string;
   baseBranch: string;
 }
 
 /**
- * Clone the repository into one role's session and put it on the branch. The
- * first session fixes the branch head; a later one passes it as `at`, so
- * every role works from the same commit. Nothing is placed in /workspace
- * beside the clone: that is `placeSeed`.
+ * Seed the repository into one role's session and put it on the branch
+ * (`lib/repo-seed.ts`: fetched and bundled here, fetched from the bundle in
+ * the session, which never reaches GitHub). The first session fixes the
+ * branch head; a later one passes it as `at`, so every role works from the
+ * same commit. Nothing is placed in /workspace beside the repository: that is
+ * `placeSeed`.
  */
-export async function cloneSession(params: SessionParams): Promise<ClonedSession> {
+export async function seedCheckout(params: SessionParams, deps?: SeedRepositoryDeps): Promise<SeededCheckout> {
   const { workItem, branch, resumedFrom, rework } = params;
-  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const token = await repositoryToken(repo, { contents: 'read' });
   const target = sessionTarget(params.sessionId ?? workItem.id, params.role);
-  const result = await mustRun(
-    target,
-    cloneScript({
-      owner: repo.owner,
-      name: repo.name,
+  const { head, defaultBranch } = await seedRepository(
+    {
+      target,
+      repository: { owner: workItem.repository.owner, name: workItem.repository.name },
+      transferKey: transferKey(params.artefactPrefix, params.stage, 'repo.bundle'),
       branch,
-      token,
       mode: rework || resumedFrom || params.existing ? 'checkout' : 'create',
       ...(params.at ? { at: params.at } : {}),
       ...(rework ? { baseBranch: rework.baseBranch } : {}),
-    }),
-    600,
+    },
+    deps,
   );
-  const stdoutLines = result.stdout.trim().split('\n');
-  const baseCommit = assertCommitSha(stdoutLines[stdoutLines.length - 2] ?? '', 'branch head');
-  const baseBranch = rework ? rework.baseBranch : stdoutLines[stdoutLines.length - 1] ?? 'main';
-  return { target, baseCommit, baseBranch };
+  return { target, baseCommit: head, baseBranch: rework ? rework.baseBranch : defaultBranch };
 }
 
 /**
  * Assemble the session's seed from the stage's providers, in order, and place
- * its files in the session with the one writer. Call it after the clone and
+ * its files in the session with the one writer. Call it after the checkout and
  * before `handOverWorkspace`. Returns the seed, for its sections and data.
  */
-export async function placeSeed(cloned: ClonedSession, params: SessionParams, providers: readonly SeedProvider[], extras: SeedExtras = {}): Promise<Seed> {
+export async function placeSeed(seeded: SeededCheckout, params: SessionParams, providers: readonly SeedProvider[], extras: SeedExtras = {}): Promise<Seed> {
   const { workItem, resumedFrom, rework } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   let client: Promise<GitHubClient> | undefined;
   const seed = await assembleSeed(providers, {
     role: params.role,
     workItem,
-    baseCommit: cloned.baseCommit,
-    baseBranch: cloned.baseBranch,
+    baseCommit: seeded.baseCommit,
+    baseBranch: seeded.baseBranch,
     round: 1,
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(rework ? { rework } : {}),
     ...extras,
     github: () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' })),
   });
-  await writeSeed(cloned.target, seed);
+  await writeSeed(seeded.target, seed);
   return seed;
 }
 
-/** Clone the repository into one role's session and seed it: the two steps `cloneSession` and `placeSeed`, when the stage needs nothing between them. */
+/** Seed the repository into one role's session and place its files: the two steps `seedCheckout` and `placeSeed`, when the stage needs nothing between them. */
 export async function seedSession(
   params: SessionParams & { providers: readonly SeedProvider[]; extras?: SeedExtras },
 ): Promise<{ baseCommit: string; baseBranch: string; reworkPoints?: WorkItemReviewDetail[] }> {
-  const cloned = await cloneSession(params);
-  const seed = await placeSeed(cloned, params, params.providers, params.extras);
-  const { baseCommit, baseBranch } = cloned;
+  const seeded = await seedCheckout(params);
+  const seed = await placeSeed(seeded, params, params.providers, params.extras);
+  const { baseCommit, baseBranch } = seeded;
   return { baseCommit, baseBranch, ...(seed.data.reworkPoints ? { reworkPoints: seed.data.reworkPoints } : {}) };
 }
 
@@ -228,6 +151,8 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     role: 'builder',
     workItem,
     branch,
+    artefactPrefix: prefix,
+    stage: 'prepare',
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(rework ? { rework } : {}),
   });

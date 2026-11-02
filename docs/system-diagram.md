@@ -62,7 +62,8 @@ flowchart TB
         direction TB
         ledger["DynamoDB:<br/>factorial-work-items<br/>(idempotency + progress)"]
         sfn["Step Functions: factorial-work<br/>(live alias)<br/>Prepare → Build → Collect →<br/>HasChanges → Test → OpenPullRequest"]
-        prepare["Lambda: factorial-prepare<br/>(accepts WorkItem once,<br/>clones repo into session,<br/>creates work branch)"]
+        prepare["Lambda: factorial-prepare-seed<br/>(fetches and bundles the repo,<br/>seeds the session from the bundle,<br/>creates work branch)"]
+        transfer["S3: factorial-transfer<br/>(repo bundles, presigned 5 min,<br/>expire after a day)"]
         invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync, egress only)<br/>runs each agent to completion,<br/>streams transcript to logs"]
         collect["Lambda: factorial-collect-clean-room<br/>(commits leftovers, exports git<br/>bundle from hostile session,<br/>pushes from its own clean room)"]
         dispatch["Lambda: factorial-dispatch-tests<br/>(dispatches test.yml on main<br/>with task token + tested sha)"]
@@ -80,7 +81,10 @@ flowchart TB
 
     bus -->|"rule factorial-work-item<br/>StartExecution on live alias<br/>(control)"| sfn
 
-    prepare -->|"session command API:<br/>clone with token as header<br/>(data)"| builderruntime
+    github -->|"fetch with read token,<br/>in the Lambda<br/>(data)"| prepare
+    prepare -->|"upload bundle<br/>(data)"| transfer
+    prepare -->|"session command API:<br/>fetch from bundle by presigned URL<br/>(data)"| builderruntime
+    transfer -->|"presigned GET<br/>(data)"| builderruntime
     invoker -->|"InvokeAgentRuntime<br/>qualifier 'live'<br/>(control)"| liveendpoint
     invoker -->|"InvokeAgentRuntime: review<br/>qualifier 'live'<br/>(control)"| reviewerruntime
     collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| builderruntime
@@ -111,7 +115,7 @@ flowchart TB
 1. **Trigger.** A human adds the `factorial` label to an issue. GitHub delivers a signed webhook to the adapter's function URL on its `live` alias.
 2. **Adapt.** The adapter verifies the HMAC signature, checks that both the issue author and the labeller are trusted user IDs, builds one `WorkItem` (contract v1) and puts it on the `factorial-work` bus.
 3. **Start.** The single bus rule matches `source: factorial.triggers` / `detail-type: WorkItem` and starts an execution of the `factorial-work` state machine on its `live` alias, passing the `WorkItem` as input.
-4. **Prepare** (Lambda, deterministic). Accepts the `WorkItem` exactly once in the ledger (idempotency guard), mints a read-only installation token, clones the repository into a fresh builder session by the session command API (token sent as a header, never written into the session), creates the work branch and leaves `workitem.json` on disk.
+4. **Prepare** (Lambda, deterministic). Accepts the `WorkItem` exactly once in the ledger (idempotency guard), mints a read-only installation token, fetches the branches the session needs into its own `/tmp` and bundles them, uploads the bundle to the transfer bucket, and has the fresh builder session fetch from it by a five-minute presigned URL over the session command API (the session never reaches GitHub and no token enters it; #262), creates the work branch and leaves `workitem.json` on disk.
 5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` Runtime on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. Factorial's host process runs pi there, with every tool the model calls running as the unprivileged `agent` user. The builder first plans with its read-only plan subagent and writes `plan.json` and `plan.md`, which the host checks against the plan contract; the agent edits the code inside the sandbox, which holds no credentials beyond the execution role's model access.
 6. **Collect** (Lambda, deterministic). Treats the session as hostile: validates and stores the builder's plan (no valid plan → **report** `invalid-plan`), commits anything uncommitted, exports the commits as a git bundle, and pushes the branch itself, from a pristine clone in its own `/tmp` with hooks disabled, using a fresh installation token that never enters a session.
 7. **HasChanges** (Choice). No pushed commits → **report** (`no-changes`) and finish.

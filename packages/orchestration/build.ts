@@ -12,9 +12,9 @@
 import { build } from 'esbuild';
 
 /** Served from the orchestration image, each named by its ImageConfig.Command in templates/orchestration.yml. */
-export const imageFunctions = ['collect'];
+export const imageFunctions = ['collect', 'prepare', 'continue-build', 'prepare-review'];
 
-const zipFunctions = ['intake', 'prepare', 'continue-build', 'dispatch-tests', 'prepare-review', 'collect-review', 'open-pr', 'report', 'report-github', 'thread-outcome', 'thread-reconcile', 'live-forward'];
+const zipFunctions = ['intake', 'dispatch-tests', 'collect-review', 'open-pr', 'report', 'report-github', 'thread-outcome', 'thread-reconcile', 'live-forward'];
 
 const functions = [
   ...zipFunctions.map((name) => ({ name, outdir: `dist/${name}` })),

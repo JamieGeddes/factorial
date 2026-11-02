@@ -291,6 +291,94 @@ Resources:
             Action: s3:PutObject
             Resource: !Sub ${WorkArtefactsBucket.Arn}/*
 
+  # ---------------------------------------------------------------------------
+  # Transfer bucket (#262): how the repository reaches a session without the
+  # session reaching GitHub. Prepare, ContinueBuild and PrepareReview write a
+  # git bundle here (lib/repo-seed.ts) and pass the session a presigned GET
+  # that expires in five minutes; the stage deletes the object once the
+  # session has it. Separate from the artefact store, which is write-once,
+  # delete-denied and read by no session: this one is ephemeral, unversioned
+  # and read only through those URLs, signed by the three stages' roles. Keys:
+  # <workItemId>/<attempt>/<stage>/repo.bundle. No aws:SourceVpce condition
+  # while the Runtimes are PUBLIC; it comes with VPC mode.
+  # ---------------------------------------------------------------------------
+  TransferBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub factorial-transfer-${AWS::AccountId}
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+            BucketKeyEnabled: true
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireTransfers
+            Status: Enabled
+            ExpirationInDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  TransferBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TransferBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: RequireTls
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt TransferBucket.Arn
+              - !Sub ${TransferBucket.Arn}/*
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+          # Only the seeding stages' roles read a transfer object, and a
+          # session reads one only through a URL one of them signed.
+          - Sid: DenyReadsByOthers
+            Effect: Deny
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${TransferBucket.Arn}/*
+            Condition:
+              ArnNotEquals:
+                aws:PrincipalArn:
+                  - !GetAtt PrepareFunctionRole.Arn
+                  - !GetAtt ContinueBuildFunctionRole.Arn
+                  - !GetAtt PrepareReviewFunctionRole.Arn
+
+  # The seeding stages: write a bundle, presign its GET, delete it once the
+  # session has it. Multipart uploads need AbortMultipartUpload on failure.
+  TransferSeedPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: factorial-transfer-seed
+      Description: Write, presign and delete repository bundles in the transfer bucket.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:AbortMultipartUpload
+            Resource: !Sub ${TransferBucket.Arn}/*
+
   # The progress record (#15): every orchestrator Lambda and the invoker put
   # WorkItemProgress events, and only those, on the work bus.
   ProgressEventsPolicy:
@@ -774,15 +862,31 @@ Resources:
         - !Ref ProgressEventsPolicy
         - !Ref OutcomeEventsPolicy
 
+  # Prepare, ContinueBuild and PrepareReview seed their session from a git
+  # bundle they fetch themselves (lib/repo-seed.ts, #262), so they run from
+  # the orchestration image, which has git, with room in memory and /tmp for
+  # the bare repository and the bundle. As for Collect, an image function
+  # cannot keep a zip function's name, so each has a new one; their logs stay
+  # in their old log groups.
   PrepareFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: factorial-prepare
-      Description: Clone the repository into the builder's session on the thread's branch and seed it.
-      CodeUri: ../packages/orchestration/dist/prepare/
-      Runtime: nodejs24.x
-      Handler: index.handler
+      FunctionName: factorial-prepare-seed
+      Description: Seed the builder's session with the repository, from a bundle, on the thread's branch.
+      PackageType: Image
+      ImageUri: !Sub
+        - ${RepositoryUri}:${OrchestrationImageTag}
+        - RepositoryUri: !ImportValue Factorial-OrchestrationRepositoryUri
+      ImageConfig:
+        Command:
+          - prepare/index.handler
       Timeout: 900
+      MemorySize: 2048
+      EphemeralStorage:
+        Size: 2048
+      Environment:
+        Variables:
+          TRANSFER_BUCKET: !Ref TransferBucket
       LoggingConfig:
         LogGroup: !Ref PrepareLogGroup
       Policies:
@@ -794,6 +898,7 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref TransferSeedPolicy
         - !Ref ProgressEventsPolicy
 
   # Collect is the clean room: it pushes from a pristine clone in its own
@@ -859,12 +964,22 @@ Resources:
   PrepareReviewFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: factorial-prepare-review
-      Description: Set up a fresh reviewer session at the tested commit with the plan, the summary and the diff.
-      CodeUri: ../packages/orchestration/dist/prepare-review/
-      Runtime: nodejs24.x
-      Handler: index.handler
+      FunctionName: factorial-prepare-review-seed
+      Description: Set up a fresh reviewer session at the tested commit, from a bundle, with the plan, the summary and the diff.
+      PackageType: Image
+      ImageUri: !Sub
+        - ${RepositoryUri}:${OrchestrationImageTag}
+        - RepositoryUri: !ImportValue Factorial-OrchestrationRepositoryUri
+      ImageConfig:
+        Command:
+          - prepare-review/index.handler
       Timeout: 900
+      MemorySize: 2048
+      EphemeralStorage:
+        Size: 2048
+      Environment:
+        Variables:
+          TRANSFER_BUCKET: !Ref TransferBucket
       LoggingConfig:
         LogGroup: !Ref PrepareReviewLogGroup
       Policies:
@@ -882,17 +997,28 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref TransferSeedPolicy
         - !Ref ProgressEventsPolicy
 
   ContinueBuildFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: factorial-continue-build
-      Description: Start the next build round in a fresh builder session, from the branch, the plan and the previous round's notes.
-      CodeUri: ../packages/orchestration/dist/continue-build/
-      Runtime: nodejs24.x
-      Handler: index.handler
+      FunctionName: factorial-continue-build-seed
+      Description: Start the next build round in a fresh builder session, from a bundle of the branch, the plan and the previous round's notes.
+      PackageType: Image
+      ImageUri: !Sub
+        - ${RepositoryUri}:${OrchestrationImageTag}
+        - RepositoryUri: !ImportValue Factorial-OrchestrationRepositoryUri
+      ImageConfig:
+        Command:
+          - continue-build/index.handler
       Timeout: 900
+      MemorySize: 2048
+      EphemeralStorage:
+        Size: 2048
+      Environment:
+        Variables:
+          TRANSFER_BUCKET: !Ref TransferBucket
       LoggingConfig:
         LogGroup: !Ref ContinueBuildLogGroup
       Policies:
@@ -913,6 +1039,7 @@ Resources:
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
+        - !Ref TransferSeedPolicy
         - !Ref ProgressEventsPolicy
 
   CollectReviewFunction:

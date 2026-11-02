@@ -2,7 +2,7 @@
  * ContinueBuild: the builder stopped at its iteration or time limit before
  * finishing the plan, and Collect has saved its work to the branch. Set up
  * the next round: a fresh builder session (a new session id on the same
- * agent) cloned at the branch head, with the plan read back from the
+ * agent) seeded at the branch head, with the plan read back from the
  * artefact store and validated again, the previous round's notes (the
  * builder's own memory, stored by Collect before the push) and a section
  * saying where it stands. A round that ended before the builder wrote a valid
@@ -79,6 +79,8 @@ export const handler = staged('continue-build', (input: ContinueBuildInput) => r
     branch: ctx.branch,
     sessionId,
     at,
+    artefactPrefix: ctx.artefactPrefix,
+    stage: `build/round-${round}`,
     existing: pushed || ctx.resumedFrom !== undefined,
     ...(ctx.resumedFrom ? { resumedFrom: ctx.resumedFrom } : {}),
     ...(ctx.rework ? { rework: ctx.rework } : {}),
