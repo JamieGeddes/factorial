@@ -16,8 +16,15 @@
 # and pi are root-owned and read-only to the agent user (docs/security.md
 # section 9). Commands sent through InvokeAgentRuntimeCommand also run as root.
 #
-# Base image pinned by digest (node:22-bookworm-slim, linux/arm64).
-FROM public.ecr.aws/docker/library/node:22-bookworm-slim@sha256:b20fe038d9592822dd534600a1ddf467e985178aa3fed60ec441a056c2cc45bd
+# Base image pinned by digest (node:22-trixie-slim, linux/arm64). Debian
+# trixie's git (2.47) formats its output as CI's newer git does where
+# Factorial's tests look (bookworm's 2.39 printed a UTC %aI as +00:00, CI as
+# Z; #274). The ci.yml job "Image toolchains" builds the toolchain stage and
+# checks its git against CI's (scripts/check-git-version.ts).
+#
+# Two stages: toolchain is everything but Factorial's own files, so CI can
+# build and check it without the bundles; the last stage adds them.
+FROM public.ecr.aws/docker/library/node:22-trixie-slim@sha256:3c4ccff428b945ea599d7c04b3ceafe52e4f69326bca0d976df99c7710e62b41 AS toolchain
 
 ARG GH_VERSION=2.102.0
 ARG GH_SHA256=5006962696f01e1624b3fcf1f9d8e1a11547f24bf067dd2a0371b7b421945237
@@ -44,8 +51,8 @@ RUN apt-get update \
 
 # cfn-lint at CI's version (.github/workflows/ci.yml), with every dependency
 # pinned by hash in cfn-lint-requirements.txt, generated from cfn-lint.in with
-# pip-compile --generate-hashes on python:3.11-slim-bookworm (Debian
-# bookworm's python3 is 3.11).
+# pip-compile --generate-hashes on python:3.13-slim-trixie (Debian
+# trixie's python3 is 3.13).
 COPY cfn-lint-requirements.txt /tmp/
 RUN python3 -m venv /opt/cfn-lint \
  && /opt/cfn-lint/bin/pip install --no-cache-dir --require-hashes -r /tmp/cfn-lint-requirements.txt \
@@ -70,6 +77,8 @@ RUN usermod --login agent --home /home/agent --move-home node \
  && groupmod --new-name agent node \
  && mkdir /workspace \
  && chown agent:agent /workspace
+
+FROM toolchain
 
 # pi from its own lockfile, without peer dependencies (the host bundle carries
 # what it uses), then the bundled host, quiet and pi's file helper. Everything
