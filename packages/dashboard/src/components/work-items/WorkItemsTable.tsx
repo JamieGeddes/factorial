@@ -6,7 +6,7 @@ import { useNow } from '../../client/now.tsx';
 import { Elapsed } from '../Elapsed.tsx';
 import { Pill } from '../Pill.tsx';
 import { PullRequestLink, SourceLink } from '../SourceLink.tsx';
-import { Table, type Column } from '../Table.tsx';
+import { Table, type Column, type Paging } from '../Table.tsx';
 import { clip, fmtUsd, shortId } from '../../lib/format.ts';
 import { runHref } from '../../lib/overview.ts';
 import type { WorkItemSummary } from '../../lib/work-items.ts';
@@ -133,8 +133,8 @@ export function workItemColumns(now: number): Column<WorkItemSummary>[] {
   ];
 }
 
-export function WorkItemsTable({ items, empty }: { items: WorkItemSummary[]; empty: string }) {
+export function WorkItemsTable({ items, empty, paging }: { items: WorkItemSummary[]; empty: string; paging?: Paging }) {
   const now = useNow();
   const columns = useMemo(() => workItemColumns(now), [now]);
-  return <Table label="Work items" columns={columns} rows={items} rowKey={(i) => i.id} rowHref={rowHref} empty={empty} />;
+  return <Table label="Work items" columns={columns} rows={items} rowKey={(i) => i.id} rowHref={rowHref} empty={empty} {...(paging ? { paging } : {})} />;
 }

@@ -68,6 +68,12 @@ test('data routes: the index answers the views, items answer by file, filters ru
   assert.equal((await body('/api/work-items?filter=running')).json.total, 1);
   assert.equal((await body('/api/work-items?q=beta')).json.items[0].title, 'Beta');
   assert.equal((await body('/api/work-items?limit=1')).json.nextCursor, '1');
+  // Following nextCursor one at a time reads every item once, in order, as the Work items view does.
+  const cursor = (c?: string) => body(`/api/work-items?limit=1${c ? `&cursor=${c}` : ''}`);
+  const first = (await cursor()).json;
+  const second = (await cursor(first.nextCursor)).json;
+  assert.deepEqual([...first.items, ...second.items], all.items);
+  assert.equal(second.nextCursor, undefined);
   assert.equal((await body(`/api/work-items/${ID}`)).json.row.workItemId, ID);
   assert.equal((await body(`/api/work-items/${ID.replace('0a', '1b')}`)).status, 404);
   assert.equal((await body(`/api/runs/${ID}/build/1`)).json.stage, 'build');

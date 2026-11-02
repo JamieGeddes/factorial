@@ -4,7 +4,7 @@ import { clip, refAndTitle, shortId } from '../../lib/format.ts';
 import { runHref } from '../../lib/overview.ts';
 import type { WorkItemSummary } from '../../lib/work-items.ts';
 import { Pill } from '../Pill.tsx';
-import { Table, type Column } from '../Table.tsx';
+import { Table, type Column, type Paging } from '../Table.tsx';
 
 export const RUN_COLUMNS: Column<WorkItemSummary>[] = [
   {
@@ -23,7 +23,7 @@ export const RUN_COLUMNS: Column<WorkItemSummary>[] = [
   { key: 'created', header: 'Created', sortValue: (i) => i.createdAt, render: (i) => <span className="mono">{i.createdAt?.replace('T', ' ').slice(0, 16) ?? ''}</span> },
 ];
 
-/** Newest created first until a header is clicked; a running item keeps its status pill but no place of its own. */
-export function RunsTable({ items, empty = 'No item has an agent run yet.' }: { items: WorkItemSummary[]; empty?: string }) {
-  return <Table label="Agent runs" columns={RUN_COLUMNS} rows={items} rowKey={(i) => i.id} rowHref={runHref} empty={empty} defaultSort={{ key: 'created', dir: 'desc' }} />;
+/** Newest created first until a header is clicked; a running item keeps its status pill but no place of its own. Pages when given `paging`. */
+export function RunsTable({ items, empty = 'No item has an agent run yet.', paging }: { items: WorkItemSummary[]; empty?: string; paging?: Paging }) {
+  return <Table label="Agent runs" columns={RUN_COLUMNS} rows={items} rowKey={(i) => i.id} rowHref={runHref} empty={empty} defaultSort={{ key: 'created', dir: 'desc' }} {...(paging ? { paging } : {})} />;
 }

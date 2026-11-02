@@ -2,6 +2,8 @@ import { WorkItemsView, type Query } from '../../components/work-items/WorkItems
 import { workItemsPage } from '../../server/handlers.ts';
 import { services } from '../../server/services.ts';
 import { isFilter } from '../../lib/work-items.ts';
+import { parsePage } from '../../lib/paging.ts';
+import { readAll } from '../../lib/read-all.ts';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,8 +14,8 @@ export default async function WorkItemsPage({ searchParams }: { searchParams: Pr
   const filter = one(params.filter);
   const query: Query = { filter: isFilter(filter) ? filter : 'all', source: one(params.source), q: one(params.q) };
   try {
-    const initial = await workItemsPage(services(), { ...query, limit: '500' });
-    return <WorkItemsView initial={initial} initialQuery={query} />;
+    const initial = await readAll((cursor) => workItemsPage(services(), { ...query, limit: '500', ...(cursor ? { cursor } : {}) }));
+    return <WorkItemsView initial={initial} initialQuery={query} initialPage={parsePage(params.page)} />;
   } catch (error) {
     return (
       <section>
