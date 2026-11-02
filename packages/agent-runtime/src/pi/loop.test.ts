@@ -5,9 +5,10 @@ import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessageEventStream, type Provider } from '@earendil-works/pi-ai';
-import type { RunEnded, RunEvent } from '@factorial/run';
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessageEventStream, type Message, type Provider } from '@earendil-works/pi-ai';
+import type { RunEnded, RunEvent, SubagentStarted } from '@factorial/run';
 
+import { MAX_CONCURRENT_SUBAGENTS, type SubagentSpec } from '../agents.ts';
 import { readConfig } from '../config.ts';
 import { SECOND_PASS } from '../review.ts';
 import { HOST_ROLES, type HostRole } from '../roles.ts';
@@ -178,5 +179,100 @@ describe("the reviewer's role on pi", () => {
     assert.equal(sentBack[1], SECOND_PASS);
     assert.equal(readFileSync(path.join(workspace, 'review.json'), 'utf8'), review);
     assert.equal(faux.state.callCount, 5);
+  });
+});
+
+describe('subagents that start subagents (#277)', () => {
+  const spec = (name: string, subagents?: Record<string, SubagentSpec>): SubagentSpec => ({
+    description: `The ${name} subagent.`,
+    prompt: () => `[${name}]`,
+    tools: ['agent'],
+    model: 'inherit',
+    maxTurns: 10,
+    ...(subagents ? { subagents } : {}),
+  });
+  // leaf names a subagent of its own, which it must not get when another subagent starts it.
+  const plain = spec('plain');
+  const leaf = spec('leaf', { plain });
+  const parent = spec('parent', { leaf });
+  const nestingRole: HostRole = { ...role, tools: ['agent'], subagents: { parent, plain } };
+
+  const textOf = (message: Message | undefined) =>
+    !message ? '' : typeof message.content === 'string' ? message.content : message.content.map((block) => ('text' in block ? block.text : '')).join('');
+  /** Which session a call comes from, by the marker its prompt carries. */
+  const sessionOf = (messages: Message[]) =>
+    /\[(root|parent|leaf|plain)\]/.exec(messages.flatMap((m) => (m.role === 'system' ? [textOf(m), ...Object.values(m.sections ?? {})] : [])).join('\n'))?.[1] ?? 'unknown';
+  /** The subagents the session's task tool offers, or undefined when it has none. */
+  const offeredOf = (messages: Message[]): string[] | undefined => {
+    const task = messages.flatMap((m) => (m.role === 'system' ? (m.toolsAdded ?? []) : [])).find((tool) => tool.name === 'task');
+    if (!task) return undefined;
+    const type = (task.parameters as { properties: { subagent_type: { const?: string; anyOf?: { const: string }[] } } }).properties.subagent_type;
+    return type.anyOf ? type.anyOf.map((option) => option.const) : [type.const ?? ''];
+  };
+
+  /**
+   * A model that, in the root session, starts `rootCalls` subagents at once and
+   * in each parent `leafCalls` leaves at once, then ends each session; every
+   * call outside the root takes `delayMs`, and the peak of those in flight is kept.
+   */
+  function nestingModel(rootCalls: string[], leafCalls: number, delayMs = 0) {
+    const faux = fauxProvider({ provider: 'amazon-bedrock', models: [{ id: MODEL }, { id: SMALL_MODEL }] });
+    const offered = new Map<string, string[] | undefined>();
+    let ids = 0;
+    let inFlight = 0;
+    const seen = { peak: 0 };
+    const call = (type: string) => fauxToolCall('task', { subagent_type: type, prompt: `Do the ${type} work.` }, { id: `toolu_${(ids += 1)}` });
+    const respond = async (context: { messages: Message[] }) => {
+      const session = sessionOf(context.messages);
+      offered.set(session, offeredOf(context.messages));
+      const answered = context.messages.some((m) => m.role === 'toolResult');
+      if (session === 'root') return answered ? fauxAssistantMessage('Root done.') : fauxAssistantMessage(rootCalls.map(call), { stopReason: 'toolUse' });
+      inFlight += 1;
+      seen.peak = Math.max(seen.peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      inFlight -= 1;
+      if (session === 'parent' && !answered) return fauxAssistantMessage(Array.from({ length: leafCalls }, () => call('leaf')), { stopReason: 'toolUse' });
+      return fauxAssistantMessage(`${session} done.`);
+    };
+    faux.setResponses(Array.from({ length: 500 }, () => respond));
+    return { provider: faux.provider, state: faux.state, offered, seen };
+  }
+
+  async function runNesting(model: ReturnType<typeof nestingModel>): Promise<RunEvent[]> {
+    const parts: PiParts = { runner, helper: { runner, command: ['false'], cwd: root }, agentDir: mkdtempSync(path.join(root, 'agent-')), webSearch: undefined, awsDocs: undefined, provider: model.provider };
+    const events: RunEvent[] = [];
+    const nestedRole: HostRole = { ...nestingRole, systemPrompt: () => '[root]' };
+    for await (const event of piHarness(configWith({}), nestedRole, new AbortController(), parts).start({ prompt: 'Work.', round: 1 }, () => undefined)) events.push(event);
+    assert.equal(events.find((event): event is RunEnded => event.type === 'run.ended')?.outcome, 'complete');
+    return events;
+  }
+
+  it('gives a subagent declared with subagents a task tool offering exactly those, one declared without none, and a nested one none', async () => {
+    const model = nestingModel(['parent', 'plain'], 1);
+    await runNesting(model);
+    assert.deepEqual(model.offered.get('root'), ['parent', 'plain']);
+    assert.deepEqual(model.offered.get('parent'), ['leaf']);
+    assert.equal(model.offered.get('plain'), undefined);
+    assert.equal(model.offered.get('leaf'), undefined, 'leaf names plain, but a nested subagent starts none');
+  });
+
+  it("names the parent on a nested subagent's events, and its model calls carry its own agent id", async () => {
+    const events = await runNesting(nestingModel(['parent'], 1));
+    const started = events.filter((event): event is SubagentStarted => event.type === 'subagent.started');
+    const parentRun = started.find((event) => event.agentType === 'parent');
+    const leafRun = started.find((event) => event.agentType === 'leaf');
+    assert.ok(parentRun && leafRun);
+    assert.equal(parentRun.parentAgentId, undefined);
+    assert.equal(leafRun.parentAgentId, parentRun.agentId);
+    const leafEnded = events.find((event) => event.type === 'subagent.ended' && event.agentType === 'leaf');
+    assert.equal(leafEnded && 'parentAgentId' in leafEnded ? leafEnded.parentAgentId : undefined, parentRun.agentId);
+    assert.equal(events.filter((event) => event.type === 'model.call' && event.agentId === leafRun.agentId).length, 1);
+  });
+
+  it('keeps the concurrency cap across root and nested calls, and parents holding every slot still finish', async () => {
+    const model = nestingModel(Array.from({ length: MAX_CONCURRENT_SUBAGENTS + 2 }, () => 'parent'), 3, 15);
+    const events = await runNesting(model);
+    assert.equal(events.filter((event) => event.type === 'subagent.ended' && event.agentType === 'leaf').length, (MAX_CONCURRENT_SUBAGENTS + 2) * 3);
+    assert.equal(model.seen.peak, MAX_CONCURRENT_SUBAGENTS);
   });
 });

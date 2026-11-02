@@ -149,7 +149,7 @@
       "properties": {
         "agentId": { "$ref": "#/$defs/agentId" },
         "agentType": { "$ref": "#/$defs/name" },
-        "parentAgentId": { "$ref": "#/$defs/agentId" }
+        "parentAgentId": { "$ref": "#/$defs/agentId", "description": "The subagent that started this one, absent when the role's own loop did." }
       }
     },
     "subagentEnded": {
@@ -159,6 +159,7 @@
       "properties": {
         "agentId": { "$ref": "#/$defs/agentId" },
         "agentType": { "$ref": "#/$defs/name" },
+        "parentAgentId": { "$ref": "#/$defs/agentId" },
         "durationMs": { "$ref": "#/$defs/count" },
         "toolCalls": { "$ref": "#/$defs/count" },
         "finalContextTokens": { "$ref": "#/$defs/count" }

@@ -126,6 +126,7 @@ export interface SubagentEnded {
   type: 'subagent.ended';
   agentId: string;
   agentType: string;
+  parentAgentId?: string;
   durationMs?: number;
   toolCalls?: number;
   finalContextTokens?: number;

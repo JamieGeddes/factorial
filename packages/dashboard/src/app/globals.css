@@ -320,6 +320,7 @@ a.puck:hover { text-decoration: none; }
 .tr-rows { position: relative; }
 .tr-row { position: absolute; left: 0; right: 0; }
 .ev.in-agent .seq::after { content: ""; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--s7); margin-left: 5px; vertical-align: 1px; }
+.ev.nested .c { padding-left: 14px; border-left: 1px solid var(--hair-strong); }
 .ev .cut { color: var(--warn); font-size: 11px; margin-left: 8px; font-family: var(--font); }
 .plan-step > div { min-width: 0; }
 .plan-step .f { overflow-wrap: anywhere; }

@@ -19,3 +19,16 @@ describe('the gateway tools each role is offered', () => {
     assert.ok(!EXPLORE.tools.includes('awsDocs'));
   });
 });
+
+describe('the subagents each subagent may start (#277)', () => {
+  it('lets the plan subagent start explore and nothing else, through its agent tool', () => {
+    assert.deepEqual(Object.keys(PLAN.subagents ?? {}), ['explore']);
+    assert.equal(PLAN.subagents?.explore, EXPLORE);
+    assert.ok(PLAN.tools.includes('agent'));
+  });
+
+  it('lets explore start none', () => {
+    assert.equal(EXPLORE.subagents, undefined);
+    assert.ok(!EXPLORE.tools.includes('agent'));
+  });
+});

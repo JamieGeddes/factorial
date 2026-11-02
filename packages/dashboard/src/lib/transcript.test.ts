@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { byteLength, describe, describeShort, formatInput, fromEnvelope, fromTranscriptLine, isPlanWrite, passes, planFromWrite, tallyOf, type RunEvent } from './transcript.ts';
+import { byteLength, depthOf, describe, describeShort, formatInput, fromEnvelope, fromTranscriptLine, isPlanWrite, passes, noteAgent, planFromWrite, tallyOf, type Agent, type RunEvent } from './transcript.ts';
 
 const ev = (seq: number, event: Record<string, unknown>, extra: Partial<RunEvent> = {}): RunEvent => ({ seq, at: '2026-11-01T10:00:00Z', event, ...extra });
 
@@ -27,7 +27,8 @@ test('the filters: model text, tools, model calls and subagents', () => {
 });
 
 test('each event type is described as the mockup shows it', () => {
-  const agents = new Map([['a1', 'plan']]);
+  const agents = new Map<string, Agent>();
+  noteAgent(agents, { type: 'subagent.started', agentId: 'a1', agentType: 'plan' });
   const d = (event: Record<string, unknown>, extra?: Partial<RunEvent>) => describe(ev(1, event, extra), agents);
   assert.deepEqual(d({ type: 'run.started', harness: { name: 'pi', version: '1.4.0' }, models: [{ purpose: 'main', id: 'claude' }], tools: ['bash', 'read'] }), { kind: 'run started', text: 'pi 1.4.0 · main claude\ntools: bash, read' });
   assert.equal(d({ type: 'run.ended', outcome: 'complete', reason: 'completed', turns: 10, durationMs: 407000, cost: { usd: 0.379 }, deniedToolCalls: 0 }).text, 'outcome complete (completed) · 10 turns · 6m 47s · $0.38 · 0 denied tool calls');
@@ -46,6 +47,23 @@ test('each event type is described as the mockup shows it', () => {
   assert.equal(d({ type: 'context.compacted', trigger: 'auto', tokensBefore: 96400, tokensAfter: 31800 }).text, 'auto · 96.4K → 31.8K tokens');
   assert.deepEqual(d({ type: 'harness', name: 'compaction_summary' }), { kind: 'harness', text: 'compaction_summary' });
   assert.equal(d({ type: 'tool.call', omitted: true }, { truncated: true, bytes: 70000 }).text, 'left out of the live feed: too large for one message');
+});
+
+test("a nested subagent's events name it after its parent and sit one level deeper (#277)", () => {
+  const agents = new Map<string, Agent>();
+  for (const event of [
+    { type: 'subagent.started', agentId: 'toolu_p1', agentType: 'plan' },
+    { type: 'subagent.started', agentId: 'toolu_e1', agentType: 'explore', parentAgentId: 'toolu_p1' },
+    { type: 'text', text: 'not a start' },
+  ]) noteAgent(agents, event);
+  const d = (event: Record<string, unknown>) => describe(ev(1, event), agents);
+  assert.equal(d({ type: 'tool.call', agentId: 'toolu_e1', tool: 'grep', input: { pattern: 'stages' } }).kind, 'plan › explore · grep');
+  assert.equal(d({ type: 'subagent.started', agentId: 'toolu_e1', agentType: 'explore', parentAgentId: 'toolu_p1' }).text, 'explore (toolu_e1), started by plan: its events are marked as its own');
+  assert.equal(d({ type: 'subagent.ended', agentId: 'toolu_e1', agentType: 'explore', parentAgentId: 'toolu_p1', durationMs: 800 }).text, 'explore (toolu_e1), started by plan · 1s');
+  assert.equal(depthOf({ type: 'text' }, agents), 0);
+  assert.equal(depthOf({ type: 'text', agentId: 'toolu_p1' }, agents), 1);
+  assert.equal(depthOf({ type: 'subagent.started', agentId: 'toolu_e1' }, agents), 2);
+  assert.equal(depthOf({ type: 'text', agentId: 'unseen' }, agents), 1);
 });
 
 test('a cut tool input is the start of its JSON, shown as it is', () => {

@@ -27,7 +27,7 @@ Each server-sent event is `id: <n>` and `data: <one run event as JSON>`, numbere
 | `model.retry` | A retried model call: `attempt`, and optionally `maxRetries`, `delayMs`, `status` and `error`. |
 | `text`, `reasoning` | The model's text, or its visible reasoning. |
 | `tool.call`, `tool.result` | A tool call (`callId`, `tool`, `input`) and its result (`callId`, `content` as text, `isError`). |
-| `subagent.started`, `subagent.ended` | A subagent's `agentId` and `agentType`; at its end the harness's `durationMs`, `toolCalls` and `finalContextTokens`. |
+| `subagent.started`, `subagent.ended` | A subagent's `agentId` and `agentType`, and `parentAgentId` when another subagent started it; at its end the harness's `durationMs`, `toolCalls` and `finalContextTokens`. |
 | `context.compacted` | The harness compacted the context: `trigger`, `tokensBefore`, `tokensAfter`. |
 | `harness` | A native message no other type carries, kept for the transcript (`name`, `message`). Never interpreted. |
 | `run.ended` | `outcome`, `reason`, and what the harness reported: `detail` (its own code), `errors`, `turns`, `durationMs`, `cost`, `models` (totals per model, subagents included) and `deniedToolCalls`. |

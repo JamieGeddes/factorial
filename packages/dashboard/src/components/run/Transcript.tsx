@@ -5,14 +5,14 @@ import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useLive } from '../../client/live.tsx';
 import type { RunEvents } from '../../client/run-events.tsx';
 import { VirtualList } from '../../client/virtual-list.tsx';
-import { describe, fmtBytes, passes, searchText, TRANSCRIPT_FILTER_LABELS, TRANSCRIPT_FILTERS, type Line, type RunEvent, type TranscriptFilter } from '../../lib/transcript.ts';
+import { depthOf, describe, fmtBytes, noteAgent, passes, searchText, TRANSCRIPT_FILTER_LABELS, TRANSCRIPT_FILTERS, type Agent, type Line, type RunEvent, type TranscriptFilter } from '../../lib/transcript.ts';
 import { FilterChips } from '../FilterChips.tsx';
 import { TranscriptEvent } from './TranscriptEvent.tsx';
 
 /** Lines are described once per event and kept: a search over thousands reads the cache. */
 const lines = new WeakMap<RunEvent, { line: Line; search?: string }>();
 
-function lineOf(entry: RunEvent, agents: Map<string, string>): { line: Line; search?: string } {
+function lineOf(entry: RunEvent, agents: Map<string, Agent>): { line: Line; search?: string } {
   let cached = lines.get(entry);
   if (!cached) {
     cached = { line: describe(entry, agents) };
@@ -34,7 +34,7 @@ export function Transcript({ run, channel, paused, onPause }: { run: RunEvents; 
   const deferred = useDeferredValue(query.trim().toLowerCase());
   const [follow, setFollow] = useState(true);
   const [open, setOpen] = useState<Set<number>>(new Set());
-  const agents = useRef(new Map<string, string>());
+  const agents = useRef(new Map<string, Agent>());
 
   const { events, count } = run;
   const shown = useMemo(() => {
@@ -42,7 +42,7 @@ export function Transcript({ run, channel, paused, onPause }: { run: RunEvents; 
     for (let i = 0; i < count; i += 1) {
       const entry = events[i] as RunEvent;
       const event = entry.event;
-      if (event.type === 'subagent.started' && typeof event.agentId === 'string' && typeof event.agentType === 'string') agents.current.set(event.agentId, event.agentType);
+      noteAgent(agents.current, event);
       if (!passes(event, filter)) continue;
       if (deferred) {
         const cached = lineOf(entry, agents.current);
@@ -107,7 +107,7 @@ export function Transcript({ run, channel, paused, onPause }: { run: RunEvents; 
         render={(i) => {
           const entry = shown[i] as RunEvent;
           const at = Date.parse(entry.at);
-          return <TranscriptEvent entry={entry} line={lineOf(entry, agents.current).line} open={open.has(entry.seq)} onToggle={toggle(entry.seq)} fresh={Number.isFinite(at) && at > run.since && Date.now() - at < 5000} />;
+          return <TranscriptEvent entry={entry} line={lineOf(entry, agents.current).line} depth={depthOf(entry.event, agents.current)} open={open.has(entry.seq)} onToggle={toggle(entry.seq)} fresh={Number.isFinite(at) && at > run.since && Date.now() - at < 5000} />;
         }}
       />
       <div className="tr-foot">

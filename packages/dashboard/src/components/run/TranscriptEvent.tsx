@@ -12,12 +12,13 @@ const time = (at: string) => {
 /**
  * One event as the mockup renders it: its `seq`, its time, a kind label and
  * its text. Every string is the run's and reaches the page as React text,
- * never as markup.
+ * never as markup. A nested subagent's events (`depth` 2: one the planner
+ * started) are indented under their parent's.
  */
-export function TranscriptEvent({ entry, line, open, onToggle, fresh }: { entry: RunEvent; line: Line; open: boolean; onToggle: (open: boolean) => void; fresh?: boolean }) {
+export function TranscriptEvent({ entry, line, depth = 0, open, onToggle, fresh }: { entry: RunEvent; line: Line; depth?: number; open: boolean; onToggle: (open: boolean) => void; fresh?: boolean }) {
   const event = entry.event;
   const kind = kindOf(event);
-  const classes = ['ev', kind, event.isError === true ? 'err' : '', typeof event.agentId === 'string' ? 'in-agent' : '', fresh ? 'new' : ''].filter(Boolean).join(' ');
+  const classes = ['ev', kind, event.isError === true ? 'err' : '', typeof event.agentId === 'string' ? 'in-agent' : '', depth > 1 ? 'nested' : '', fresh ? 'new' : ''].filter(Boolean).join(' ');
   const body = line.more?.body ?? '';
   const shown = body.length > EXPANDED_MAX_CHARS ? body.slice(0, EXPANDED_MAX_CHARS) : body;
   return (

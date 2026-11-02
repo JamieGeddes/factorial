@@ -24,3 +24,19 @@ it('runs at most the slot count at once, in order, and frees a slot when work fa
   assert.deepEqual(results.map((r) => r.status), ['fulfilled', 'rejected', 'fulfilled', 'fulfilled', 'fulfilled']);
   assert.equal(await slots.run(async () => 'free again'), 'free again');
 });
+
+it('takes a free slot without waiting, or none when all are taken, and frees it once', async () => {
+  const slots = new Slots(1);
+  const free = slots.tryTake();
+  assert.ok(free);
+  assert.equal(slots.tryTake(), undefined);
+  let ran = false;
+  const waiting = slots.run(async () => (ran = true));
+  free();
+  free();
+  await waiting;
+  assert.ok(ran);
+  const again = slots.tryTake();
+  assert.ok(again, 'the slot came back once, not twice');
+  assert.equal(slots.tryTake(), undefined);
+});
