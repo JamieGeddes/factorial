@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand, StopRuntimeSessionCommand } from '@aws-sdk/client-bedrock-agentcore';
@@ -136,6 +137,13 @@ describe('roundStartFor', () => {
     assert.equal(roundStartFor(resumed, undefined).existing, true);
   });
 
+  it("starts a resumed attempt's round 1 as pushed, since its branch holds the earlier attempt's work, but not a rework's", () => {
+    const resumed = ctx({ resumedFrom: { workItemId: 'a', status: 'tests-failed', branch: 'factorial/a' } });
+    assert.deepEqual(roundStartFor(resumed, undefined), { commit: base, existing: true, pushed: true });
+    const rework = ctx({ rework: { pullRequest: { number: 26, url: 'https://x' }, cause: 'review', previousWorkItemId: 'p', baseBranch: 'main' } });
+    assert.equal(roundStartFor(rework, undefined).pushed, false);
+  });
+
   it("starts a later round where ContinueBuild says, the previous round's pushed head", () => {
     assert.deepEqual(roundStartFor(ctx(), { commit: sha, existing: true, pushed: true }), { commit: sha, existing: true, pushed: true });
   });
@@ -176,7 +184,7 @@ describe('testSkipReason', () => {
 describe('collect pushes from its own clean room and stops the builder session', () => {
   const WORK_ITEM_ID = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
   const pushed = 'c'.repeat(40);
-  const ENV = { BUILDER_RUNTIME_ARN: 'arn:builder', REVIEWER_RUNTIME_ARN: 'arn:reviewer', RUNTIME_QUALIFIER: 'live', ARTEFACT_BUCKET: 'bucket', TABLE_NAME: 'table' };
+  const ENV = { BUILDER_RUNTIME_ARN: 'arn:builder', REVIEWER_RUNTIME_ARN: 'arn:reviewer', RUNTIME_QUALIFIER: 'live', ARTEFACT_BUCKET: 'bucket', TABLE_NAME: 'table', TEST_WORKFLOW_FILE: 'test.yml' };
   const ctx = {
     workItem: { id: WORK_ITEM_ID, repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' } },
     sessionId: WORK_ITEM_ID,
@@ -207,6 +215,8 @@ describe('collect pushes from its own clean room and stops the builder session',
   let failOn: string | undefined;
   let failStop: boolean;
   let commits: number;
+  /** What the plan read answers: no plan files unless a test supplies valid ones. */
+  let planReply: string;
 
   const reply = (stdout: string, exitCode = 0) => ({ stream: [{ chunk: { contentDelta: { stdout } } }, { chunk: { contentStop: { exitCode } } }] });
 
@@ -218,6 +228,7 @@ describe('collect pushes from its own clean room and stops the builder session',
     failOn = undefined;
     failStop = false;
     commits = 2;
+    planReply = 'missing:\n===FACTORIAL-PLAN===\nmissing:';
     mock.method(S3Client.prototype, 'send', async () => ({}));
     mock.method(DynamoDBDocumentClient.prototype, 'send', async () => ({}));
     mock.method(BedrockAgentCoreClient.prototype, 'send', async (command: unknown) => {
@@ -234,7 +245,7 @@ describe('collect pushes from its own clean room and stops the builder session',
         events.push('bundle');
         return reply('QUJD');
       }
-      if (script.includes('FACTORIAL-PLAN')) return reply('missing:\n===FACTORIAL-PLAN===\nmissing:');
+      if (script.includes('FACTORIAL-PLAN')) return reply(planReply);
       return reply('');
     });
   });
@@ -293,6 +304,38 @@ describe('collect pushes from its own clean room and stops the builder session',
     const result = await collect({ ...ctx, salvage: true, roundStart: { commit: pushed, existing: true, pushed: true } }, log, deps);
     assert.equal(result.pushed, true);
     assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+  });
+
+  it("keeps a resumed attempt's branch head as the result when the agent added nothing, so it is tested rather than reported as no changes", async () => {
+    commits = 0;
+    const resumedFrom = { workItemId: 'a', status: 'tests-failed', branch: 'factorial/x' };
+    const result = await collect({ ...ctx, resumedFrom, salvage: true }, log, deps);
+    assert.equal(result.pushed, true);
+    assert.equal(result.headSha, base);
+    assert.equal(pushes.length, 0);
+    assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+  });
+
+  it('sends a finished resumed attempt that added nothing to Test, at the branch head', async () => {
+    commits = 0;
+    const json = await readFile(new URL('../../../../contracts/plan/v1/examples/single-change.json', import.meta.url), 'utf8');
+    const encoded = (text: string) => `ok:${Buffer.byteLength(text)}:${Buffer.from(text).toString('base64')}`;
+    planReply = `${encoded('# Plan\n')}\n===FACTORIAL-PLAN===\n${encoded(json)}`;
+    const resumedFrom = { workItemId: 'a', status: 'tests-failed', branch: 'factorial/x' };
+    let asked = 0;
+    const result = await collect({ ...ctx, resumedFrom }, log, { ...deps, fileExists: async () => (asked += 1) > 0 });
+    assert.equal(result.pushed, true);
+    assert.equal(result.headSha, base);
+    assert.equal(result.testSkipReason, undefined);
+    assert.equal(asked, 1);
+    assert.equal(pushes.length, 0);
+  });
+
+  it('reports a rework turn that added nothing as no changes', async () => {
+    commits = 0;
+    const rework = { pullRequest: { number: 26, url: 'https://x' }, cause: 'review', previousWorkItemId: 'p', baseBranch: 'main' };
+    const result = await collect({ ...ctx, rework, salvage: true } as typeof ctx, log, deps);
+    assert.equal(result.pushed, false);
   });
 
   it('stops nothing when the inspection fails, so the retry finds the session', async () => {
