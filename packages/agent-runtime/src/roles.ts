@@ -15,7 +15,7 @@ import path from 'node:path';
 import type { RoleName } from '@factorial/roles';
 
 import { BUILDER_SUBAGENTS, type SubagentSpec } from './agents.ts';
-import { builderShellRule } from './builder-shell.ts';
+import { builderShellRule, repositoryRead, steerShellOutput } from './builder-shell.ts';
 import { builderPrompt } from './prompts/builder.ts';
 import { reviewerPrompt } from './prompts/reviewer.ts';
 import { PLAN_GATE_CLOSED, planBrief, planCheck, readAgentFile, reportStopCheck, type PlanGate } from './report.ts';
@@ -32,6 +32,8 @@ export interface RolePolicy {
   decide(call: ToolCall, agentType?: string): Decision;
   /** After a file write or edit: what to send the model, or undefined. Absent when the role checks no file. */
   afterFileChange?: (target: string) => string | undefined;
+  /** After a shell command ran, with the command and its output: the output to send the model instead, or undefined to leave it. Absent when the role steers no shell output. */
+  afterShellResult?: (command: string, output: string) => string | undefined;
   /** When the model would end the run: what to send it back with, or undefined to let it end. */
   beforeStop(): string | undefined;
   /** The first message, from the request's prompt. */
@@ -77,6 +79,14 @@ const builder: HostRole = {
         return reason === undefined ? decision : { allow: false, reason };
       },
       afterFileChange: planCheck(workspace, planGate, (errors, closed) => note(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
+      // A read or search of a repository file is steered by its output's size, not refused (#271).
+      afterShellResult(command, output) {
+        const read = repositoryRead(repository, command, tools);
+        if (read === undefined) return undefined;
+        const steered = steerShellOutput(output, read, tools);
+        note('shell read steered', { truncated: steered.truncated, alone: read.alone, lines: steered.lines, bytes: steered.bytes });
+        return steered.text;
+      },
       beforeStop: reportStopCheck(workspace, planGate, (reason) => note('report incomplete; builder sent back', { reason })),
       // A later round starts with the plan's steps in full.
       prompt(requestPrompt) {
