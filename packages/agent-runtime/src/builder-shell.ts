@@ -11,8 +11,11 @@
  *   write tool's), and running a one-off script from outside it;
  * - printing or searching the repository's files with cat, head, tail, nl,
  *   `sed -n`, grep, rg or find, which floods the context where read takes
- *   `offset` and `limit` and grep and find cap their results.
- *
+ *   `offset` and `limit` and grep and find cap their results. This one is not
+ *   refused (#271: 14 refusals in three builds cost a turn each, and most of
+ *   the commands were small): `repositoryRead` says whether a command is one,
+ *   and `steerShellOutput` judges its output, returning a small one with a
+ *   note naming the tool, and a large one as its first and last lines. *
  * A command reading its input from a pipe is not reading files, so
  * `git log | head` and `git ls-files | grep x` stay allowed, as do files
  * outside the repository (/workspace/notes.md, /workspace/logs, /tmp) and
@@ -105,6 +108,20 @@ function operands(name: string, words: string[], skipFirst: boolean): string[] {
 const hasShort = (words: string[], letters: RegExp) => words.slice(1).some((w) => new RegExp(`^-[A-Za-z]*${letters.source}`).test(w));
 
 export function builderShellRule(repository: string, command: string, tools: ToolNames): string | undefined {
+  return scan(repository, command, tools).refusal;
+}
+
+/**
+ * Whether the command reads or searches a repository file (not a pipe, not outside the repository or in its
+ * generated directories), judged with the same parsing as `builderShellRule`: the note to append to its
+ * output, naming the tool to use next time, or undefined. The host no longer refuses these (#271); it
+ * steers them by output size, with `steerShellOutput`.
+ */
+export function repositoryRead(repository: string, command: string, tools: ToolNames): string | undefined {
+  return scan(repository, command, tools).read;
+}
+
+function scan(repository: string, command: string, tools: ToolNames): { refusal?: string; read?: string } {
   const editReason = (what: string) =>
     `Change files with the ${tools.edit} tool and create them with ${tools.write}, not by running ${what} in ${tools.shell}: ${tools.edit} fails when its text does not match and returns the diff, where a shell edit misses silently.`;
   const writeReason = (target: string) =>
@@ -117,6 +134,7 @@ export function builderShellRule(repository: string, command: string, tools: Too
     `Search the repository with the ${tools.grep} tool and find files by name with the ${tools.glob} tool, not by running ${name} in ${tools.shell}. When a question means reading more than two files, ask the explore subagent through ${tools.agent}.`;
 
   const readable = (target: string | undefined) => target !== undefined && isInside(repository, target) && !GENERATED.test(path.relative(repository, target));
+  let read: string | undefined;
 
   // Quoted literal redirection targets are unquoted, so `> "src/a.ts"` is judged too.
   const { shell } = splitHeredocs(command);
@@ -132,7 +150,7 @@ export function builderShellRule(repository: string, command: string, tools: Too
 
     for (const { target } of redirectionsIn(piece)) {
       const resolved = resolveIn(cwd, target);
-      if (resolved !== undefined && isInside(repository, resolved)) return writeReason(`> ${target}`);
+      if (resolved !== undefined && isInside(repository, resolved)) return { refusal: writeReason(`> ${target}`) };
     }
     if (name === undefined) continue;
 
@@ -140,29 +158,32 @@ export function builderShellRule(repository: string, command: string, tools: Too
       cwd = words[1] === undefined ? undefined : resolveIn(cwd, words[1]);
       continue;
     }
-    if (name === 'sed' && (hasShort(words, /i/) || words.some((w) => w.startsWith('--in-place')))) return editReason('sed -i');
-    if (name === 'perl' && hasShort(words, /i/)) return editReason('perl -i');
-    if ((name === 'awk' || name === 'gawk') && words.some((w, j) => w === '-iinplace' || (w === '-i' && words[j + 1] === 'inplace'))) return editReason('awk -i inplace');
+    if (name === 'sed' && (hasShort(words, /i/) || words.some((w) => w.startsWith('--in-place')))) return { refusal: editReason('sed -i') };
+    if (name === 'perl' && hasShort(words, /i/)) return { refusal: editReason('perl -i') };
+    if ((name === 'awk' || name === 'gawk') && words.some((w, j) => w === '-iinplace' || (w === '-i' && words[j + 1] === 'inplace'))) return { refusal: editReason('awk -i inplace') };
     if (INTERPRETER.test(name)) {
       const inline = words.length === 1 || words.slice(1).some((w) => INLINE_SCRIPT.has(w));
-      if (inline && WRITES_FILE.test(command)) return editReason(`a ${name} script`);
+      if (inline && WRITES_FILE.test(command)) return { refusal: editReason(`a ${name} script`) };
       const script = words.slice(1).find((w) => SCRIPT_FILE.test(w));
       const resolved = script === undefined ? undefined : resolveIn(cwd, script);
-      if (resolved !== undefined && !isInside(repository, resolved)) return scriptReason(`${name} ${script}`);
+      if (resolved !== undefined && !isInside(repository, resolved)) return { refusal: scriptReason(`${name} ${script}`) };
     }
     if (name === 'tee') {
       for (const target of operands(name, words, false)) {
         const resolved = resolveIn(cwd, target);
-        if (resolved !== undefined && isInside(repository, resolved)) return writeReason(`tee ${target}`);
+        if (resolved !== undefined && isInside(repository, resolved)) return { refusal: writeReason(`tee ${target}`) };
       }
     }
 
-    // Reading or searching files, not a pipe.
-    if (piped) continue;
+    // Reading or searching files, not a pipe: noted, and the scan goes on, since a later part may still be refused.
+    if (piped || read !== undefined) continue;
     const quietSed = name === 'sed' && (hasShort(words, /n/) || words.includes('--quiet') || words.includes('--silent'));
     if (READERS.has(name) || quietSed) {
       const files = operands(name, words, quietSed && !words.some((w) => w === '-e' || w === '-f' || w.startsWith('--expression')));
-      if (files.some((f) => readable(resolveIn(cwd, f)))) return readReason(quietSed ? 'sed -n' : name);
+      if (files.some((f) => readable(resolveIn(cwd, f)))) {
+        read = readReason(quietSed ? 'sed -n' : name);
+        continue;
+      }
     }
     if (SEARCHERS.has(name)) {
       const key = name === 'rg' || name === 'ag' || name === 'ack' ? 'rg' : 'grep';
@@ -170,13 +191,52 @@ export function builderShellRule(repository: string, command: string, tools: Too
       const paths = operands(key, words, !patternGiven);
       const recursive = key === 'rg' || hasShort(words, /[rR]/) || words.includes('--recursive');
       const searched = paths.length > 0 ? paths : recursive ? ['.'] : [];
-      if (searched.some((p) => readable(resolveIn(cwd, p)))) return searchReason(name);
+      if (searched.some((p) => readable(resolveIn(cwd, p)))) {
+        read = searchReason(name);
+        continue;
+      }
     }
     if (name === 'find') {
       const end = words.findIndex((w, j) => j > 0 && /^[-(!\\]/.test(w));
       const paths = words.slice(1, end === -1 ? undefined : end);
-      if ((paths.length > 0 ? paths : ['.']).some((p) => readable(resolveIn(cwd, p)))) return searchReason('find');
+      if ((paths.length > 0 ? paths : ['.']).some((p) => readable(resolveIn(cwd, p)))) read = searchReason('find');
     }
   }
-  return undefined;
+  return read === undefined ? {} : { read };
+}
+
+/** Output at or under both limits is returned whole (with the note); over either, its edges (#271). */
+export const STEER_MAX_LINES = 200;
+export const STEER_MAX_BYTES = 16 * 1024;
+/** Lines kept from each end of output over the limits: about 40 in all. */
+export const STEER_EDGE_LINES = 20;
+/** A single line is cut to this many characters in the truncated form, so a minified file cannot fill it. */
+const STEER_MAX_LINE = 400;
+
+export interface SteeredOutput {
+  text: string;
+  truncated: boolean;
+  lines: number;
+  bytes: number;
+}
+
+/** A repository read's output as the model gets it: whole with `note` appended, or its first and last lines with the counts and how to read the rest. */
+export function steerShellOutput(output: string, note: string, tools: ToolNames): SteeredOutput {
+  const bytes = Buffer.byteLength(output);
+  const body = output.endsWith('\n') ? output.slice(0, -1) : output;
+  const all = body === '' ? [] : body.split('\n');
+  const lines = all.length;
+  if (lines <= STEER_MAX_LINES && bytes <= STEER_MAX_BYTES) return { text: `${output}${output === '' || output.endsWith('\n') ? '' : '\n'}Note: ${note}`, truncated: false, lines, bytes };
+
+  const cut = (line: string) => (line.length > STEER_MAX_LINE ? `${line.slice(0, STEER_MAX_LINE)}... [line cut at ${STEER_MAX_LINE} characters]` : line);
+  const edge = Math.min(STEER_EDGE_LINES, Math.floor(lines / 2));
+  // Few but very long lines: all of them, each cut.
+  const shown = lines <= 2 * STEER_EDGE_LINES ? all.map(cut) : [...all.slice(0, edge).map(cut), `[... ${lines - 2 * edge} lines omitted ...]`, ...all.slice(lines - edge).map(cut)];
+  const which = lines <= 2 * STEER_EDGE_LINES ? `its lines, each cut to ${STEER_MAX_LINE} characters, are shown` : `only its first and last ${edge} lines are shown`;
+  const text = [
+    ...shown,
+    '',
+    `The output was ${lines} lines and ${bytes} bytes, over the ${STEER_MAX_LINES} lines and ${STEER_MAX_BYTES} bytes ${tools.shell} returns whole; ${which}. Read the rest with the ${tools.read} tool, using \`offset\` and \`limit\`, or find it with the ${tools.grep} tool. ${note}`,
+  ].join('\n');
+  return { text, truncated: true, lines, bytes };
 }

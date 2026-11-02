@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { builderShellRule } from './builder-shell.ts';
+import { builderShellRule, repositoryRead, steerShellOutput, STEER_EDGE_LINES, STEER_MAX_BYTES, STEER_MAX_LINES } from './builder-shell.ts';
 import { PI_TOOLS } from './pi/tools.ts';
 import { HOST_ROLES } from './roles.ts';
 
 const REPO = '/workspace/repo';
 const rule = (command: string) => builderShellRule(REPO, command, PI_TOOLS);
+const read = (command: string) => repositoryRead(REPO, command, PI_TOOLS);
 const refused = (command: string) => rule(command) !== undefined;
 
 describe('builderShellRule (#250)', () => {
@@ -91,7 +92,7 @@ describe('builderShellRule (#250)', () => {
     }
   });
 
-  it("refuses printing the repository's files", () => {
+  it("does not refuse printing the repository's files, and notes it as a read", () => {
     for (const command of [
       'cd /workspace/repo; cat CLAUDE.md | head -40',
       'cat src/components/Table.tsx src/components/run/RunsTable.tsx',
@@ -101,15 +102,18 @@ describe('builderShellRule (#250)', () => {
       'tail -20 /workspace/repo/docs/dashboard.md',
       'nl -ba src/a.ts',
       'x=$(cat package.json)',
+      'head -c 600 cfn-lint-requirements.txt',
     ]) {
-      assert.ok(rule(command)?.includes(`Read the repository's files with the ${PI_TOOLS.read} tool`), command);
+      assert.equal(rule(command), undefined, command);
+      assert.ok(read(command)?.includes(`Read the repository's files with the ${PI_TOOLS.read} tool`), command);
     }
   });
 
-  it("refuses searching the repository's files", () => {
+  it("does not refuse searching the repository's files, and notes it as a search", () => {
     for (const command of [
       'grep -n "compareItems\\|newestFirst" -r src | head -20',
       'grep -n "matchesFilter" -A12 src/lib/work-items.ts | head -90',
+      'grep -n "lint:cfn" package.json',
       'grep -rn x',
       "rg -n 'Table' packages",
       'rg Table',
@@ -117,17 +121,101 @@ describe('builderShellRule (#250)', () => {
       'find packages/dashboard/src -type f',
       'grep -e x -e y src/a.ts',
     ]) {
-      const reason = rule(command);
-      assert.ok(reason?.includes(`Search the repository with the ${PI_TOOLS.grep} tool`), command);
-      assert.ok(reason?.includes(PI_TOOLS.agent), command);
+      assert.equal(rule(command), undefined, command);
+      const note = read(command);
+      assert.ok(note?.includes(`Search the repository with the ${PI_TOOLS.grep} tool`), command);
+      assert.ok(note?.includes(PI_TOOLS.agent), command);
+    }
+  });
+
+  it('notes no read for a pipe, a path outside the repository or a generated directory', () => {
+    for (const command of [
+      'git log --oneline | head -5',
+      "git ls-files | grep -n 'Table'",
+      'git show HEAD:package.json | jq .scripts',
+      'cat /workspace/notes.md | head -50; ls /workspace',
+      'tail -5 /workspace/logs/003-npm-test.log',
+      'grep -rn "export" node_modules/@aws-sdk/client-s3/dist-types | head',
+      'find dist -name "*.js"',
+      'cat .git/HEAD',
+      'cd /tmp && cat a.txt',
+      'ls; jq .name package.json',
+    ]) {
+      assert.equal(read(command), undefined, command);
     }
   });
 
   it('judges each command in a chain, with the directory cd sets', () => {
+    assert.equal(read('cd /tmp && cat a.txt && echo x > b.txt'), undefined);
     assert.equal(refused('cd /tmp && cat a.txt && echo x > b.txt'), false);
-    assert.equal(refused('cd /tmp && cat a.txt; cd /workspace/repo && cat a.txt'), true);
-    assert.equal(refused('cd "$DIR" && cat a.txt'), false);
-    assert.equal(refused('git status && sed -n 1,8p packages/dashboard/src/app/globals.css'), true);
+    assert.equal(refused('cd /tmp && cat a.txt; cd /workspace/repo && cat a.txt'), false);
+    assert.ok(read('cd /tmp && cat a.txt; cd /workspace/repo && cat a.txt'));
+    assert.equal(read('cd "$DIR" && cat a.txt'), undefined);
+    assert.ok(read('git status && sed -n 1,8p packages/dashboard/src/app/globals.css'));
+  });
+
+  it('still refuses an edit or write in a command that also reads', () => {
+    assert.ok(rule("cat src/a.ts && sed -i 's/a/b/' src/a.ts")?.includes(`Change files with the ${PI_TOOLS.edit} tool`));
+    assert.ok(rule('cat src/a.ts > src/b.ts')?.includes(`create a file with ${PI_TOOLS.write}`));
+    assert.ok(rule('grep -rn x src; python3 /tmp/fix.py')?.startsWith("Run only the repository's own scripts"));
+  });
+
+  describe('steerShellOutput (#271)', () => {
+    const NOTE = 'Use the read tool next time.';
+    const steer = (output: string) => steerShellOutput(output, NOTE, PI_TOOLS);
+    const lines = (count: number) => Array.from({ length: count }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
+
+    it('returns output at the limits whole, with the note on a line of its own', () => {
+      const output = lines(STEER_MAX_LINES);
+      const steered = steer(output);
+      assert.equal(steered.truncated, false);
+      assert.equal(steered.lines, STEER_MAX_LINES);
+      assert.equal(steered.text, `${output}Note: ${NOTE}`);
+      assert.equal(steer('no newline').text, `no newline\nNote: ${NOTE}`);
+      assert.equal(steer('').text, `Note: ${NOTE}`);
+    });
+
+    it('cuts output over the line limit to its first and last lines, with the counts and the instruction', () => {
+      const steered = steer(lines(STEER_MAX_LINES + 1));
+      assert.equal(steered.truncated, true);
+      assert.equal(steered.lines, STEER_MAX_LINES + 1);
+      const text = steered.text.split('\n');
+      assert.equal(text[0], 'line 1');
+      assert.ok(text.includes(`line ${STEER_EDGE_LINES}`));
+      assert.ok(!text.includes(`line ${STEER_EDGE_LINES + 1}`));
+      assert.ok(text.includes(`line ${STEER_MAX_LINES + 1}`));
+      assert.ok(!text.includes('line 100'));
+      assert.ok(steered.text.includes(`${STEER_MAX_LINES + 1} lines and ${steered.bytes} bytes`));
+      assert.ok(steered.text.includes(`${PI_TOOLS.read} tool, using \`offset\` and \`limit\``));
+      assert.ok(steered.text.includes(PI_TOOLS.grep));
+      assert.ok(steered.text.includes(NOTE));
+    });
+
+    it('cuts output over the byte limit, and a very long line', () => {
+      const wide = `${'x'.repeat(STEER_MAX_BYTES)}\n`;
+      const steered = steer(wide);
+      assert.equal(steered.truncated, true);
+      assert.equal(steered.bytes, STEER_MAX_BYTES + 1);
+      assert.ok(steered.text.length < 2000);
+      assert.ok(steered.text.includes('[line cut at'));
+    });
+  });
+
+  it('steers a repository read through the builder policy and logs it', () => {
+    const notes: Array<[string, Record<string, unknown>]> = [];
+    const policy = HOST_ROLES.builder.session({ workspace: '/workspace', repository: REPO }, (message, fields) => notes.push([message, fields]), PI_TOOLS);
+    assert.equal(policy.decide({ kind: 'shell', command: 'sed -n 1,60p src/now.tsx' }).allow, true);
+    const small = policy.afterShellResult?.('sed -n 1,60p src/now.tsx', 'a\nb\n');
+    assert.ok(small?.startsWith('a\nb\nNote: Read the repository'));
+    const large = policy.afterShellResult?.('cat package-lock.json', 'x\n'.repeat(500));
+    assert.ok(large?.includes('500 lines'));
+    assert.deepEqual(notes, [
+      ['shell read steered', { truncated: false, lines: 2, bytes: 4 }],
+      ['shell read steered', { truncated: true, lines: 500, bytes: 1000 }],
+    ]);
+    assert.equal(policy.afterShellResult?.('git log | head -5', 'abc'), undefined);
+    assert.equal(policy.afterShellResult?.('cat /workspace/notes.md', 'abc'), undefined);
+    assert.equal(notes.length, 2);
   });
 
   it('reaches the builder through its policy, after the shared rules', () => {

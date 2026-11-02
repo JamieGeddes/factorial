@@ -14,7 +14,9 @@
  *   and a root-owned agent directory. Only the host's own inline extension
  *   loads.
  * - That extension applies the role's policy (roles.ts): tool_call asks it
- *   before each call, tool_result after each write or edit, and
+ *   before each call, tool_result after each write or edit and each shell
+ *   command (a repository read's output is returned with a note or cut to its
+ *   edges, #271), and
  *   agent_before_settle before the run may end. It also enforces the turn
  *   limit; the budget is checked after each model call.
  * - Subagents are a `task` tool that runs a child session with the subagent's
@@ -240,7 +242,12 @@ async function* runPi(
     });
     pi.on('tool_result', async (event) => {
       const call = toolCallOf(event.toolName, event.input);
-      if ((call.kind !== 'write' && call.kind !== 'edit') || !call.path || !policy.afterFileChange) return undefined;
+      if (call.kind === 'shell' && policy.afterShellResult) {
+        const output = event.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+        const steered = policy.afterShellResult(call.command, output);
+        // The command ran, so `isError` stays as the tool set it.
+        return steered === undefined ? undefined : { content: [{ type: 'text' as const, text: steered }] };
+      }      if ((call.kind !== 'write' && call.kind !== 'edit') || !call.path || !policy.afterFileChange) return undefined;
       const message = policy.afterFileChange(call.path);
       return message === undefined ? undefined : { content: [...event.content, { type: 'text' as const, text: message }], isError: true };
     });
