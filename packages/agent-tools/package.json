@@ -4,6 +4,9 @@
   "private": true,
   "description": "Command-line tools baked into the agent runtime image",
   "type": "module",
+  "exports": {
+    "./digest": "./src/digest.ts"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"

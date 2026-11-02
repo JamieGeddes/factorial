@@ -17,6 +17,7 @@ import type { Attempt } from './resume.ts';
 import { MAX_SENSITIVE_JSON_CHARS, sensitivePathsJson } from './review-files.ts';
 import { inlineCommentIdFromUrl, reviewIdFromUrl, reworkPoints } from './rework-points.ts';
 import type { SeedPart, SeedProvider } from './seed.ts';
+import { logExcerpt } from './log-excerpt.ts';
 import type { SessionRole } from './session.ts';
 import { assertGitBranch, shellQuote } from './shell.ts';
 import { reworkDetails } from './turn.ts';
@@ -26,8 +27,13 @@ const KIB = 1024;
 export const MAX_REQUEST_BYTES = 256 * KIB;
 /** The notes: the request, the agent's own notes (the previous round's are read back at 64 KiB) and what the orchestrator adds. */
 export const MAX_NOTES_BYTES = 256 * KIB;
-/** The points and the failing jobs' log tails. */
+/** The points and, for each failing job, its failure lines and log tail. */
 export const MAX_REWORK_BYTES = 256 * KIB;
+/** Most one failing job's excerpt takes, and least it is given however many jobs fail. */
+const MAX_JOB_LOG_BYTES = 64 * KIB;
+const MIN_JOB_LOG_BYTES = 4 * KIB;
+/** Room for a job's heading and fence. */
+const JOB_SECTION_OVERHEAD = 1 * KIB;
 /** The plan files are read back from the artefact store at most this large. */
 export const MAX_PLAN_BYTES = 64 * KIB;
 /** The builder's summary, which Collect reads at most 60000 bytes of. */
@@ -77,16 +83,15 @@ function previousAttemptSection(attempt: Attempt): string[] {
   ];
 }
 
-/** The last lines of a failing job's log, secrets stripped, as a Markdown section. */
-export function logSection(job: CheckJob, log: string, tailLines = 200): string {
-  const tail = log.split('\n').slice(-tailLines).join('\n');
-  return [
-    `### Failing job: ${job.name} (${job.htmlUrl})`,
-    '',
-    '```text',
-    redactSecrets(tail.trimEnd()),
-    '```',
-  ].join('\n');
+/**
+ * The failing job's log as a Markdown section: the failure lines from before
+ * the tail, then the tail, within `maxBytes`, secrets stripped. The whole log
+ * is redacted first, so a secret that spans lines is caught before the lines
+ * are picked.
+ */
+export function logSection(job: CheckJob, log: string, options: { maxBytes?: number; tailLines?: number } = {}): string {
+  const excerpt = logExcerpt(redactSecrets(log), { maxBytes: options.maxBytes ?? MAX_JOB_LOG_BYTES, ...(options.tailLines === undefined ? {} : { tailLines: options.tailLines }) });
+  return [`### Failing job: ${job.name} (${job.htmlUrl})`, '', '```text', excerpt, '```'].join('\n');
 }
 
 const REWORK_CAUSES: Record<WorkItemReworkCause, string> = {
@@ -132,12 +137,21 @@ export async function buildReworkFile(
   if (rework.cause === 'checks-failed') {
     const jobs = await client.listJobsForHeadSha(repo, headSha);
     const failing = jobs.filter((job) => job.conclusion === 'failure');
+    const logs: { job: CheckJob; log: string }[] = [];
     lines.push('', '## Failing checks', '');
     if (failing.length === 0) {
       lines.push('_The checks are no longer reported as failing on the branch head._');
     }
     for (const job of failing) {
-      lines.push('', logSection(job, await client.getJobLog(repo, job.id)));
+      logs.push({ job, log: await client.getJobLog(repo, job.id) });
+    }
+    // Each job gets an equal share of what the points leave, so the file stays within
+    // MAX_REWORK_BYTES and the seed's cut never takes a later job's section.
+    const used = Buffer.byteLength(lines.join('\n'));
+    const share = Math.floor((MAX_REWORK_BYTES - used) / Math.max(1, logs.length)) - JOB_SECTION_OVERHEAD;
+    const maxBytes = Math.max(MIN_JOB_LOG_BYTES, Math.min(MAX_JOB_LOG_BYTES, share));
+    for (const { job, log } of logs) {
+      lines.push('', logSection(job, log, { maxBytes }));
     }
   }
   return { text: `${lines.join('\n')}\n`, points };

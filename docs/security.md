@@ -115,7 +115,7 @@ This is the layer that makes the hostile-session rule real.
 ### 3.8 Untrusted input
 
 - Issue text, repository contents, search results and CI logs are data. The prompts say so, but the layers above are what enforce it: an injected instruction can make the model try something, and the sandbox, the token scoping and the clean room are what make the attempt fail.
-- Logs from failed checks are fetched outside the sandbox with a short-lived `actions: read` token, truncated to the last 200 lines and redacted before they are written into the rework session.
+- Logs from failed checks are fetched outside the sandbox with a short-lived `actions: read` token, truncated to the failure lines from before the tail and the last 200 lines, and redacted before they are written into the rework session.
 - Model output is never executed by the orchestrator. The orchestrator reads files with fixed names and size caps, validates structured output against a schema, and acts only on fields the schema defines.
 
 ### 3.9 Self-building and releases
