@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 import { type CheckJob, GitHubClient } from '@factorial/github-app';
 
-import { buildReworkFile, detailsFor, initialNotes, logSection } from '../lib/seed-providers.ts';
+import { MAX_REWORK_BYTES, buildReworkFile, detailsFor, initialNotes, logSection } from '../lib/seed-providers.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
@@ -88,6 +88,26 @@ describe('logSection', () => {
     assert.match(section, /line 299/);
     assert.doesNotMatch(section, /ghs_abcdefghij/);
     assert.match(section, /ghs_\*\*\*/);
+  });
+
+  it('carries a failure from before the tail, with its expected and actual, and redacts a secret inside it', () => {
+    const stamp = (line: string): string => `2026-11-02T10:15:30.1234567Z ${line}`;
+    const failure = [
+      '    not ok 1 - clean-room rejects a path outside the workspace',
+      '      ---',
+      "      error: 'token ghs_abcdefghijklmnopqrstuvwx'",
+      "      expected: 'a'",
+      "      actual: 'b'",
+      '      ...',
+    ];
+    const passing = Array.from({ length: 400 }, (_, i) => `ok ${i + 1} - passes ${i + 1}`);
+    const section = logSection(job, [...failure, ...passing].map(stamp).join('\n'));
+    assert.match(section, /not ok 1 - clean-room rejects a path outside the workspace/);
+    assert.match(section, /expected: 'a'/);
+    assert.match(section, /actual: 'b'/);
+    assert.match(section, /passes 400/);
+    assert.doesNotMatch(section, /ghs_abcdefghij/);
+    assert.doesNotMatch(section, /2026-11-02T/);
   });
 });
 
@@ -196,6 +216,20 @@ describe('buildReworkFile', () => {
     assert.match(file, /l299/);
     assert.doesNotMatch(file, /ghs_abcdefghij/);
     assert.match(file, /_No specific points were recorded/);
+  });
+
+  it('keeps several failing jobs within the size limit and names each', async () => {
+    const jobs: CheckJob[] = [1, 2, 3, 4].map((id) => ({ id, name: `job ${id}`, htmlUrl: `https://example.test/${id}`, conclusion: 'failure' }));
+    const log = [
+      ...Array.from({ length: 400 }, (_, i) => `    not ok ${i} - failing test number ${i}\n      ---\n      expected: ${'x'.repeat(200)}\n      actual: ${'y'.repeat(200)}\n      ...`),
+      ...Array.from({ length: 300 }, (_, i) => `ok ${i} - passes`),
+    ].join('\n');
+    const logs = new Map(jobs.map((job) => [job.id, log]));
+    const { text } = await buildReworkFile(clientWith(jobs, logs), repo, HEAD_SHA, { ...rework, cause: 'checks-failed' }, []);
+    assert.ok(Buffer.byteLength(text) <= MAX_REWORK_BYTES, `${Buffer.byteLength(text)} bytes`);
+    for (const job of jobs) assert.match(text, new RegExp(`### Failing job: ${job.name} `));
+    assert.match(text, /failures before the tail were dropped to fit the size limit/);
+    assert.match(text, /not ok 0 - failing test number 0/);
   });
 
   it('says so when no job is failing on the branch head any more', async () => {

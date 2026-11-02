@@ -221,7 +221,7 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.orchestration_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:orchestration HEAD:packages/orchestration HEAD:packages/artefacts HEAD:packages/github-app HEAD:packages/live HEAD:packages/log HEAD:packages/outcome HEAD:packages/plan HEAD:packages/progress HEAD:packages/pull-request-closed HEAD:packages/review HEAD:packages/roles HEAD:packages/workitem HEAD:contracts HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:orchestration HEAD:packages/orchestration HEAD:packages/agent-tools HEAD:packages/artefacts HEAD:packages/github-app HEAD:packages/live HEAD:packages/log HEAD:packages/outcome HEAD:packages/plan HEAD:packages/progress HEAD:packages/pull-request-closed HEAD:packages/review HEAD:packages/roles HEAD:packages/workitem HEAD:contracts HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/orchestration --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Orchestration image $tag already exists; skipping the build."
