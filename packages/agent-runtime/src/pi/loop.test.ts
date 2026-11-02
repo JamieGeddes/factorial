@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessageEventStream, type Message, type Provider } from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessageEventStream, type Message, type Provider, type ToolResultMessage } from '@earendil-works/pi-ai';
 import type { RunEnded, RunEvent, SubagentStarted } from '@factorial/run';
 
 import { MAX_CONCURRENT_SUBAGENTS, type SubagentSpec } from '../agents.ts';
@@ -14,6 +14,7 @@ import { SECOND_PASS } from '../review.ts';
 import { HOST_ROLES, type HostRole } from '../roles.ts';
 import type { AgentRunner } from './as-agent.ts';
 import { piHarness, type PiParts } from './harness.ts';
+import { PI_TOOLS } from './tools.ts';
 
 const MODEL = 'global.anthropic.claude-sonnet-5-5';
 const SMALL_MODEL = 'global.anthropic.claude-haiku-5-5';
@@ -179,6 +180,50 @@ describe("the reviewer's role on pi", () => {
     assert.equal(sentBack[1], SECOND_PASS);
     assert.equal(readFileSync(path.join(workspace, 'review.json'), 'utf8'), review);
     assert.equal(faux.state.callCount, 5);
+  });
+});
+
+describe("the builder's steered shell reads on pi (#271)", () => {
+  it('returns what the policy made of a repository read to the model, keeping isError as the shell set it', async () => {
+    const repository = mkdtempSync(path.join(root, 'steer-'));
+    writeFileSync(path.join(repository, 'big.txt'), Array.from({ length: 300 }, (_, i) => `line ${i + 1}`).join('\n') + '\n');
+    const { afterShellResult } = HOST_ROLES.builder.session({ workspace: root, repository }, () => undefined, PI_TOOLS);
+    assert.ok(afterShellResult, 'the builder steers shell output');
+    // The shell only, every call allowed, and the builder's own steering.
+    const steering: HostRole = { ...role, session: () => ({ ...role.session({ workspace: root, repository }, () => undefined, PI_TOOLS), afterShellResult }) };
+
+    let results: ToolResultMessage[] = [];
+    const faux = fauxProvider({ provider: 'amazon-bedrock', models: [{ id: MODEL }, { id: SMALL_MODEL }] });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('bash', { command: 'cat big.txt' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('bash', { command: 'cat big.txt && false' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('bash', { command: 'git --version' }), { stopReason: 'toolUse' }),
+      (context: { messages: Message[] }) => {
+        results = context.messages.filter((m): m is ToolResultMessage => m.role === 'toolResult');
+        return fauxAssistantMessage('Done.', { stopReason: 'stop' });
+      },
+    ]);
+    const config = { ...configWith({}), repository };
+    const parts: PiParts = { runner, helper: { runner, command: ['false'], cwd: root }, agentDir: mkdtempSync(path.join(root, 'agent-')), webSearch: undefined, awsDocs: undefined, provider: faux.provider };
+    for await (const _event of piHarness(config, steering, new AbortController(), parts).start({ prompt: 'Work.', round: 1 }, () => undefined)) void _event;
+
+    const text = (result: ToolResultMessage | undefined) => (result?.content ?? []).map((part) => (part.type === 'text' ? part.text : '')).join('');
+    const [alone, chained, other] = results;
+    assert.equal(results.length, 3);
+    // A read alone, over the limit: its edges, the counts and the note.
+    assert.match(text(alone), /^line 1\n/);
+    assert.match(text(alone), /line 300\n/);
+    assert.doesNotMatch(text(alone), /\nline 150\n/);
+    assert.match(text(alone), /300 lines/);
+    assert.match(text(alone), /Read the repository's files with the read tool/);
+    assert.equal(alone?.isError, false);
+    // Chained with another command: nothing cut, the note added, and the failure kept.
+    assert.match(text(chained), /\nline 150\n/);
+    assert.match(text(chained), /Read the repository's files with the read tool/);
+    assert.equal(chained?.isError, true);
+    // Not a repository read: as the shell returned it.
+    assert.doesNotMatch(text(other), /Note:|read tool/);
+    assert.match(text(other), /git version/);
   });
 });
 

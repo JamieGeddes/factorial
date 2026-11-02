@@ -81,10 +81,10 @@ const builder: HostRole = {
       afterFileChange: planCheck(workspace, planGate, (errors, closed) => note(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
       // A read or search of a repository file is steered by its output's size, not refused (#271).
       afterShellResult(command, output) {
-        const readNote = repositoryRead(repository, command, tools);
-        if (readNote === undefined) return undefined;
-        const steered = steerShellOutput(output, readNote, tools);
-        note('shell read steered', { truncated: steered.truncated, lines: steered.lines, bytes: steered.bytes });
+        const read = repositoryRead(repository, command, tools);
+        if (read === undefined) return undefined;
+        const steered = steerShellOutput(output, read, tools);
+        note('shell read steered', { truncated: steered.truncated, alone: read.alone, lines: steered.lines, bytes: steered.bytes });
         return steered.text;
       },
       beforeStop: reportStopCheck(workspace, planGate, (reason) => note('report incomplete; builder sent back', { reason })),

@@ -247,7 +247,8 @@ async function* runPi(
         const steered = policy.afterShellResult(call.command, output);
         // The command ran, so `isError` stays as the tool set it.
         return steered === undefined ? undefined : { content: [{ type: 'text' as const, text: steered }] };
-      }      if ((call.kind !== 'write' && call.kind !== 'edit') || !call.path || !policy.afterFileChange) return undefined;
+      }
+      if ((call.kind !== 'write' && call.kind !== 'edit') || !call.path || !policy.afterFileChange) return undefined;
       const message = policy.afterFileChange(call.path);
       return message === undefined ? undefined : { content: [...event.content, { type: 'text' as const, text: message }], isError: true };
     });

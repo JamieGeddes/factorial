@@ -7,7 +7,8 @@ import { HOST_ROLES } from './roles.ts';
 
 const REPO = '/workspace/repo';
 const rule = (command: string) => builderShellRule(REPO, command, PI_TOOLS);
-const read = (command: string) => repositoryRead(REPO, command, PI_TOOLS);
+const read = (command: string) => repositoryRead(REPO, command, PI_TOOLS)?.note;
+const alone = (command: string) => repositoryRead(REPO, command, PI_TOOLS)?.alone;
 const refused = (command: string) => rule(command) !== undefined;
 
 describe('builderShellRule (#250)', () => {
@@ -154,6 +155,27 @@ describe('builderShellRule (#250)', () => {
     assert.ok(read('git status && sed -n 1,8p packages/dashboard/src/app/globals.css'));
   });
 
+  it('says whether reading is all a command does, so only then may its output be cut', () => {
+    for (const command of [
+      'cat src/a.ts',
+      'cd /workspace/repo; cat CLAUDE.md | head -40',
+      'cat src/a.ts; echo ---; cat src/b.ts',
+      'grep -rn x src | head -20; find . -name "*.test.ts"',
+      'x=$(cat package.json)',
+    ]) {
+      assert.equal(alone(command), true, command);
+    }
+    for (const command of [
+      "cat src/a.ts && quiet 'npm test'",
+      'grep -n x src/a.ts; git diff',
+      'git status && sed -n 1,8p src/a.ts',
+      'cat /workspace/notes.md; cat src/a.ts',
+      'cat src/a.ts && false',
+    ]) {
+      assert.equal(alone(command), false, command);
+    }
+  });
+
   it('still refuses an edit or write in a command that also reads', () => {
     assert.ok(rule("cat src/a.ts && sed -i 's/a/b/' src/a.ts")?.includes(`Change files with the ${PI_TOOLS.edit} tool`));
     assert.ok(rule('cat src/a.ts > src/b.ts')?.includes(`create a file with ${PI_TOOLS.write}`));
@@ -162,7 +184,7 @@ describe('builderShellRule (#250)', () => {
 
   describe('steerShellOutput (#271)', () => {
     const NOTE = 'Use the read tool next time.';
-    const steer = (output: string) => steerShellOutput(output, NOTE, PI_TOOLS);
+    const steer = (output: string, readAlone = true) => steerShellOutput(output, { note: NOTE, alone: readAlone }, PI_TOOLS);
     const lines = (count: number) => Array.from({ length: count }, (_, i) => `line ${i + 1}`).join('\n') + '\n';
 
     it('returns output at the limits whole, with the note on a line of its own', () => {
@@ -199,6 +221,13 @@ describe('builderShellRule (#250)', () => {
       assert.ok(steered.text.length < 2000);
       assert.ok(steered.text.includes('[line cut at'));
     });
+
+    it('never cuts the output of a read chained with another command, only adds the note', () => {
+      const output = lines(STEER_MAX_LINES * 2);
+      const steered = steer(output, false);
+      assert.equal(steered.truncated, false);
+      assert.equal(steered.text, `${output}Note: ${NOTE}`);
+    });
   });
 
   it('steers a repository read through the builder policy and logs it', () => {
@@ -210,8 +239,8 @@ describe('builderShellRule (#250)', () => {
     const large = policy.afterShellResult?.('cat package-lock.json', 'x\n'.repeat(500));
     assert.ok(large?.includes('500 lines'));
     assert.deepEqual(notes, [
-      ['shell read steered', { truncated: false, lines: 2, bytes: 4 }],
-      ['shell read steered', { truncated: true, lines: 500, bytes: 1000 }],
+      ['shell read steered', { truncated: false, alone: true, lines: 2, bytes: 4 }],
+      ['shell read steered', { truncated: true, alone: true, lines: 500, bytes: 1000 }],
     ]);
     assert.equal(policy.afterShellResult?.('git log | head -5', 'abc'), undefined);
     assert.equal(policy.afterShellResult?.('cat /workspace/notes.md', 'abc'), undefined);

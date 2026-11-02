@@ -14,8 +14,12 @@
  *   `offset` and `limit` and grep and find cap their results. This one is not
  *   refused (#271: 14 refusals in three builds cost a turn each, and most of
  *   the commands were small): `repositoryRead` says whether a command is one,
- *   and `steerShellOutput` judges its output, returning a small one with a
- *   note naming the tool, and a large one as its first and last lines. *
+ *   and the host appends a note naming the tool to its output. When the
+ *   command is only reads (with cd and echo), `steerShellOutput` also cuts
+ *   output over its limits to the first and last lines; when it also runs
+ *   something else, such as a test, nothing is cut, so a failure in the other
+ *   output cannot be lost.
+ *
  * A command reading its input from a pipe is not reading files, so
  * `git log | head` and `git ls-files | grep x` stay allowed, as do files
  * outside the repository (/workspace/notes.md, /workspace/logs, /tmp) and
@@ -44,6 +48,8 @@ const WRITES_FILE =
 
 const READERS = new Set(['cat', 'head', 'tail', 'nl', 'less', 'more', 'bat']);
 const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
+/** Commands that print nothing of their own worth keeping whole, so a read chained with them is still a read alone. */
+const NEUTRAL = new Set(['cd', 'pushd', 'popd', 'echo', 'printf', 'true', ':']);
 
 /** Options that take the next word as their value, per command. */
 const VALUE_OPTIONS: Record<string, Set<string>> = {
@@ -111,17 +117,23 @@ export function builderShellRule(repository: string, command: string, tools: Too
   return scan(repository, command, tools).refusal;
 }
 
+/** A command that reads or searches a repository file: the note naming the tool to use next time, and whether reading is all it does. */
+export interface RepositoryRead {
+  note: string;
+  /** No part prints anything but repository reads (`cd`, `echo` and pipes aside), so its output is safe to cut. */
+  alone: boolean;
+}
+
 /**
  * Whether the command reads or searches a repository file (not a pipe, not outside the repository or in its
- * generated directories), judged with the same parsing as `builderShellRule`: the note to append to its
- * output, naming the tool to use next time, or undefined. The host no longer refuses these (#271); it
- * steers them by output size, with `steerShellOutput`.
+ * generated directories), judged with the same parsing as `builderShellRule`. The host no longer refuses
+ * these (#271); it steers them by output size, with `steerShellOutput`.
  */
-export function repositoryRead(repository: string, command: string, tools: ToolNames): string | undefined {
+export function repositoryRead(repository: string, command: string, tools: ToolNames): RepositoryRead | undefined {
   return scan(repository, command, tools).read;
 }
 
-function scan(repository: string, command: string, tools: ToolNames): { refusal?: string; read?: string } {
+function scan(repository: string, command: string, tools: ToolNames): { refusal?: string; read?: RepositoryRead } {
   const editReason = (what: string) =>
     `Change files with the ${tools.edit} tool and create them with ${tools.write}, not by running ${what} in ${tools.shell}: ${tools.edit} fails when its text does not match and returns the diff, where a shell edit misses silently.`;
   const writeReason = (target: string) =>
@@ -135,6 +147,8 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
 
   const readable = (target: string | undefined) => target !== undefined && isInside(repository, target) && !GENERATED.test(path.relative(repository, target));
   let read: string | undefined;
+  // Whether any part prints something other than a repository read: a test run, a build, git, a read elsewhere.
+  let other = false;
 
   // Quoted literal redirection targets are unquoted, so `> "src/a.ts"` is judged too.
   const { shell } = splitHeredocs(command);
@@ -176,14 +190,19 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
     }
 
     // Reading or searching files, not a pipe: noted, and the scan goes on, since a later part may still be refused.
-    if (piped || read !== undefined) continue;
+    if (piped) continue;
+    const found = readOrSearch(name, words);
+    if (found !== undefined) read ??= found;
+    else if (!NEUTRAL.has(name)) other = true;
+  }
+  return read === undefined ? {} : { read: { note: read, alone: !other } };
+
+  /** The note for a command that prints or searches a repository file, or undefined. */
+  function readOrSearch(name: string, words: string[]): string | undefined {
     const quietSed = name === 'sed' && (hasShort(words, /n/) || words.includes('--quiet') || words.includes('--silent'));
     if (READERS.has(name) || quietSed) {
       const files = operands(name, words, quietSed && !words.some((w) => w === '-e' || w === '-f' || w.startsWith('--expression')));
-      if (files.some((f) => readable(resolveIn(cwd, f)))) {
-        read = readReason(quietSed ? 'sed -n' : name);
-        continue;
-      }
+      if (files.some((f) => readable(resolveIn(cwd, f)))) return readReason(quietSed ? 'sed -n' : name);
     }
     if (SEARCHERS.has(name)) {
       const key = name === 'rg' || name === 'ag' || name === 'ack' ? 'rg' : 'grep';
@@ -191,18 +210,15 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
       const paths = operands(key, words, !patternGiven);
       const recursive = key === 'rg' || hasShort(words, /[rR]/) || words.includes('--recursive');
       const searched = paths.length > 0 ? paths : recursive ? ['.'] : [];
-      if (searched.some((p) => readable(resolveIn(cwd, p)))) {
-        read = searchReason(name);
-        continue;
-      }
+      if (searched.some((p) => readable(resolveIn(cwd, p)))) return searchReason(name);
     }
     if (name === 'find') {
       const end = words.findIndex((w, j) => j > 0 && /^[-(!\\]/.test(w));
       const paths = words.slice(1, end === -1 ? undefined : end);
-      if ((paths.length > 0 ? paths : ['.']).some((p) => readable(resolveIn(cwd, p)))) read = searchReason('find');
+      if ((paths.length > 0 ? paths : ['.']).some((p) => readable(resolveIn(cwd, p)))) return searchReason('find');
     }
+    return undefined;
   }
-  return read === undefined ? {} : { read };
 }
 
 /** Output at or under both limits is returned whole (with the note); over either, its edges (#271). */
@@ -220,13 +236,16 @@ export interface SteeredOutput {
   bytes: number;
 }
 
-/** A repository read's output as the model gets it: whole with `note` appended, or its first and last lines with the counts and how to read the rest. */
-export function steerShellOutput(output: string, note: string, tools: ToolNames): SteeredOutput {
+/**
+ * A repository read's output as the model gets it: whole with the note appended, or, over the limits and only
+ * when the command did nothing but read, its first and last lines with the counts and how to read the rest.
+ */
+export function steerShellOutput(output: string, { note, alone }: RepositoryRead, tools: ToolNames): SteeredOutput {
   const bytes = Buffer.byteLength(output);
   const body = output.endsWith('\n') ? output.slice(0, -1) : output;
   const all = body === '' ? [] : body.split('\n');
   const lines = all.length;
-  if (lines <= STEER_MAX_LINES && bytes <= STEER_MAX_BYTES) return { text: `${output}${output === '' || output.endsWith('\n') ? '' : '\n'}Note: ${note}`, truncated: false, lines, bytes };
+  if (!alone || (lines <= STEER_MAX_LINES && bytes <= STEER_MAX_BYTES)) return { text: `${output}${output === '' || output.endsWith('\n') ? '' : '\n'}Note: ${note}`, truncated: false, lines, bytes };
 
   const cut = (line: string) => (line.length > STEER_MAX_LINE ? `${line.slice(0, STEER_MAX_LINE)}... [line cut at ${STEER_MAX_LINE} characters]` : line);
   const edge = Math.min(STEER_EDGE_LINES, Math.floor(lines / 2));
