@@ -13,37 +13,32 @@
  * The agent's session is treated as hostile once the agent has run: it may
  * have planted git hooks, configuration or background processes. So no
  * credential ever enters it. The new commits leave the session as a git
- * bundle (pure data), and the push happens in a separate clean-room session
- * from a pristine clone, with hooks disabled and the token sent as a header.
+ * bundle (pure data), and Collect itself is the clean room: it pushes from a
+ * pristine clone in its own temporary directory (lib/clean-room.ts), with
+ * hooks disabled and the token sent as a header. No model has ever run in
+ * the Lambda, so nothing the agent planted can reach the push.
  *
- * Once Collect has finished with a session it stops it, so it does not idle
- * until the Runtime's timeout: the clean room as soon as the push returns, the
- * agent's just before Collect returns. A stop is never in a `finally`: the
- * state's retry runs Collect again on the same session, so a failed attempt
- * leaves it running. A failed stop is logged and does not fail the stage.
+ * Once Collect has finished with the agent's session it stops it, just before
+ * returning, so it does not idle until the Runtime's timeout. The stop is
+ * never in a `finally`: the state's retry runs Collect again on the same
+ * session, so a failed attempt leaves it running. A failed stop is logged and
+ * does not fail the stage.
  */
 import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 
 import type { WorkContext } from '../lib/context.ts';
 import { LIMIT_COMMIT_MESSAGE } from '../lib/continue-files.ts';
 import { requireEnv } from '../lib/env.ts';
+import { cleanRoomPush, githubRemote } from '../lib/clean-room.ts';
 import { commitIdentity, repositoryClient, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
 import { runKey, type Logger } from '../lib/log.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { InvalidPlanError, checkPlanFiles, parsePlanRead, planDigest, readPlanScript, type CheckedPlan, type PlanDigest } from '../lib/plan-files.ts';
 import { planSize } from '../lib/plan-size.ts';
-import { asAgent, cleanRoomTarget, mustRun, runCommand, sessionTarget, stopSessionQuietly, type SessionTarget } from '../lib/session.ts';
+import { asAgent, mustRun, runCommand, sessionTarget, stopSessionQuietly, type SessionTarget } from '../lib/session.ts';
 import { exportSessionFiles } from '../lib/session-files.ts';
-import {
-  HARDENED_GIT_ENV,
-  assertCommitSha,
-  assertGitBranch,
-  assertGitHubName,
-  assertGitIdentity,
-  gitAuthHeader,
-  shellQuote,
-} from '../lib/shell.ts';
+import { HARDENED_GIT_ENV, assertCommitSha, shellQuote } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 
 export interface CollectResult {
@@ -143,76 +138,6 @@ export function bundleScript(baseCommit: string, headSha: string): string {
 }
 
 /**
- * Import the bundle into a pristine clone and push exactly the expected
- * commit to the work branch. Runs in the clean-room session.
- *
- * `baseCommit` is the commit the work branch must currently point at: the
- * tip of the base branch for a new item, the head the agent started from
- * for rework. The rewrite replays the bundle's commits on top of it, so the
- * push is always a fast-forward; the check refuses anything else, and no
- * force is ever passed.
- */
-export function cleanRoomPushScript(params: {
-  owner: string;
-  name: string;
-  branch: string;
-  baseBranch: string;
-  baseCommit: string;
-  headSha: string;
-  /** True for rework, which pushes onto an existing branch; false for a fresh branch, which must not exist yet. */
-  existingBranch: boolean;
-  token: string;
-  bundleBase64: string;
-  /** Author and committer for every pushed commit; the agent's own identity is discarded. */
-  identity: { name: string; email: string };
-}): string {
-  const owner = assertGitHubName(params.owner, 'repository owner');
-  const name = assertGitHubName(params.name, 'repository name');
-  const headSha = assertCommitSha(params.headSha, 'head sha');
-  const baseCommit = assertCommitSha(params.baseCommit, 'base commit');
-  const branch = assertGitBranch(params.branch, 'work branch');
-  const baseBranch = assertGitBranch(params.baseBranch, 'base branch');
-  const identity = assertGitIdentity(params.identity);
-  const url = `https://github.com/${owner}/${name}.git`;
-  const auth = shellQuote(gitAuthHeader(params.token));
-  const ident = [
-    `GIT_AUTHOR_NAME=${shellQuote(identity.name)}`,
-    `GIT_AUTHOR_EMAIL=${shellQuote(identity.email)}`,
-    `GIT_COMMITTER_NAME=${shellQuote(identity.name)}`,
-    `GIT_COMMITTER_EMAIL=${shellQuote(identity.email)}`,
-  ].join(' ');
-  return [
-    'set -euo pipefail',
-    HARDENED_GIT_ENV,
-    'rm -rf /workspace/push && mkdir -p /workspace/push && cd /workspace/push',
-    `printf '%s' ${shellQuote(params.bundleBase64)} | base64 -d > incoming.bundle`,
-    `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} clone --quiet --bare --filter=blob:none ${shellQuote(url)} repo.git`,
-    'cd repo.git',
-    // The clone is blob-less, so importing the bundle makes git fetch the
-    // unchanged files' blobs from origin on demand; that lazy fetch needs
-    // the same header or it fails asking for a username.
-    `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} fetch --quiet ../incoming.bundle HEAD`,
-    `test "$(git rev-parse FETCH_HEAD)" = ${shellQuote(headSha)}`,
-    // An existing branch must still be at the head the session started from,
-    // so the push is a fast-forward; refuse and fail loudly if it has moved.
-    // A fresh branch must not exist yet, so the push never overwrites one.
-    params.existingBranch
-      ? `test "$(git rev-parse --verify --quiet refs/heads/${branch})" = ${shellQuote(baseCommit)}`
-      : `test -z "$(git rev-parse --verify --quiet refs/heads/${branch})"`,
-    `git merge-base --is-ancestor ${shellQuote(baseCommit)} FETCH_HEAD`,
-    `base=${shellQuote(baseCommit)}`,
-    'test -z "$(git rev-list --merges "$base..FETCH_HEAD")"',
-    'new=$base',
-    'for c in $(git rev-list --reverse "$base..FETCH_HEAD"); do',
-    `  new=$(git log -1 --format=%B "$c" | ${ident} GIT_AUTHOR_DATE="$(git log -1 --format=%aI "$c")" git commit-tree "$c^{tree}" -p "$new")`,
-    'done',
-    `git -c core.hooksPath=/dev/null -c http.extraHeader=${auth} push --quiet origin "$new:${`refs/heads/${branch}`}"`,
-    'cd / && rm -rf /workspace/push',
-    'echo "$new"',
-  ].join('\n');
-}
-
-/**
  * Store the session's files. The record must not cost the work: a failure
  * here is logged, and the push goes ahead.
  */
@@ -248,9 +173,9 @@ async function collectPlan(target: SessionTarget, ctx: WorkContext, log: Logger)
   return checked;
 }
 
-async function storeBundle(ctx: WorkContext, bundleBase64: string, log: Logger): Promise<void> {
+async function storeBundle(ctx: WorkContext, bundle: Buffer, log: Logger): Promise<void> {
   try {
-    await putBinaryArtefact(ctx.artefactPrefix, 'build/bundle.git', Buffer.from(bundleBase64, 'base64'), 'application/octet-stream');
+    await putBinaryArtefact(ctx.artefactPrefix, 'build/bundle.git', bundle, 'application/octet-stream');
   } catch (error) {
     log.error('bundle not stored', { error });
   }
@@ -306,6 +231,8 @@ const collectStage: StagePolicy<CollectInput, CollectResult> = {
 export interface CollectDeps {
   commitIdentity: typeof commitIdentity;
   repositoryToken: typeof repositoryToken;
+  /** The clean-room push; lib/clean-room.ts's when absent. */
+  push?: typeof cleanRoomPush;
   /** Whether a file exists on a branch of the repository; read with a `contents: read` token. */
   fileExists?: (repo: { owner: string; name: string }, path: string, ref: string) => Promise<boolean>;
 }
@@ -373,14 +300,16 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
     return { pushed: false, commitCount, itemCommitCount, headSha, summary, incomplete, ...digest };
   }
 
-  const bundle = await mustRun(agentSession, asAgent(bundleScript(start.commit, headSha)), 300);
-  const bundleBase64 = bundle.stdout.trim();
+  const exported = await mustRun(agentSession, asAgent(bundleScript(start.commit, headSha)), 300);
+  const bundleBase64 = exported.stdout.trim();
   if (!/^[A-Za-z0-9+/=]+$/.test(bundleBase64)) {
     throw new Error('Bundle export did not produce base64 output');
   }
-  await storeBundle(ctx, bundleBase64, log);
+  // The same bytes are stored and pushed.
+  const bundle = Buffer.from(bundleBase64, 'base64');
+  await storeBundle(ctx, bundle, log);
 
-  const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
+  const repo = repoOf(ctx);
   const identity = await deps.commitIdentity(repo);
   // Least privilege per push: the workflows permission is requested only
   // when the change edits a workflow file, so an ordinary change never
@@ -396,27 +325,18 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
       throw error;
     },
   );
-  const push = await mustRun(
-    cleanRoomTarget(ctx.workItem.id),
-    cleanRoomPushScript({
-      owner: repo.owner,
-      name: repo.name,
-      branch: ctx.branch,
-      baseBranch: ctx.baseBranch,
-      baseCommit: start.commit,
-      headSha,
-      existingBranch: start.existing,
-      token,
-      bundleBase64,
-      identity,
-    }),
-    600,
-  );
   // The pushed head differs from the agent's: the commits were re-created
   // with the App's identity. Everything downstream tests and reviews this one.
-  const pushedSha = assertCommitSha(push.stdout.trim().split('\n').pop() ?? '', 'pushed head');
-  // The push is done and the clean room is not used again.
-  await stopSessionQuietly(cleanRoomTarget(ctx.workItem.id), log);
+  const pushedSha = await (deps.push ?? cleanRoomPush)({
+    remoteUrl: githubRemote(repo.owner, repo.name),
+    branch: ctx.branch,
+    baseCommit: start.commit,
+    headSha,
+    existingBranch: start.existing,
+    token,
+    bundle,
+    identity,
+  });
 
   await recordProgress(ctx.workItem.id, salvage ? 'salvaged' : 'pushed', {
     headSha: pushedSha,
@@ -425,7 +345,7 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
     changedPaths: changedPaths.slice(0, 200),
     editsWorkflows,
     summary,
-    bundleBytes: Math.floor((bundleBase64.length * 3) / 4),
+    bundleBytes: bundle.length,
     ...planFields,
   });
   log.info(salvage ? 'work in progress saved from clean room' : 'branch pushed from clean room', {

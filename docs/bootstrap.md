@@ -14,6 +14,7 @@ The foundation stack (`templates/foundation.yml`) creates:
 | Artefact bucket | Packaged templates and Lambda bundles. |
 | `factorial/invoker` ECR repository | The Fargate task that invokes an agent and records its run. |
 | `factorial/agent-runtime` ECR repository | The AgentCore Runtime image: Factorial's host process around pi (`docs/pi-plan.md`). |
+| `factorial/orchestration` ECR repository | The image of the orchestration Lambdas that run git (Collect's clean-room push), exported as `Factorial-OrchestrationRepositoryUri`. Its policy lets Lambda pull for `factorial-*` functions only. |
 
 ## Prerequisites
 

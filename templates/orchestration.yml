@@ -11,6 +11,10 @@ Parameters:
     Type: String
     Description: Tag of the invoker image in the factorial/invoker repository.
     AllowedPattern: '^[A-Za-z0-9._-]+$'
+  OrchestrationImageTag:
+    Type: String
+    Description: Tag of the orchestration image (the functions that run git) in the factorial/orchestration repository.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
   FactorialVersion:
     Type: String
     Description: Git commit of Factorial being deployed. Stamped on every WorkItem it handles.
@@ -53,9 +57,11 @@ Mappings:
     MaxRounds:
       Value: 3
 
+# Runtime and Handler are set on each zip function, not here: SAM would put
+# them on Collect too, which runs from the orchestration image and may have
+# neither.
 Globals:
   Function:
-    Runtime: nodejs24.x
     Architectures:
       - arm64
     MemorySize: 512
@@ -731,6 +737,7 @@ Resources:
       FunctionName: factorial-intake
       Description: Accept a WorkItem once, resolve its thread and choose its route.
       CodeUri: ../packages/orchestration/dist/intake/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 120
       LoggingConfig:
@@ -773,6 +780,7 @@ Resources:
       FunctionName: factorial-prepare
       Description: Clone the repository into the builder's session on the thread's branch and seed it.
       CodeUri: ../packages/orchestration/dist/prepare/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 900
       LoggingConfig:
@@ -788,15 +796,29 @@ Resources:
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
 
+  # Collect is the clean room: it pushes from a pristine clone in its own
+  # /tmp (lib/clean-room.ts), so it runs from the orchestration image, which
+  # has git. 2 GB of memory and of /tmp is generous for repositories under
+  # 100 MB of history; the blob-less bare clone keeps the working set small.
+  # A function cannot change from a zip to an image in place, and
+  # CloudFormation cannot replace a function that keeps its name, so the image
+  # function has its own; its logs stay in /aws/lambda/factorial-collect.
   CollectFunction:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: factorial-collect
-      Description: Store the session's files and the builder's plan, commit leftovers, push the work branch and collect the agent's summary.
-      CodeUri: ../packages/orchestration/dist/collect/
-      Handler: index.handler
+      FunctionName: factorial-collect-clean-room
+      Description: Store the session's files and the builder's plan, commit leftovers, push the work branch from a clean room and collect the agent's summary.
+      PackageType: Image
+      ImageUri: !Sub
+        - ${RepositoryUri}:${OrchestrationImageTag}
+        - RepositoryUri: !ImportValue Factorial-OrchestrationRepositoryUri
+      ImageConfig:
+        Command:
+          - collect/index.handler
       Timeout: 900
-      MemorySize: 1024
+      MemorySize: 2048
+      EphemeralStorage:
+        Size: 2048
       LoggingConfig:
         LogGroup: !Ref CollectLogGroup
       Policies:
@@ -816,6 +838,7 @@ Resources:
       FunctionName: factorial-dispatch-tests
       Description: Start the repository's test workflow on the work branch with a task token.
       CodeUri: ../packages/orchestration/dist/dispatch-tests/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 60
       LoggingConfig:
@@ -839,6 +862,7 @@ Resources:
       FunctionName: factorial-prepare-review
       Description: Set up a fresh reviewer session at the tested commit with the plan, the summary and the diff.
       CodeUri: ../packages/orchestration/dist/prepare-review/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 900
       LoggingConfig:
@@ -866,6 +890,7 @@ Resources:
       FunctionName: factorial-continue-build
       Description: Start the next build round in a fresh builder session, from the branch, the plan and the previous round's notes.
       CodeUri: ../packages/orchestration/dist/continue-build/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 900
       LoggingConfig:
@@ -896,6 +921,7 @@ Resources:
       FunctionName: factorial-collect-review
       Description: Read and validate the reviewer's review, add findings for sensitive changes, and store it.
       CodeUri: ../packages/orchestration/dist/collect-review/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 300
       LoggingConfig:
@@ -916,6 +942,7 @@ Resources:
       FunctionName: factorial-open-pr
       Description: Open the pull request for human approval and emit the turn's outcome.
       CodeUri: ../packages/orchestration/dist/open-pr/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 60
       LoggingConfig:
@@ -947,6 +974,7 @@ Resources:
       FunctionName: factorial-report
       Description: End a turn that opens no pull request, and emit its outcome.
       CodeUri: ../packages/orchestration/dist/report/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 60
       LoggingConfig:
@@ -975,6 +1003,7 @@ Resources:
       FunctionName: factorial-report-github
       Description: Tell requesters on GitHub that their work started, and how it ended.
       CodeUri: ../packages/orchestration/dist/report-github/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 60
       LoggingConfig:
@@ -1009,6 +1038,7 @@ Resources:
       FunctionName: factorial-thread-outcome
       Description: Record whether a Factorial pull request was merged or closed on its thread.
       CodeUri: ../packages/orchestration/dist/thread-outcome/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 30
       LoggingConfig:
@@ -1046,6 +1076,7 @@ Resources:
       FunctionName: factorial-thread-reconcile
       Description: Record pull request closes GitHub never sent, and count them.
       CodeUri: ../packages/orchestration/dist/thread-reconcile/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 300
       LoggingConfig:
@@ -1089,6 +1120,7 @@ Resources:
       FunctionName: factorial-live-forward
       Description: Publish work-item progress to the live feed.
       CodeUri: ../packages/orchestration/dist/live-forward/
+      Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 30
       LoggingConfig:
@@ -1113,9 +1145,9 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Each role's Runtime (the builder's also holds its clean room):
-          # commands only, since the invoker runs the agent, and stopping the
-          # session once Collect or CollectReview has finished with it.
+          # Each role's Runtime: commands only, since the invoker runs the
+          # agent, and stopping the session once Collect or CollectReview has
+          # finished with it.
           - Effect: Allow
             Action:
               - bedrock-agentcore:InvokeAgentRuntimeCommand

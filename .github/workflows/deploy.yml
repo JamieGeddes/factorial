@@ -151,15 +151,18 @@ jobs:
           bucket=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-ArtefactBucketName'].Value" --output text)
           invoker_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-InvokerRepositoryUri'].Value" --output text)
           runtime_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-AgentRuntimeRepositoryUri'].Value" --output text)
-          test -n "$cfn_role" && test -n "$bucket" && test -n "$invoker_repo_uri" && test -n "$runtime_repo_uri"
+          orchestration_repo_uri=$(aws cloudformation list-exports --query "Exports[?Name=='Factorial-OrchestrationRepositoryUri'].Value" --output text)
+          test -n "$cfn_role" && test -n "$bucket" && test -n "$invoker_repo_uri" && test -n "$runtime_repo_uri" && test -n "$orchestration_repo_uri"
           echo "::add-mask::$cfn_role"
           echo "::add-mask::$bucket"
           echo "::add-mask::$invoker_repo_uri"
           echo "::add-mask::$runtime_repo_uri"
+          echo "::add-mask::$orchestration_repo_uri"
           echo "cfn_role=$cfn_role" >> "$GITHUB_OUTPUT"
           echo "bucket=$bucket" >> "$GITHUB_OUTPUT"
           echo "invoker_repo_uri=$invoker_repo_uri" >> "$GITHUB_OUTPUT"
           echo "runtime_repo_uri=$runtime_repo_uri" >> "$GITHUB_OUTPUT"
+          echo "orchestration_repo_uri=$orchestration_repo_uri" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
         with:
@@ -208,12 +211,36 @@ jobs:
             --tag "$REPO_URI:$tag" agent-runtime/
           echo "Pushed agent runtime image $tag."
 
+      # The bundles (orchestration/dist) come from "Build Lambda bundles"
+      # above. The tag covers everything the image is built from: the
+      # Dockerfile, the orchestration package and the workspace packages it
+      # bundles with the contracts they read, and the root lockfile.
+      - name: Build and push the orchestration image when its inputs change
+        id: orchestration_image
+        env:
+          REPO_URI: ${{ steps.foundation.outputs.orchestration_repo_uri }}
+        run: |
+          set -euo pipefail
+          tag=$(git rev-parse HEAD:orchestration HEAD:packages/orchestration HEAD:packages/artefacts HEAD:packages/github-app HEAD:packages/live HEAD:packages/log HEAD:packages/outcome HEAD:packages/plan HEAD:packages/progress HEAD:packages/pull-request-closed HEAD:packages/review HEAD:packages/roles HEAD:packages/workitem HEAD:contracts HEAD:package-lock.json | sha256sum | cut -c1-32)
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if aws ecr describe-images --repository-name factorial/orchestration --image-ids "imageTag=$tag" >/dev/null 2>&1; then
+            echo "Orchestration image $tag already exists; skipping the build."
+            exit 0
+          fi
+          test -f orchestration/dist/collect/index.mjs
+          aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
+          aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
+          docker buildx build --platform linux/arm64 --provenance=false --push \
+            --tag "$REPO_URI:$tag" orchestration/
+          echo "Pushed orchestration image $tag."
+
       - name: Deploy stacks in order
         env:
           CFN_ROLE: ${{ steps.foundation.outputs.cfn_role }}
           BUCKET: ${{ steps.foundation.outputs.bucket }}
           INVOKER_IMAGE_TAG: ${{ steps.invoker.outputs.tag }}
           AGENT_RUNTIME_IMAGE_TAG: ${{ steps.runtime_image.outputs.tag }}
+          ORCHESTRATION_IMAGE_TAG: ${{ steps.orchestration_image.outputs.tag }}
         run: |
           set -euo pipefail
           # Pipeline-deployed stacks, in deploy order. Each is templates/<name>.yml
@@ -249,7 +276,7 @@ jobs:
             params=()
             case "$stack" in
               factorial-agent) params=(--parameter-overrides "AgentRuntimeImageTag=$AGENT_RUNTIME_IMAGE_TAG") ;;
-              factorial-orchestration) params=(--parameter-overrides "InvokerImageTag=$INVOKER_IMAGE_TAG" "FactorialVersion=$GITHUB_SHA") ;;
+              factorial-orchestration) params=(--parameter-overrides "InvokerImageTag=$INVOKER_IMAGE_TAG" "OrchestrationImageTag=$ORCHESTRATION_IMAGE_TAG" "FactorialVersion=$GITHUB_SHA") ;;
             esac
             # package uploads local artefacts (Lambda bundles) and rewrites
             # their paths to S3 locations.

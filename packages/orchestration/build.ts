@@ -4,16 +4,28 @@
  * too, not taken from the nodejs24.x runtime: the runtime's copy changes with
  * AWS's runtime updates, and on 2026-10-24 one shipped an AgentCore client
  * without InvokeAgentRuntimeCommand, which failed Prepare at load.
+ *
+ * The functions that run git are served from the orchestration image
+ * (orchestration/Dockerfile), so theirs go to orchestration/dist/<name>/,
+ * the image's build context, as the invoker's go to invoker/dist/.
  */
 import { build } from 'esbuild';
 
-const functions = ['intake', 'prepare', 'collect', 'continue-build', 'dispatch-tests', 'prepare-review', 'collect-review', 'open-pr', 'report', 'report-github', 'thread-outcome', 'thread-reconcile', 'live-forward'];
+/** Served from the orchestration image, each named by its ImageConfig.Command in templates/orchestration.yml. */
+export const imageFunctions = ['collect'];
+
+const zipFunctions = ['intake', 'prepare', 'continue-build', 'dispatch-tests', 'prepare-review', 'collect-review', 'open-pr', 'report', 'report-github', 'thread-outcome', 'thread-reconcile', 'live-forward'];
+
+const functions = [
+  ...zipFunctions.map((name) => ({ name, outdir: `dist/${name}` })),
+  ...imageFunctions.map((name) => ({ name, outdir: `../../orchestration/dist/${name}` })),
+];
 
 await Promise.all(
-  functions.map((name) =>
+  functions.map(({ name, outdir }) =>
     build({
       entryPoints: { index: `src/functions/${name}.ts` },
-      outdir: `dist/${name}`,
+      outdir,
       outExtension: { '.js': '.mjs' },
       bundle: true,
       platform: 'node',

@@ -40,9 +40,8 @@ export type SessionRole = RoleName;
 /**
  * Every role runs on Factorial's host on its own Runtime, its ARN in
  * `<ROLE>_RUNTIME_ARN` from the agent stack's outputs: the builder, which
- * plans with its subagent, and the clean room on BUILDER_RUNTIME_ARN, the
- * reviewer on REVIEWER_RUNTIME_ARN. All are addressed through the `live`
- * qualifier.
+ * plans with its subagent, on BUILDER_RUNTIME_ARN, the reviewer on
+ * REVIEWER_RUNTIME_ARN. Both are addressed through the `live` qualifier.
  */
 export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
   const qualifier = requireEnv('RUNTIME_QUALIFIER');
@@ -123,16 +122,6 @@ export async function mustRun(target: SessionTarget, command: string, timeoutSec
     throw new Error(`Session command exited ${result.exitCode}: ${redactSecrets((result.stderr || result.stdout).slice(-2000))}`);
   }
   return result;
-}
-
-/**
- * A second, pristine session for operations that need credentials. It shares
- * nothing with the agent's session: no files, no git configuration, no hooks,
- * no background processes. Same qualifier, different session id. No model
- * ever runs in it, so on the Runtime it stays root's.
- */
-export function cleanRoomTarget(workItemId: string): SessionTarget {
-  return sessionTarget(`${workItemId}-push`);
 }
 
 /**

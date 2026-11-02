@@ -27,6 +27,7 @@ describe('isNonFunctionalPath', () => {
       'scripts/classify-changes.ts',
       'agent-runtime/Dockerfile',
       'invoker/Dockerfile',
+      'orchestration/Dockerfile',
       '.github/workflows/deploy.yml',
       'package.json',
       'package-lock.json',

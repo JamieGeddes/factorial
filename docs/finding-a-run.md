@@ -38,7 +38,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 - `/factorial/invoker`
 - `/aws/lambda/factorial-intake`
 - `/aws/lambda/factorial-prepare`
-- `/aws/lambda/factorial-collect`
+- `/aws/lambda/factorial-collect` (the push is Collect's own: `branch pushed from clean room`, or `work in progress saved from clean room` when salvaging, with the pushed `headSha` and the agent's `agentHeadSha`; runs before #261 pushed from a second builder session, `<id>-push`)
 - `/aws/lambda/factorial-dispatch-tests`
 - `/aws/lambda/factorial-prepare-review`
 - `/aws/lambda/factorial-collect-review`

@@ -1197,6 +1197,54 @@ Resources:
         - Key: Project
           Value: Factorial
 
+  # ---------------------------------------------------------------------------
+  # Container registry for the orchestration image: the Lambda functions that
+  # run git (Collect's clean-room push). Lambda pulls the image when a
+  # function version is created, so the repository grants that pull to
+  # Factorial's functions only.
+  # ---------------------------------------------------------------------------
+  OrchestrationRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: factorial/orchestration
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      EncryptionConfiguration:
+        EncryptionType: AES256
+      RepositoryPolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: LambdaPullForFactorialFunctions
+            Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action:
+              - ecr:BatchGetImage
+              - ecr:GetDownloadUrlForLayer
+            Condition:
+              StringLike:
+                aws:sourceArn: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:factorial-*
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the most recent 20 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 20
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: Factorial
+
 Outputs:
   GitHubOidcProviderArn:
     Value: !Ref GitHubOidcProvider
@@ -1211,6 +1259,10 @@ Outputs:
     Value: !GetAtt InvokerRepository.RepositoryUri
     Export:
       Name: Factorial-InvokerRepositoryUri
+  OrchestrationRepositoryUri:
+    Value: !GetAtt OrchestrationRepository.RepositoryUri
+    Export:
+      Name: Factorial-OrchestrationRepositoryUri
   DeployRoleArn:
     Description: Role GitHub Actions assumes. Store as the AWS_DEPLOY_ROLE_ARN repository secret.
     Value: !GetAtt DeployRole.Arn

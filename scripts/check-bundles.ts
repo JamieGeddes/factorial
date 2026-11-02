@@ -18,6 +18,7 @@ export function bundleRoots(repository: string): string[] {
   return [
     path.join(repository, 'agent-runtime', 'dist'),
     path.join(repository, 'invoker', 'dist'),
+    path.join(repository, 'orchestration', 'dist'),
     ...readdirSync(packages).map((name) => path.join(packages, name, 'dist')),
   ].filter((root) => existsSync(root));
 }
