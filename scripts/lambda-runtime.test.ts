@@ -29,6 +29,6 @@ describe('Lambda runtime', () => {
   it('is the version of the orchestration image, pinned by digest', () => {
     const major = templateRuntimes()[0];
     const dockerfile = readFileSync(path.join(root, 'orchestration/Dockerfile'), 'utf8');
-    assert.match(dockerfile, new RegExp(`^FROM public\\.ecr\\.aws/lambda/nodejs:${major}@sha256:[0-9a-f]{64}$`, 'm'));
+    assert.match(dockerfile, new RegExp(`^FROM public\\.ecr\\.aws/lambda/nodejs:${major}@sha256:[0-9a-f]{64}( AS toolchain)?$`, 'm'));
   });
 });

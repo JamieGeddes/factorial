@@ -12,8 +12,13 @@
 #
 # Built for linux/arm64. Base image pinned by digest
 # (public.ecr.aws/lambda/nodejs:24, linux/arm64).
-FROM public.ecr.aws/lambda/nodejs:24@sha256:a8b1898fb070ae2f43179aa9c3b259765efe239e8b974c7121447b22952dfcff
+#
+# Two stages, as in agent-runtime/Dockerfile: CI builds the toolchain stage
+# and checks its git against CI's (scripts/check-git-version.ts).
+FROM public.ecr.aws/lambda/nodejs:24@sha256:a8b1898fb070ae2f43179aa9c3b259765efe239e8b974c7121447b22952dfcff AS toolchain
 
 RUN dnf install -y git-core && dnf clean all && rm -rf /var/cache/dnf && git --version
+
+FROM toolchain
 
 COPY dist/ ${LAMBDA_TASK_ROOT}/

@@ -67,3 +67,47 @@ jobs:
         run: pipx run --spec 'cfn-lint==1.57.2' cfn-lint
       - if: needs.classify.outputs.functional == 'false'
         run: echo "Only non-functional paths changed; skipping cfn-lint."
+
+  # Builds the toolchain stage of the agent and orchestration images (all but
+  # Factorial's own files) as deploy.yml builds them, then checks each image's
+  # git against this runner's: a test that passes in a session must pass here
+  # (#274, scripts/check-git-version.ts). Not a required check, so a runner
+  # whose git moves past the agreed gap flags it without blocking merges.
+  images:
+    name: Image toolchains
+    needs: classify
+    if: needs.classify.outputs.functional == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version-file: .nvmrc
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build the toolchain stages
+        run: |
+          set -euo pipefail
+          docker buildx build --platform linux/arm64 --provenance=false --target toolchain --load \
+            --tag factorial-agent-runtime-toolchain agent-runtime/
+          docker buildx build --platform linux/arm64 --provenance=false --target toolchain --load \
+            --tag factorial-orchestration-toolchain orchestration/
+      - name: Check each image's git against CI's
+        run: |
+          set -euo pipefail
+          run_fixture() {
+            docker run --rm --platform linux/arm64 --entrypoint sh \
+              -v "$PWD/scripts/git-fixture.sh:/fixture.sh:ro" "$1" /fixture.sh
+          }
+          sh scripts/git-fixture.sh > "$RUNNER_TEMP/ci.txt"
+          run_fixture factorial-agent-runtime-toolchain > "$RUNNER_TEMP/agent-runtime.txt"
+          run_fixture factorial-orchestration-toolchain > "$RUNNER_TEMP/orchestration.txt"
+          node scripts/check-git-version.ts "$RUNNER_TEMP/ci.txt" \
+            "agent-runtime=$RUNNER_TEMP/agent-runtime.txt" \
+            "orchestration=$RUNNER_TEMP/orchestration.txt"
+      - name: Check the agent toolchain runs
+        run: |
+          docker run --rm --platform linux/arm64 --entrypoint sh factorial-agent-runtime-toolchain -c \
+            'set -e; node --version; python3 --version; cfn-lint --version; gh --version | head -1; jq --version; rg --version | head -1'

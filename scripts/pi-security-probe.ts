@@ -96,7 +96,9 @@ const orDenied = (held: Probe['held']): Probe['held'] => (text, isError) => deni
 
 /** What the shell may hold: the allow-list, what the host sets, what bash sets, and the registry only when there is a mirror. */
 const SHELL_VARIABLES = [
-  'PATH', 'LANG', 'TZ', 'NPM_CONFIG_AUDIT', 'NPM_CONFIG_FUND', 'NPM_CONFIG_UPDATE_NOTIFIER',
+  'PATH', 'LANG', 'TZ', 'CI', 'NPM_CONFIG_AUDIT', 'NPM_CONFIG_FUND', 'NPM_CONFIG_UPDATE_NOTIFIER',
+  // Plain output from every toolchain (#247, pi/environment.ts).
+  'NO_COLOR', 'FORCE_COLOR', 'TERM',
   'HOME', 'AWS_REGION', 'PWD', 'SHLVL', '_',
   ...(MIRROR ? ['NPM_CONFIG_REGISTRY'] : []),
 ];
