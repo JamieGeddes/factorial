@@ -5,7 +5,7 @@ import { AppRouterContext } from 'next/dist/shared/lib/app-router-context.shared
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { nextSort, sortRows, Table, type Column, type SortState } from './Table.tsx';
+import { headerClick, nextSort, sortRows, Table, type Column, type SortState } from './Table.tsx';
 
 const router = { push() {}, replace() {}, refresh() {}, prefetch() {}, back() {}, forward() {} };
 const render = (node: ReactNode) => renderToStaticMarkup(<AppRouterContext.Provider value={router as never}>{node}</AppRouterContext.Provider>);
@@ -89,4 +89,58 @@ test('a click sorts a new column ascending and the same column the other way', (
   assert.deepEqual(nextSort({ key: 'a', dir: 'desc' }, 'b'), { key: 'b', dir: 'asc' });
   assert.deepEqual(nextSort({ key: 'a', dir: 'asc' }, 'a'), { key: 'a', dir: 'desc' });
   assert.deepEqual(nextSort({ key: 'a', dir: 'desc' }, 'a'), { key: 'a', dir: 'asc' });
+});
+
+const MANY: Row[] = Array.from({ length: 120 }, (_, i) => ({ id: String.fromCharCode(97 + (i % 26)) + i, name: `n${String(i).padStart(3, '0')}`, n: 120 - i }));
+const hrefIds = (html: string) => [...html.matchAll(/href="\/r\/(\w+)"/g)].map((m) => m[1]);
+const paged = (rows: Row[], page: number, extra: { size?: number; defaultSort?: SortState } = {}) =>
+  render(<Table label="T" columns={SORTABLE} rows={rows} rowKey={(r) => r.id} rowHref={(r) => `/r/${r.id}`} empty="none" {...(extra.defaultSort ? { defaultSort: extra.defaultSort } : {})} paging={{ page, onPageChange() {}, ...(extra.size ? { size: extra.size } : {}) }} />);
+
+test('with more rows than a page, one page of 50 renders with the controls and the range', () => {
+  const first = paged(MANY, 1);
+  assert.equal(hrefIds(first).length, 50);
+  assert.equal(hrefIds(first)[0], MANY[0]!.id);
+  assert.ok(first.includes('<nav class="pager" aria-label="T pages">'), first);
+  assert.ok(first.includes('aria-live="polite"'), first);
+  assert.ok(first.includes('>1-50 of 120<'), first);
+  const last = paged(MANY, 3);
+  assert.deepEqual(hrefIds(last), MANY.slice(100).map((r) => r.id));
+  assert.ok(last.includes('>101-120 of 120<'), last);
+});
+
+test('Previous is disabled on the first page and Next on the last; both are buttons', () => {
+  const first = paged(MANY, 1);
+  assert.ok(first.includes('<button type="button" disabled="">Previous</button>'), first);
+  assert.ok(first.includes('<button type="button">Next</button>'), first);
+  const middle = paged(MANY, 2);
+  assert.ok(middle.includes('<button type="button">Previous</button>') && middle.includes('<button type="button">Next</button>'), middle);
+  assert.ok(paged(MANY, 3).includes('<button type="button" disabled="">Next</button>'));
+});
+
+test('50 rows are one page with no controls, and 51 are two', () => {
+  assert.ok(!paged(MANY.slice(0, 50), 1).includes('pager'));
+  assert.equal(hrefIds(paged(MANY.slice(0, 51), 1)).length, 50);
+  const second = paged(MANY.slice(0, 51), 2);
+  assert.deepEqual(hrefIds(second), [MANY[50]!.id]);
+  assert.ok(second.includes('>51-51 of 51<'), second);
+  assert.ok(!paged([], 1).includes('pager'));
+});
+
+test('paging applies after sorting, and a page past the end shows the last page', () => {
+  const html = paged(MANY, 1, { defaultSort: { key: 'n', dir: 'asc' } });
+  assert.deepEqual(hrefIds(html), MANY.slice(70).reverse().map((r) => r.id));
+  assert.deepEqual(hrefIds(paged(MANY, 99)), MANY.slice(100).map((r) => r.id));
+  assert.ok(paged(MANY, 99).includes('>101-120 of 120<'));
+  assert.deepEqual(hrefIds(paged(MANY, 2, { size: 10 })), MANY.slice(10, 20).map((r) => r.id));
+});
+
+test('without paging the table renders every row and no controls', () => {
+  const html = render(<Table label="T" columns={SORTABLE} rows={MANY} rowKey={(r) => r.id} rowHref={(r) => `/r/${r.id}`} empty="none" />);
+  assert.equal(hrefIds(html).length, 120);
+  assert.ok(!html.includes('pager'));
+});
+
+test('a sort click returns to page 1', () => {
+  assert.deepEqual(headerClick(undefined, 'name'), { sort: { key: 'name', dir: 'asc' }, page: 1 });
+  assert.deepEqual(headerClick({ key: 'name', dir: 'asc' }, 'name'), { sort: { key: 'name', dir: 'desc' }, page: 1 });
 });
