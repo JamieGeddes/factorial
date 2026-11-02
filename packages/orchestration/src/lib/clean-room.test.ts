@@ -148,7 +148,7 @@ describe('cleanRoomPush', () => {
     git(work, ['checkout', '--quiet', '-b', 'factorial/item']);
     writeFileSync(path.join(work, 'run.sh'), '#!/bin/sh\necho hi\n');
     chmodSync(path.join(work, 'run.sh'), 0o755);
-    commitAll('Add a script', '2026-10-30T12:00:00+00:00');
+    commitAll('Add a script', '2026-10-30T12:00:00+01:00');
     assert.match(git(work, ['ls-tree', 'HEAD', 'run.sh']), /^100755 /);
 
     const head = await cleanRoomPush(params({ baseCommit: base, bundle: bundle(base) }));
@@ -158,7 +158,7 @@ describe('cleanRoomPush', () => {
     assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
     assert.equal(
       git(origin, ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI', head]),
-      `${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}|2026-10-30T12:00:00+00:00`,
+      `${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}|2026-10-30T12:00:00+01:00`,
     );
   });
 
@@ -168,7 +168,7 @@ describe('cleanRoomPush', () => {
     const lines = readFileSync(path.join(work, 'big.txt'), 'utf8').split('\n');
     lines[500] = 'one changed line';
     writeFileSync(path.join(work, 'big.txt'), lines.join('\n'));
-    commitAll('Edit one line of the big file', '2026-10-30T12:00:00+00:00');
+    commitAll('Edit one line of the big file', '2026-10-30T12:00:00+01:00');
 
     const head = await cleanRoomPush(params({ baseCommit: base, bundle: bundle(base) }));
 
@@ -177,7 +177,7 @@ describe('cleanRoomPush', () => {
     assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
     assert.equal(
       git(origin, ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI', head]),
-      `${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}|2026-10-30T12:00:00+00:00`,
+      `${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}|2026-10-30T12:00:00+01:00`,
     );
   });
 
