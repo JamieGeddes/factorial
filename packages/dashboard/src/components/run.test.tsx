@@ -10,7 +10,7 @@ import { overview } from '../lib/overview.ts';
 import type { LedgerRow } from '../lib/records.ts';
 import { runDetail } from '../lib/run-view.ts';
 import { describe, type RunEvent } from '../lib/transcript.ts';
-import { runsEmptyMessage } from '../lib/runs-list.ts';
+import { runsEmptyMessage, runsSearch } from '../lib/runs-list.ts';
 import { summarise } from '../lib/work-items.ts';
 import { sortRows } from './Table.tsx';
 import { StageGraph } from './overview/StageGraph.tsx';
@@ -152,6 +152,51 @@ test('an item without a created time or a run sorts last whichever way', () => {
   const items = [...RUNS, summarise(undated, undefined, RUNS_NOW)];
   assert.equal(letters(sortRows(items, RUN_COLUMNS, { key: 'created', dir: 'desc' })), 'bcade');
   assert.equal(letters(sortRows(items, RUN_COLUMNS, { key: 'created', dir: 'asc' })), 'dacbe');
+});
+
+// 120 runs, Title-0 the oldest; even ones failed (needs attention), odd ones opened a PR (finished).
+const MANY_RUNS = Array.from({ length: 120 }, (_, i) => {
+  const at = new Date(Date.UTC(2026, 10, 1, 0, i)).toISOString();
+  const row = runRow('x', `#${i}`, at, { result: i % 2 === 0 ? 'failed' : 'pr-opened', stages: { Build: { startedAt: at } } });
+  return summarise({ ...row, workItemId: `${String(i).padStart(8, '0')}-d53d-11f1-8851-ff488f20a8b2`, workItem: { ...row.workItem!, title: `Title-${i}` } }, undefined, RUNS_NOW);
+});
+const titles = (html: string) => [...html.slice(html.indexOf('<table')).matchAll(/Title-(\d+)/g)].map((m) => Number(m[1]));
+const range = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+
+test('/runs pages the sorted rows 50 at a time, with the controls and the range', () => {
+  const first = render(<RunsView items={MANY_RUNS} />);
+  assert.deepEqual(titles(first), range(70, 119).reverse());
+  assert.match(first, /<nav class="pager" aria-label="Agent runs pages">/);
+  assert.match(first, /aria-live="polite"[^>]*>1-50 of 120</);
+  const last = render(<RunsView items={MANY_RUNS} initialPage={3} />);
+  assert.deepEqual(titles(last), range(0, 19).reverse());
+  assert.match(last, />101-120 of 120</);
+  assert.deepEqual(titles(render(<RunsView items={MANY_RUNS} initialPage={2} />)), range(20, 69).reverse());
+});
+
+test('/runs shows no controls when the rows fit one page, and clamps a page past the end', () => {
+  const html = render(<RunsView items={MANY_RUNS.slice(0, 50)} />);
+  assert.equal(titles(html).length, 50);
+  assert.ok(!html.includes('pager'), html);
+  assert.ok(!render(<RunsView items={RUNS} initialPage={4} />).includes('pager'));
+  assert.match(render(<RunsView items={MANY_RUNS} initialPage={40} />), />101-120 of 120</);
+});
+
+test('/runs pages the filtered set: the URL names the filter and search, and the page counts the rows left', () => {
+  const attention = render(<RunsView items={MANY_RUNS} initialQuery={{ filter: 'attention', q: '' }} />);
+  assert.equal(titles(attention).length, 50);
+  assert.match(attention, />1-50 of 60</);
+  assert.deepEqual(titles(render(<RunsView items={MANY_RUNS} initialQuery={{ filter: 'attention', q: '' }} initialPage={2} />)), range(0, 9).map((i) => i * 2).reverse());
+  const searched = render(<RunsView items={MANY_RUNS} initialQuery={{ filter: 'all', q: 'Title-11' }} initialPage={2} />);
+  assert.ok(!searched.includes('pager'), 'Title-11, 110-119: 11 rows, one page');
+  assert.deepEqual(titles(searched), range(110, 119).reverse().concat(11));
+});
+
+test('the runs URL carries the filter, search and page, each only off its default', () => {
+  assert.equal(runsSearch({ filter: 'all', q: '' }, 1), '');
+  assert.equal(runsSearch({ filter: 'all', q: '' }, 2), 'page=2');
+  assert.equal(runsSearch({ filter: 'attention', q: ' abc ' }, 3), 'filter=attention&q=abc&page=3');
+  assert.equal(runsSearch({ filter: 'finished', q: '' }, 1), 'filter=finished');
 });
 
 test('the runs empty states say which filters are active', () => {

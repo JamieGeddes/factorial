@@ -1,3 +1,4 @@
+import { withPageParam } from './paging.ts';
 import { FILTER_LABELS, matchesFilter, type Filter, type WorkItemSummary } from './work-items.ts';
 
 /** What narrows the Run & transcript list: a status filter and a search. */
@@ -15,6 +16,14 @@ export function matchesRunSearch(item: WorkItemSummary, query: string): boolean 
 
 export function filterRuns(items: WorkItemSummary[], query: RunsQuery): WorkItemSummary[] {
   return items.filter((i) => matchesFilter(i, query.filter) && matchesRunSearch(i, query.q));
+}
+
+/** The URL parameters for a view of the list: filter, search and page, each only when it differs from the default. */
+export function runsSearch(query: RunsQuery, page: number): string {
+  const params = new URLSearchParams();
+  if (query.filter !== 'all') params.set('filter', query.filter);
+  if (query.q.trim()) params.set('q', query.q.trim());
+  return withPageParam(params, page).toString();
 }
 
 /** The empty state names what to clear. */
