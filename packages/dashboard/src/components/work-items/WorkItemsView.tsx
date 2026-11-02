@@ -4,6 +4,8 @@ import { WORK_ITEMS_CHANNEL } from '@factorial/live/channels';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useChannels } from '../../client/live.tsx';
+import { refine, turnTo, withPageParam, type Listing } from '../../lib/paging.ts';
+import { readAll } from '../../lib/read-all.ts';
 import { FilterChips } from '../FilterChips.tsx';
 import { FILTERS, FILTER_LABELS, isFilter, type Filter, type WorkItemSummary } from '../../lib/work-items.ts';
 import { WorkItemsTable } from './WorkItemsTable.tsx';
@@ -33,7 +35,8 @@ export function emptyMessage(query: Query, sources: { type: string; label: strin
   return `No work items match. Clear ${list} to see more.`;
 }
 
-function search(query: Query): string {
+/** The API parameters for a query (no page: paging happens in the browser). */
+export function search(query: Query): string {
   const params = new URLSearchParams();
   if (query.filter !== 'all') params.set('filter', query.filter);
   if (query.source) params.set('source', query.source);
@@ -41,20 +44,38 @@ function search(query: Query): string {
   return params.toString();
 }
 
-export function WorkItemsView({ initial, initialQuery }: { initial: WorkItemsData; initialQuery: Query }) {
-  const [query, setQuery] = useState<Query>(initialQuery);
-  const [data, setData] = useState<WorkItemsData>(initial);
+/** The page's own URL parameters: the query's, and the page beside them when it is not the first. */
+export function pageSearch(query: Query, page: number): string {
+  return withPageParam(new URLSearchParams(search(query)), page).toString();
+}
+
+/** Every item matching the query: the API is read a page of 500 at a time, following `nextCursor`. */
+export function readAllWorkItems(query: Query, fetchJson: (url: string) => Promise<WorkItemsData>): Promise<Omit<WorkItemsData, 'nextCursor'>> {
+  const base = search(query);
+  return readAll((cursor) => fetchJson(`/api/work-items?${base ? `${base}&` : ''}limit=500${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`));
+}
+
+async function fetchJson(url: string): Promise<WorkItemsData> {
+  const response = await fetch(url, { cache: 'no-store' });
+  const body = (await response.json()) as WorkItemsData & { error?: string };
+  if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+  return body;
+}
+
+export function WorkItemsView({ initial, initialQuery, initialPage = 1 }: { initial: Omit<WorkItemsData, 'nextCursor'>; initialQuery: Query; initialPage?: number }) {
+  const [state, setState] = useState<Listing<Query>>({ query: initialQuery, page: initialPage });
+  const { query, page } = state;
+  const [data, setData] = useState<Omit<WorkItemsData, 'nextCursor'>>(initial);
   const [error, setError] = useState<string | undefined>();
   const latest = useRef(query);
   latest.current = query;
-  const first = useRef(true);
+  const firstUrl = useRef(true);
+  const firstLoad = useRef(true);
 
   const load = useCallback(async () => {
     const q = latest.current;
     try {
-      const response = await fetch(`/api/work-items?${search(q)}&limit=500`, { cache: 'no-store' });
-      const body = (await response.json()) as WorkItemsData & { error?: string };
-      if (!response.ok) throw new Error(body.error ?? `HTTP ${response.status}`);
+      const body = await readAllWorkItems(q, fetchJson);
       if (latest.current === q) {
         setData(body);
         setError(undefined);
@@ -64,14 +85,22 @@ export function WorkItemsView({ initial, initialQuery }: { initial: WorkItemsDat
     }
   }, []);
 
-  // A filter change reads again (the search after a pause) and keeps the URL shareable.
+  // A change of filter or page keeps the URL shareable.
   useEffect(() => {
-    if (first.current) {
-      first.current = false;
+    if (firstUrl.current) {
+      firstUrl.current = false;
       return;
     }
-    const s = search(query);
+    const s = pageSearch(query, page);
     window.history.replaceState(null, '', s ? `?${s}` : window.location.pathname);
+  }, [query, page]);
+
+  // A filter change reads again (the search after a pause); a page change does not, the rows are all here.
+  useEffect(() => {
+    if (firstLoad.current) {
+      firstLoad.current = false;
+      return;
+    }
     const timer = setTimeout(() => void load(), 200);
     return () => clearTimeout(timer);
   }, [query, load]);
@@ -94,7 +123,7 @@ export function WorkItemsView({ initial, initialQuery }: { initial: WorkItemsDat
     <section>
       <div className="view-head">
         <h1>Work items</h1>
-        <p>Every turn the ledger holds, newest first. Running items stay at the top.</p>
+        <p>Every turn the ledger holds, newest first, 50 to a page. Running items stay at the top.</p>
       </div>
       <div className="filters">
         <input
@@ -103,17 +132,17 @@ export function WorkItemsView({ initial, initialQuery }: { initial: WorkItemsDat
           placeholder="Search id, title, branch or PR"
           aria-label="Search work items"
           value={query.q}
-          onChange={(e) => setQuery({ ...query, q: e.target.value })}
+          onChange={(e) => setState((s) => refine(s, { q: e.target.value }))}
         />
         <FilterChips
           label="Filter by state"
           options={FILTERS.map((f) => ({ value: f, label: FILTER_LABELS[f] }))}
           value={query.filter}
-          onChange={(filter) => setQuery({ ...query, filter: isFilter(filter) ? filter : 'all' })}
+          onChange={(filter) => setState((s) => refine(s, { filter: isFilter(filter) ? filter : 'all' }))}
         />
         <span style={{ marginLeft: 'auto' }} className="note">
           Source:{' '}
-          <select className="search" aria-label="Filter by source" value={query.source} onChange={(e) => setQuery({ ...query, source: e.target.value })}>
+          <select className="search" aria-label="Filter by source" value={query.source} onChange={(e) => setState((s) => refine(s, { source: e.target.value }))}>
             <option value="">any</option>
             {data.sources.map((s) => (
               <option key={s.type} value={s.type}>
@@ -125,11 +154,9 @@ export function WorkItemsView({ initial, initialQuery }: { initial: WorkItemsDat
       </div>
       {error ? <div className="error-note" role="alert">{`Could not read the ledger: ${error}`}</div> : null}
       <div className="card flush">
-        <WorkItemsTable items={data.items} empty={emptyMessage(query, data.sources)} />
+        <WorkItemsTable items={data.items} empty={emptyMessage(query, data.sources)} paging={{ page, onPageChange: (p) => setState((s) => turnTo(s, p)) }} />
       </div>
-      <p className="note">
-        {data.total > data.items.length ? `Showing ${data.items.length} of ${data.total}. ` : ''}Refused turns are the system&apos;s only queue: a busy thread drops the turn, so the person must ask again once the holder finishes.
-      </p>
+      <p className="note">Refused turns are the system&apos;s only queue: a busy thread drops the turn, so the person must ask again once the holder finishes.</p>
     </section>
   );
 }

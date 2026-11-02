@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { parseStageKey } from '../src/lib/stage-key.ts';
 import { RANGES } from '../src/lib/metrics.ts';
+import { readAll } from '../src/lib/read-all.ts';
 import { transcriptPath } from '../src/lib/run-view.ts';
 import { RUN_FOLDERS } from '../src/lib/stages.ts';
 import { compareItems, summarise } from '../src/lib/work-items.ts';
@@ -135,7 +136,7 @@ async function main(): Promise<void> {
     statusBar(s),
     overviewPage(s),
     healthPage(s),
-    workItemsPage(s, { filter: 'all', limit: '500' }),
+    readAll((cursor) => workItemsPage(s, { filter: 'all', limit: '500', ...(cursor ? { cursor } : {}) })),
     runsPage(s),
     s.ledger.running(),
   ]);
