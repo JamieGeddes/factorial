@@ -198,13 +198,21 @@ export interface RoundStart {
  * existing branch only for rework or a resumed attempt. A later round starts
  * where the previous round's push left the branch, so its bundle and push
  * cover only its own commits, onto the branch as it now is.
+ *
+ * A resumed attempt's branch already holds the earlier attempt's pushed work
+ * (only a run whose tests failed, or a failure that saved work, is resumed),
+ * so its round 1 starts as pushed, like a later round: with no new commits,
+ * that branch head is what is tested, not reported as no changes. A rework
+ * turn with no new commits is still no changes: its pull request is open and
+ * the reply says nothing was changed.
  */
 export function roundStartFor(ctx: WorkContext, start: RoundStart | null | undefined): RoundStart {
   if (start) return { ...start, commit: assertCommitSha(start.commit, 'round start commit') };
+  const resumed = ctx.resumedFrom !== undefined && ctx.rework === undefined;
   return {
     commit: ctx.baseCommit,
     existing: ctx.rework !== undefined || ctx.resumedFrom !== undefined,
-    pushed: false,
+    pushed: resumed,
   };
 }
 
@@ -285,9 +293,9 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
   const digest = plan.ok ? { plan: planDigest(plan.plan) } : {};
 
   if (commitCount === 0 && start.pushed) {
-    // Nothing new this round, but earlier rounds' work is on the branch: that
-    // pushed head is what is tested.
-    log.info('no new commits this round; the branch keeps the earlier rounds\' work', { incomplete, headSha: start.commit });
+    // Nothing new this round, but earlier rounds' or a resumed attempt's work
+    // is on the branch: that pushed head is what is tested.
+    log.info('no new commits this round; the branch keeps the earlier work', { incomplete, headSha: start.commit, resumed: ctx.resumedFrom !== undefined });
     await stopSessionQuietly(agentSession, log);
     const skip = salvage ? undefined : await testSkipReason(repoOf(ctx), ctx.baseBranch, deps.fileExists ?? fileOnBranch);
     if (skip) log.info('test skipped', { reason: skip });

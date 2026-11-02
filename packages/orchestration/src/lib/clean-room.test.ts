@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -269,7 +269,18 @@ describe('cleanRoomPush', () => {
     assert.equal(originRef('factorial/item'), undefined);
   });
 
-  it('never puts the token in an error, and leaves no files behind', async () => {
+  it('never puts the token in an error, and leaves no files behind', async (t) => {
+    // Other test files run in parallel processes and also create factorial-git-* workspaces in
+    // the shared temp directory (repo-seed.test.ts does in almost every case, through
+    // withGitWorkspace), so give this test a private one to compare.
+    const privateTmp = path.join(root, 'tmp');
+    mkdirSync(privateTmp);
+    const previousTmpdir = process.env.TMPDIR;
+    process.env.TMPDIR = privateTmp;
+    t.after(() => {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = previousTmpdir;
+    });
     const workspaces = () => readdirSync(tmpdir()).filter((name) => name.startsWith('factorial-git-')).sort();
     const before = workspaces();
     const error = await cleanRoomPush(params({ remoteUrl: `file://${path.join(root, 'missing.git')}`, baseCommit: 'b'.repeat(40), headSha: 'a'.repeat(40) })).then(
