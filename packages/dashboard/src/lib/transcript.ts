@@ -297,11 +297,40 @@ export interface Line {
   note?: string;
 }
 
-const agentPrefix = (event: Record<string, unknown>, agents: Map<string, string>) =>
-  typeof event.agentId === 'string' ? `${agents.get(event.agentId) ?? 'subagent'} · ` : '';
+/** A subagent as the transcript knows it from its `subagent.started`. */
+export interface Agent {
+  type: string;
+  /** 1 for one the role's own loop started, 2 for one a subagent started (#277). */
+  depth: number;
+  /** Its type, after its parent's when nested: `plan › explore`. */
+  label: string;
+}
+
+/** Records the subagent a `subagent.started` names; any other event is ignored. */
+export function noteAgent(agents: Map<string, Agent>, event: Record<string, unknown>): void {
+  if (event.type !== 'subagent.started' || typeof event.agentId !== 'string' || typeof event.agentType !== 'string') return;
+  const type = str(event.agentType);
+  const parent = typeof event.parentAgentId === 'string' ? agents.get(event.parentAgentId) : undefined;
+  agents.set(event.agentId, parent ? { type, depth: parent.depth + 1, label: `${parent.label} › ${type}` } : { type, depth: 1, label: type });
+}
+
+/** How deep an event's agent is: 0 for the role's own loop, 1 for a subagent it started, 2 for one that subagent started. */
+export function depthOf(event: Record<string, unknown>, agents: Map<string, Agent>): number {
+  if (typeof event.agentId !== 'string') return 0;
+  return agents.get(event.agentId)?.depth ?? 1;
+}
+
+const agentPrefix = (event: Record<string, unknown>, agents: Map<string, Agent>) =>
+  typeof event.agentId === 'string' ? `${agents.get(event.agentId)?.label ?? 'subagent'} · ` : '';
+
+/** What a subagent's start and end lines name it: its type and id, and who started it when nested. */
+const subagentName = (event: Record<string, unknown>, agents: Map<string, Agent>) => {
+  const parent = typeof event.parentAgentId === 'string' ? agents.get(event.parentAgentId) : undefined;
+  return `${str(event.agentType)} (${str(event.agentId).slice(-12)})${parent ? `, started by ${parent.label}` : typeof event.parentAgentId === 'string' ? ', started by a subagent' : ''}`;
+};
 
 /** What the transcript shows for one event, as text: everything is rendered by React, never as markup. */
-export function describe(entry: RunEvent, agents: Map<string, string> = new Map()): Line {
+export function describe(entry: RunEvent, agents: Map<string, Agent> = new Map()): Line {
   const event = entry.event;
   const type = str(event.type) || 'event';
   const cut = entry.truncated && entry.bytes !== undefined ? `truncated, ${fmtBytes(entry.bytes)} in full` : entry.truncated ? 'truncated' : undefined;
@@ -362,10 +391,10 @@ export function describe(entry: RunEvent, agents: Map<string, string> = new Map(
       return { kind: `retry ${num(event.attempt) ?? '?'}${max !== undefined ? `/${max}` : ''}`, text: parts.join(' · ') };
     }
     case 'subagent.started':
-      return { kind: 'subagent started', text: `${str(event.agentType)} (${str(event.agentId).slice(-12)}): its events are marked as its own` };
+      return { kind: 'subagent started', text: `${subagentName(event, agents)}: its events are marked as its own` };
     case 'subagent.ended': {
       const parts = [
-        `${str(event.agentType)} (${str(event.agentId).slice(-12)})`,
+        subagentName(event, agents),
         num(event.durationMs) !== undefined ? fmtDur((event.durationMs as number) / 1000) : '',
         num(event.toolCalls) !== undefined ? `${event.toolCalls as number} tool calls` : '',
         num(event.finalContextTokens) !== undefined ? `final context ${fmtK(event.finalContextTokens as number)}` : '',

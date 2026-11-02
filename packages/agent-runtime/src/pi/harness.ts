@@ -18,9 +18,11 @@
  *   agent_before_settle before the run may end. It also enforces the turn
  *   limit; the budget is checked after each model call.
  * - Subagents are a `task` tool that runs a child session with the subagent's
- *   prompt, tools, model and turn limit, under the same policy. pi runs the
- *   tool calls in one response at once, so at most MAX_CONCURRENT_SUBAGENTS
- *   child sessions run together; a call beyond it waits.
+ *   prompt, tools, model and turn limit, under the same policy. A subagent
+ *   whose spec names subagents (the planner names explore) gets its own `task`
+ *   tool, one level deep (#277). pi runs the tool calls in one response at
+ *   once, so at most MAX_CONCURRENT_SUBAGENTS child sessions work together; a
+ *   call beyond it waits.
  * The model is reached through pi's amazon-bedrock provider with the
  * execution role's credentials (bedrock.ts), in the version's region, and a
  * failed call is retried as patiently as Claude Code retried (PI_SETTINGS).
@@ -303,11 +305,26 @@ async function* runPi(
     return session;
   };
 
-  /** The subagent tool: one child session per call, ending at its own turn limit, at most MAX_CONCURRENT_SUBAGENTS at once. */
+  /**
+   * The subagent tool: one child session per call, ending at its own turn
+   * limit, at most MAX_CONCURRENT_SUBAGENTS working at once, the role's and
+   * nested ones together. `parent` is the subagent whose tool this is, absent
+   * for the role's own. A parent holds its slot while its children run but
+   * makes no model call until they finish, so a child takes a free slot when
+   * there is one and otherwise runs in its parent's place, one at a time:
+   * waiting on the shared slots, parents holding all of them would wait on
+   * each other for ever.
+   */
   const subagentSlots = new Slots(MAX_CONCURRENT_SUBAGENTS);
-  const taskTool = (subagents: Readonly<Record<string, SubagentSpec>>): AnyTool | undefined => {
+  const taskTool = (subagents: Readonly<Record<string, SubagentSpec>>, parent?: { agentId: string; place: Slots }): AnyTool | undefined => {
     const names = Object.keys(subagents);
     if (names.length === 0) return undefined;
+    const inSlot = <T>(work: () => Promise<T>): Promise<T> => {
+      if (!parent) return subagentSlots.run(work);
+      const free = subagentSlots.tryTake();
+      return free ? work().finally(free) : parent.place.run(work);
+    };
+    const nesting = parent ? { parentAgentId: parent.agentId } : {};
     return defineTool({
       name: PI_TOOLS.agent,
       label: 'subagent',
@@ -316,13 +333,13 @@ async function* runPi(
         subagent_type: Type.Union(names.map((name) => Type.Literal(name)), { description: 'Which subagent to run.' }),
         prompt: Type.String({ description: 'The complete brief: the subagent sees nothing else from your conversation.' }),
       }),
-      execute: (toolCallId, params) => subagentSlots.run(async () => {
+      execute: (toolCallId, params) => inSlot(async () => {
         // A call that waited for a slot while the run stopped starts nothing.
         if (stopped || abortController.signal.aborted) {
           return { content: [{ type: 'text' as const, text: 'The run has stopped; the subagent was not started.' }], details: undefined, isError: true };
         }
         const spec = subagents[params.subagent_type]!;
-        queue.push({ type: 'subagent.started', agentId: toolCallId, agentType: params.subagent_type });
+        queue.push({ type: 'subagent.started', agentId: toolCallId, agentType: params.subagent_type, ...nesting });
         const childStarted = Date.now();
         let childTurns = 0;
         let stoppedAtLimit: number | undefined;
@@ -343,7 +360,8 @@ async function* runPi(
                 }
               },
             },
-            {},
+            // One level: a nested subagent gets no agent tool, whatever its spec names.
+            { agent: parent || !spec.subagents ? undefined : taskTool(spec.subagents, { agentId: toolCallId, place: new Slots(1) }) },
             toolCallId,
           );
           child.subscribe((event) => {
@@ -361,6 +379,7 @@ async function* runPi(
             type: 'subagent.ended',
             agentId: toolCallId,
             agentType: params.subagent_type,
+            ...nesting,
             durationMs: Date.now() - childStarted,
             toolCalls,
             finalContextTokens: events.lastInput.get(toolCallId) ?? 0,

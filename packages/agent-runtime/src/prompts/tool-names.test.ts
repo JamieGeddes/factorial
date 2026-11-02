@@ -34,6 +34,9 @@ describe('prompts on another harness', () => {
       assert.match(text, /\bx_(?:read|grep|glob)\b/, name);
     }
     assert.match(prompts.builder, /x_shell, x_read, x_edit, x_write, x_grep and x_glob, the web_search tool, x_fetch, and two subagents through the x_agent tool/);
+    assert.match(prompts.plan, /the explore subagent through the x_agent tool/);
+    assert.match(prompts.plan, /ask the explore subagent through x_agent/);
+    assert.doesNotMatch(prompts.explore, /x_agent/);
   });
 
   it('send the builder and the plan subagent to the AWS documentation tools for AWS facts, and not the reviewer', () => {

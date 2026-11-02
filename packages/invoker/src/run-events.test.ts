@@ -274,6 +274,24 @@ describe('subagent runs', () => {
     ]);
   });
 
+  it("counts a nested subagent's calls toward its own type, not its parent's, and names the parent's type (#277)", () => {
+    const tally = tallyWith(
+      { type: 'subagent.started', agentId: 'toolu_plan', agentType: 'plan' },
+      call({ inputTokens: 100, outputTokens: 10 }, 'toolu_plan'),
+      { type: 'subagent.started', agentId: 'toolu_explore', agentType: 'explore', parentAgentId: 'toolu_plan' },
+      call({ inputTokens: 30, outputTokens: 3 }, 'toolu_explore'),
+      call({ inputTokens: 40, outputTokens: 4 }, 'toolu_explore'),
+      { ...subagentEnded('toolu_explore', 'explore'), parentAgentId: 'toolu_plan' },
+      subagentEnded('toolu_plan', 'plan'),
+    );
+    assert.deepEqual(tally.subagentRuns.map((run) => [run.agentType, run.parentAgentType, run.modelCalls, run.inputTokens]), [
+      ['explore', 'plan', 2, 70],
+      ['plan', undefined, 1, 100],
+    ]);
+    assert.ok(!('parentAgentType' in tally.subagentRuns[1]!));
+    assert.ok(subagentsOf(tally.subagentRuns).totals.every((total) => !('parentAgentType' in total)));
+  });
+
   it('keeps each run in order with a total per type, and counts no calls for a run whose calls were not seen', () => {
     const tally = tallyWith(
       call({ inputTokens: 100, outputTokens: 10 }, 'toolu_p'),

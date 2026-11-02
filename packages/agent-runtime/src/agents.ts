@@ -15,11 +15,22 @@ export interface SubagentSpec {
   /** `inherit` runs on the role's main model; `explore` on the Runtime version's explore model. */
   model: 'inherit' | 'explore';
   maxTurns: number;
+  /**
+   * The subagents this one may start through its own `agent` tool, which it
+   * must also list in `tools`. One level only: the harness gives a subagent
+   * started by another subagent no `agent` tool, whatever its spec says.
+   */
+  subagents?: Readonly<Record<string, SubagentSpec>>;
 }
 
 export const READ_ONLY_TOOLS: readonly ToolKind[] = ['read', 'grep', 'glob'];
 
-/** Subagents that may run at once, on any harness; a call beyond it waits for one to finish. */
+/**
+ * Subagents that may work at once, on any harness, the role's and nested ones
+ * together; a call beyond it waits for one to finish. A subagent waiting on
+ * its own subagents makes no model call, so it lends them its place: they
+ * take a free one when there is one, else run one at a time in its place.
+ */
 export const MAX_CONCURRENT_SUBAGENTS = 4;
 
 export const EXPLORE: SubagentSpec = {
@@ -43,7 +54,8 @@ export const PLAN_AGENT = 'plan';
 /**
  * The planner, inside the builder's session since phase 3.1 of
  * docs/agent-sdk-plan.md, on the builder's own model: planning is where the
- * reasoning pays. It reads, searches the web like the planner harness did,
+ * reasoning pays. It reads, delegates wide reading to explore (#277),
+ * searches the web like the planner harness did,
  * reads the pages it finds, and writes the two plan files itself: the rules
  * (tool-rules.ts) let it write nothing else, and the plan check (report.ts)
  * sends it the validation errors, so the planner fixes its own plan.
@@ -52,9 +64,10 @@ export const PLAN: SubagentSpec = {
   description:
     'Planner. Run it once, before any change, with the request and anything already on the branch; it writes /workspace/plan.json and /workspace/plan.md and replies with a short summary.',
   prompt: planPrompt,
-  tools: [...READ_ONLY_TOOLS, 'write', 'fetch', 'webSearch', 'awsDocs'],
+  tools: [...READ_ONLY_TOOLS, 'write', 'fetch', 'agent', 'webSearch', 'awsDocs'],
   model: 'inherit',
   maxTurns: 40,
+  subagents: { explore: EXPLORE },
 };
 
 export const BUILDER_SUBAGENTS: Readonly<Record<string, SubagentSpec>> = { explore: EXPLORE, [PLAN_AGENT]: PLAN };

@@ -41,10 +41,14 @@ export function callUsageOf(usage: TokenUsage, call: { model?: { id?: string } |
  * against 59,372 input tokens over its four calls. Input and cache tokens are
  * exact; when the harness reports calls before their output is finished,
  * output is a lower bound. The harness's figure is kept as
- * `finalContextTokens`.
+ * `finalContextTokens`. A nested subagent's calls carry its own agentId, so
+ * they count toward it and not the subagent that started it, which is named
+ * as `parentAgentType` (#277).
  */
 export interface SubagentRun {
   agentType: string;
+  /** The subagent that started this one; absent when the role's own loop did. */
+  parentAgentType?: string;
   durationMs: number;
   toolUseCount: number;
   modelCalls: number;
@@ -55,7 +59,7 @@ export interface SubagentRun {
   finalContextTokens: number;
 }
 
-export type SubagentTotal = Omit<SubagentRun, 'finalContextTokens'> & { runs: number };
+export type SubagentTotal = Omit<SubagentRun, 'finalContextTokens' | 'parentAgentType'> & { runs: number };
 
 const SUMMED = ['durationMs', 'toolUseCount', 'modelCalls', 'inputTokens', 'cacheReadInputTokens', 'cacheWriteInputTokens', 'outputTokensAtLeast'] as const;
 
@@ -106,6 +110,8 @@ export class RunTally {
   private events = 0;
   /** Each subagent's model calls so far, by agent id. */
   private readonly subagentCalls = new Map<string, RunUsage>();
+  /** Each subagent's type, by agent id, to name a nested one's parent. */
+  private readonly subagentTypes = new Map<string, string>();
 
   /** Takes one event and returns the log lines it is worth. */
   add(input: unknown): LogLine[] {
@@ -173,10 +179,15 @@ export class RunTally {
         return event.text.trim() ? [{ message: 'assistant text', fields: { agent, model: event.model?.id, text: tail(event.text) } }] : [];
       case 'reasoning':
         return event.text.trim() ? [{ message: 'reasoning', fields: { agent, model: event.model?.id, text: tail(event.text) } }] : [];
+      case 'subagent.started':
+        this.subagentTypes.set(event.agentId, event.agentType);
+        return [];
       case 'subagent.ended': {
         const usage = this.subagentCalls.get(event.agentId) ?? emptyRunUsage();
+        const parentAgentType = event.parentAgentId === undefined ? undefined : (this.subagentTypes.get(event.parentAgentId) ?? 'unknown');
         this.subagentRuns.push({
           agentType: event.agentType,
+          ...(parentAgentType ? { parentAgentType } : {}),
           durationMs: event.durationMs ?? 0,
           toolUseCount: event.toolCalls ?? 0,
           modelCalls: usage.modelCalls,

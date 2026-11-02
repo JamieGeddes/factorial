@@ -51,6 +51,12 @@ test("a subagent's events are marked as its own, and a cut field says so", () =>
   assert.match(html, /<span class="seq num">7<\/span>/);
 });
 
+test("a nested subagent's events are indented under its parent's (#277)", () => {
+  const entry = event({ type: 'text', text: 'x', agentId: 'e1' });
+  assert.match(render(<TranscriptEvent entry={entry} line={describe(entry)} depth={2} open onToggle={() => {}} />), /class="ev text in-agent nested"/);
+  assert.match(render(<TranscriptEvent entry={entry} line={describe(entry)} depth={1} open onToggle={() => {}} />), /class="ev text in-agent"/);
+});
+
 test('the transcript list renders only the rows in view, however many there are', () => {
   const keys = Array.from({ length: 50_000 }, (_, i) => i + 1);
   const html = render(<VirtualList keys={keys} label="Transcript" follow={false} onScrollAway={() => {}} render={(i) => <span className="row">{keys[i]}</span>} />);
