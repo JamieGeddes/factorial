@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
@@ -40,6 +40,13 @@ function git(cwd: string, args: string[], env: Record<string, string> = {}): str
 function commit(file: string, content: string, message: string, date: string): string {
   writeFileSync(path.join(work, file), content);
   git(work, ['add', file]);
+  git(work, ['commit', '--quiet', '-m', message], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
+  return git(work, ['rev-parse', 'HEAD']);
+}
+
+/** Commit everything in the agent's clone (renames, deletions, mode changes included), with a fixed author date. */
+function commitAll(message: string, date: string): string {
+  git(work, ['add', '-A']);
   git(work, ['commit', '--quiet', '-m', message], { GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date });
   return git(work, ['rev-parse', 'HEAD']);
 }
@@ -116,6 +123,54 @@ describe('cleanRoomPush', () => {
     assert.equal(git(origin, ['rev-parse', `${head}~2`]), base);
     // main is untouched
     assert.equal(originRef('main'), base);
+  });
+
+  it('keeps a rename and a deletion, under the App identity', async () => {
+    const base = git(work, ['rev-parse', 'HEAD']);
+    git(work, ['checkout', '--quiet', '-b', 'factorial/item']);
+    git(work, ['mv', 'README.md', 'GUIDE.md']);
+    commitAll('Rename the readme', '2026-10-30T12:00:00+00:00');
+    git(work, ['rm', '--quiet', 'big.txt']);
+    commitAll('Delete the big file', '2026-10-30T13:00:00+00:00');
+
+    const head = await cleanRoomPush(params({ baseCommit: base, bundle: bundle(base) }));
+
+    assert.equal(originRef('factorial/item'), head);
+    assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
+    const changes = git(origin, ['diff', '--name-status', '-M', base, head]).split('\n').sort();
+    assert.deepEqual(changes, ['D\tbig.txt', 'R100\tREADME.md\tGUIDE.md']);
+    const authors = git(origin, ['log', '--format=%an|%ae|%cn|%ce', `${base}..${head}`]).split('\n');
+    assert.deepEqual(authors, Array(2).fill(`${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}`));
+  });
+
+  it('keeps the executable bit of a new script', async () => {
+    const base = git(work, ['rev-parse', 'HEAD']);
+    git(work, ['checkout', '--quiet', '-b', 'factorial/item']);
+    writeFileSync(path.join(work, 'run.sh'), '#!/bin/sh\necho hi\n');
+    chmodSync(path.join(work, 'run.sh'), 0o755);
+    commitAll('Add a script', '2026-10-30T12:00:00+00:00');
+    assert.match(git(work, ['ls-tree', 'HEAD', 'run.sh']), /^100755 /);
+
+    const head = await cleanRoomPush(params({ baseCommit: base, bundle: bundle(base) }));
+
+    assert.equal(originRef('factorial/item'), head);
+    assert.match(git(origin, ['ls-tree', head, 'run.sh']), /^100755 blob [0-9a-f]{40}\trun\.sh$/);
+    assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
+  });
+
+  it('pushes an edit to a large file the base already has', async () => {
+    const base = git(work, ['rev-parse', 'HEAD']);
+    git(work, ['checkout', '--quiet', '-b', 'factorial/item']);
+    const lines = readFileSync(path.join(work, 'big.txt'), 'utf8').split('\n');
+    lines[500] = 'one changed line';
+    writeFileSync(path.join(work, 'big.txt'), lines.join('\n'));
+    commitAll('Edit one line of the big file', '2026-10-30T12:00:00+00:00');
+
+    const head = await cleanRoomPush(params({ baseCommit: base, bundle: bundle(base) }));
+
+    assert.equal(originRef('factorial/item'), head);
+    assert.equal(git(origin, ['show', `${head}:big.txt`]), lines.join('\n').trim());
+    assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
   });
 
   it('pushes a rework onto the existing branch as a fast-forward', async () => {
