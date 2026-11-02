@@ -6,8 +6,6 @@ import { type CheckJob, GitHubClient } from '@factorial/github-app';
 
 import { buildReworkFile, detailsFor, initialNotes, logSection } from '../lib/seed-providers.ts';
 
-import { cloneScript } from './prepare.ts';
-
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
 
@@ -23,112 +21,6 @@ const rework: ReworkContext = {
     { author: 'other-user', body: 'Overall looks good.' },
   ],
 };
-
-describe('cloneScript', () => {
-  const params = {
-    owner: 'JamieGeddes',
-    name: 'factorial',
-    branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-    token: TOKEN,
-    mode: 'create' as const,
-  };
-
-  it('fetches with the token as a header on the network commands only, never in the URL or the config, then creates the branch', () => {
-    const script = cloneScript(params);
-    const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
-    const header = `-c http.extraHeader='AUTHORIZATION: basic ${basic}'`;
-    assert.match(script, /^set -euo pipefail$/m);
-    assert.match(script, /GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=\/dev\/null/);
-    assert.match(script, /^git init --quiet \/workspace\/repo$/m);
-    assert.match(script, new RegExp(`git ${header.replaceAll('.', '\\.')} ls-remote --symref origin HEAD`));
-    assert.match(script, new RegExp(`git ${header.replaceAll('.', '\\.')} fetch --quiet origin`));
-    assert.doesNotMatch(script, /\bclone\b/);
-    assert.doesNotMatch(script, /--filter/);
-    for (const line of script.split('\n')) {
-      if (/git config|remote add/.test(line)) assert.ok(!line.includes(TOKEN) && !line.includes(basic) && !line.includes('extraHeader'), line);
-    }
-    assert.match(script, /remote add origin 'https:\/\/github\.com\/JamieGeddes\/factorial\.git'/);
-    assert.doesNotMatch(script, /ghs_t/);
-    assert.match(script, /git checkout --quiet --no-track -b 'factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' "origin\/\$default"/);
-    assert.doesNotMatch(script, /--force/);
-  });
-
-  it('fetches the work branch only when it is checked out, and a rework base branch only when given and not the default', () => {
-    const work = "'+refs/heads/factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c:refs/remotes/origin/factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'";
-    assert.ok(!cloneScript(params).includes('refs/remotes/origin/factorial/'));
-    assert.ok(cloneScript({ ...params, mode: 'checkout' }).includes(work));
-    assert.doesNotMatch(cloneScript(params), /base_refspec/);
-    const release = cloneScript({ ...params, mode: 'checkout', baseBranch: 'release/1' });
-    assert.ok(release.includes("base_refspec='+refs/heads/release/1:refs/remotes/origin/release/1'"));
-    assert.match(release, /fetch --quiet origin "\$default_refspec" "\$base_refspec" '\+refs\/heads\/factorial/);
-    // a base branch that turns out to be the default is fetched by the default's refspec, given twice, which git accepts
-    assert.ok(release.includes(`test 'release/1' != "$default" || base_refspec="$default_refspec"`));
-  });
-
-  it('rejects a base branch that is not a plain branch name', () => {
-    assert.throws(() => cloneScript({ ...params, baseBranch: 'x;rm' }), /base branch/);
-  });
-
-  it('checks out the existing rework branch instead of creating one, and reports the head', () => {
-    const script = cloneScript({ ...params, mode: 'checkout' });
-    assert.match(script, /git checkout --quiet 'origin\/factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'/);
-    assert.match(script, /git branch --quiet 'factorial\/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c'/);
-    assert.doesNotMatch(script, /checkout --quiet -b/);
-    assert.match(script, /git rev-parse HEAD/);
-    // the branch head comes before the default branch line, so the handler can tell them apart
-    assert.ok(script.indexOf('git rev-parse HEAD') < script.lastIndexOf('symbolic-ref'));
-  });
-
-  it('clears any stale rework.md from the workspace', () => {
-    assert.match(cloneScript({ ...params, mode: 'checkout' }), /rm -rf .*\/workspace\/rework\.md/);
-  });
-
-  it('writes no file of the seed: that is the seed writer\'s', () => {
-    const script = cloneScript(params);
-    assert.doesNotMatch(script, /base64|> \/workspace\/(workitem|notes)/);
-  });
-
-  it('rejects owner or repository names that are not plain GitHub names', () => {
-    assert.throws(() => cloneScript({ ...params, owner: 'evil;rm -rf /' }), /not a valid GitHub name/);
-    assert.throws(() => cloneScript({ ...params, name: "x'y" }), /not a valid GitHub name/);
-  });
-
-  it('rejects a rework branch that is not a plain branch name', () => {
-    assert.throws(() => cloneScript({ ...params, branch: 'evil;rm', mode: 'checkout' }), /not a valid branch name/);
-  });
-});
-
-describe('cloneScript pinned to a commit', () => {
-  const params = {
-    owner: 'JamieGeddes',
-    name: 'factorial',
-    branch: 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c',
-    token: TOKEN,
-    mode: 'create' as const,
-    at: 'a'.repeat(40),
-  };
-
-  it('creates a new branch at a commit another session fixed', () => {
-    assert.match(cloneScript(params), new RegExp(`git checkout --quiet --no-track -b 'factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c' '${'a'.repeat(40)}'`));
-  });
-
-  it('fails if an existing branch is not at the expected commit', () => {
-    const script = cloneScript({ ...params, mode: 'checkout' });
-    assert.match(script, new RegExp(`test "\\$\\(git rev-parse HEAD\\)" = '${'a'.repeat(40)}' \\|\\| \\{ echo 'branch factorial/7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c is not at the expected commit ${'a'.repeat(40)}' >&2; exit 1; \\}`));
-  });
-
-  it('clears any earlier diff and review when a session is set up', () => {
-    assert.match(cloneScript({ ...params, mode: 'checkout' }), /rm -rf [^\n]* \/workspace\/diff\.patch \/workspace\/review\.json/);
-  });
-
-  it('rejects a start point that is not a commit', () => {
-    assert.throws(() => cloneScript({ ...params, at: 'HEAD; rm -rf /' }), /start commit/);
-  });
-
-  it('clears plan files left in the session', () => {
-    assert.match(cloneScript(params), /rm -rf .*\/workspace\/plan\.md \/workspace\/plan\.json/);
-  });
-});
 
 describe('initialNotes', () => {
   const workItem: WorkItem = {

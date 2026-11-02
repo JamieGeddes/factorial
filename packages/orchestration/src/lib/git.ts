@@ -51,6 +51,9 @@ export interface GitOptions {
   timeoutMs?: number;
 }
 
+/** Every command that could run a hook has hooks disabled; the repositories are fresh, so none could be there anyway. */
+export const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
+
 /** Git output can be large (rev-list of a long branch); far beyond anything Collect reads. */
 const MAX_BUFFER = 64 * 1024 * 1024;
 const DEFAULT_TIMEOUT_MS = 300_000;

@@ -14,7 +14,7 @@
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { mustGit, runGit, withGitWorkspace, type GitWorkspace } from './git.ts';
+import { NO_HOOKS, mustGit, runGit, withGitWorkspace, type GitWorkspace } from './git.ts';
 import { assertCommitSha, assertGitBranch, assertGitHubName, assertGitHubToken, assertGitIdentity } from './shell.ts';
 
 export interface CleanRoomPush {
@@ -37,9 +37,6 @@ export interface CleanRoomPush {
 export function githubRemote(owner: string, name: string): string {
   return `https://github.com/${assertGitHubName(owner, 'repository owner')}/${assertGitHubName(name, 'repository name')}.git`;
 }
-
-/** Every command that could run a hook has hooks disabled; the clone is fresh, so none could be there anyway. */
-const NO_HOOKS = ['-c', 'core.hooksPath=/dev/null'];
 
 /** The commit a ref points at, or undefined when it does not exist. */
 async function refSha(workspace: GitWorkspace, cwd: string, ref: string): Promise<string | undefined> {

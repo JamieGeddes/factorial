@@ -1,6 +1,6 @@
 /**
  * PrepareReview: after the tests pass, set up a fresh reviewer session. It
- * clones the work branch, checks that its head is the tested commit, and
+ * seeds the work branch from a bundle (`lib/repo-seed.ts`), checks that its head is the tested commit, and
  * seeds it with the validated plan (read back from the artefact store, the only copy
  * no agent has touched), the builder's summary and the diff against the base
  * branch (`REVIEW_PROVIDERS`). The session is new, so the changed paths computed here are trusted;
@@ -44,7 +44,7 @@ import { recordProgress } from '../lib/table.ts';
 import { SENSITIVE_PATHS_SECTION, diffProvider, notesProvider, planProvider, requestProvider, sensitivePathsProvider, summaryProvider, reworkProvider } from '../lib/seed-providers.ts';
 import { sectionText, type SeedProvider } from '../lib/seed.ts';
 
-import { cloneSession, placeSeed } from './prepare.ts';
+import { seedCheckout, placeSeed } from './prepare.ts';
 
 export interface PrepareReviewInput extends ProgressInput {
   ctx: WorkContext;
@@ -96,17 +96,19 @@ export const handler = staged('prepare-review', (input: PrepareReviewInput) => r
     branch: ctx.branch,
     at: headSha,
     existing: true,
+    artefactPrefix: ctx.artefactPrefix,
+    stage: 'review',
     ...(ctx.rework ? { rework: ctx.rework } : {}),
   } as const;
-  const cloned = await cloneSession(session);
-  // Everything the session is asked here is read before the seed is placed, from the clone.
-  const facts = parseReviewSeed((await mustRun(cloned.target, reviewFactsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
+  const seeded = await seedCheckout(session);
+  // Everything the session is asked here is read before the seed is placed, from the checkout.
+  const facts = parseReviewSeed((await mustRun(seeded.target, reviewFactsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
   const { rules, problems } = sensitiveRules(facts.rulesText);
   if (problems.length > 0) log.error("ignoring the repository's sensitive-path rules", { problems });
   const patterns = contentPatterns(rules);
   const contentMatches = patterns.length === 0
     ? []
-    : parseContentMatches((await mustRun(cloned.target, contentMatchScript({ baseBranch: ctx.baseBranch, patterns }), 300)).stdout, patterns.length);
+    : parseContentMatches((await mustRun(seeded.target, contentMatchScript({ baseBranch: ctx.baseBranch, patterns }), 300)).stdout, patterns.length);
   const sensitive = sensitiveChanges(facts.changedPaths, rules, contentMatches);
 
   // Package files and the target's PR settings, both read from git in this fresh session. A failure
@@ -115,7 +117,7 @@ export const handler = staged('prepare-review', (input: PrepareReviewInput) => r
   let dependenciesUnknown = false;
   let settingsText: string | undefined;
   try {
-    const deps = parseDeps((await mustRun(cloned.target, depsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
+    const deps = parseDeps((await mustRun(seeded.target, depsScript({ baseBranch: ctx.baseBranch }), 300)).stdout);
     dependencies = dependencyChanges(deps.files, deps.lockText);
     settingsText = deps.settingsText;
   } catch (error) {
@@ -123,8 +125,8 @@ export const handler = staged('prepare-review', (input: PrepareReviewInput) => r
     log.error('could not read the package files for the pull request', { error });
   }
   // The seed: the last writes into the session, then the workspace is the model's.
-  const seed = await placeSeed(cloned, session, REVIEW_PROVIDERS, { plan: { json: planJson, markdown: planMarkdown }, summary: input.collect.summary, sensitive });
-  await handOverWorkspace(cloned.target);
+  const seed = await placeSeed(seeded, session, REVIEW_PROVIDERS, { plan: { json: planJson, markdown: planMarkdown }, summary: input.collect.summary, sensitive });
+  await handOverWorkspace(seeded.target);
   const deploySettings = parseDeploySettings(settingsText);
   if (deploySettings.problems.length > 0) log.error("ignoring the repository's pull request settings", { problems: deploySettings.problems });
   const prFacts = prFactsDigest({
