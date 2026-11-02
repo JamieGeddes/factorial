@@ -156,6 +156,10 @@ describe('cleanRoomPush', () => {
     assert.equal(originRef('factorial/item'), head);
     assert.match(git(origin, ['ls-tree', head, 'run.sh']), /^100755 blob [0-9a-f]{40}\trun\.sh$/);
     assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
+    assert.equal(
+      git(origin, ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI', head]),
+      `${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}|2026-10-30T12:00:00+00:00`,
+    );
   });
 
   it('pushes an edit to a large file the base already has', async () => {
@@ -171,6 +175,10 @@ describe('cleanRoomPush', () => {
     assert.equal(originRef('factorial/item'), head);
     assert.equal(git(origin, ['show', `${head}:big.txt`]), lines.join('\n').trim());
     assert.equal(git(origin, ['rev-parse', `${head}^{tree}`]), git(work, ['rev-parse', 'HEAD^{tree}']));
+    assert.equal(
+      git(origin, ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI', head]),
+      `${BOT.name}|${BOT.email}|${BOT.name}|${BOT.email}|2026-10-30T12:00:00+00:00`,
+    );
   });
 
   it('pushes a rework onto the existing branch as a fast-forward', async () => {
