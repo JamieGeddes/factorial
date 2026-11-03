@@ -33,7 +33,7 @@ Delivery never fails the turn: a reporter writes nothing but its own delivery re
 | `threadKey` | The thread, once Intake has found it. |
 | `route` | The route Intake chose (`change`, `propose`, `refuse`); absent when the turn ended before Intake chose one. |
 | `source` | Copied from the WorkItem: where the request came from, and so which reporter delivers it. |
-| `inReplyTo` | Copied from the WorkItem when present: the pull request the turn continued. |
+| `inReplyTo` | Copied from the WorkItem when present: the pull request or the issue the turn continued, `kind` `pull-request` or `issue` (#169). |
 | `repository` | Where the code lives. Not always where the request came from. |
 | `result` | `pr-opened`, `pr-updated`, `proposed`, `no-changes`, `tests-failed`, `invalid-plan`, `failed` or `refused`. `proposed` ends a `propose` turn: a valid plan, nothing pushed; it requires `route` `propose` and `branch`, and never carries `pullRequest` or `savedWork`. |
 | `reason` | For `refused` only: `not-eligible`, `busy`, `rework-limit` or `covered-by-review`. |
@@ -52,6 +52,7 @@ At least once. A retried terminal state emits the same outcome again, and EventB
 
 ## Change log
 
+- **2026-11: v1, additive.** `inReplyTo.kind` `issue`, as the WorkItem gained it (#169, #299): a turn asked for in an issue's conversation is answered there.
 - **2026-11: v1, additive.** Result `proposed` and route `propose`, for plans proposed for approval (#169).
 - **2026-10: v1.** One outcome per turn, from Intake, Report and OpenPullRequest, delivered by the GitHub reporter (#165).
 - **2026-11: v1, `testedSha` optional on `pr-opened` and `pr-updated`** (#167). A target with no `.factorial/verifiers.json` gets an unverified pull request (decided 2026-10-31), whose outcome has no tested commit; requiring one meant that outcome failed validation and was never emitted. No reader relied on it being present, so v1 is loosened in place.

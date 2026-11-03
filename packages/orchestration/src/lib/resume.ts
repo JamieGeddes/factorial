@@ -17,11 +17,14 @@ export interface Attempt {
 
 /**
  * The ledger key that groups attempts at the same source in the same
- * repository. An issue is one source whichever label it was given, so a
- * proposed plan and the turn that approves it share a key (#169).
+ * repository. An issue is one source whichever label it was given, or
+ * comment made on it, so a proposed plan and the turn that approves or
+ * revises it share a key (#169).
  */
 export function sourceKey(workItem: WorkItem): string {
   const { owner, name } = workItem.repository;
+  // A comment in an issue's conversation is a turn on that issue: its key is the issue's, not the comment's.
+  if (workItem.inReplyTo?.kind === 'issue') return `${TRIGGER_TYPES.githubIssue}#${owner}/${name}#${workItem.inReplyTo.number}`;
   const type = isIssueSource(workItem.source) ? TRIGGER_TYPES.githubIssue : workItem.source.type;
   return `${type}#${owner}/${name}#${workItem.source.id}`;
 }

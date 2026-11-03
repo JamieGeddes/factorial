@@ -7,7 +7,7 @@ import { type CheckJob, GitHubClient } from '@factorial/github-app';
 import { planSha256 } from '../lib/proposal-view.ts';
 import { MAX_REWORK_BYTES, buildReworkFile, detailsFor, initialNotes, logSection } from '../lib/seed-providers.ts';
 
-import { ApprovedPlanMismatchError, checkApprovedPlan } from './prepare.ts';
+import { ApprovedPlanMismatchError, checkApprovedPlan, checkProposedPlan, revisionFor } from './prepare.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
@@ -305,5 +305,44 @@ describe('checkApprovedPlan (#169)', () => {
     assert.throws(() => checkApprovedPlan(proposal, changed), ApprovedPlanMismatchError);
     assert.throws(() => checkApprovedPlan(proposal, undefined), ApprovedPlanMismatchError);
     assert.throws(() => checkApprovedPlan({ ...proposal, planSha256: planSha256('{}') }, '{}'), ApprovedPlanMismatchError);
+  });
+});
+
+describe('revisionFor (#169)', () => {
+  const json = JSON.stringify({
+    schemaVersion: 1,
+    summary: 'Rename the helper.',
+    steps: [{ id: 'rename', description: 'Rename it.', files: ['src/a.ts'], verification: 'npm test passes' }],
+    tests: { run: ['npm test'], add: [] },
+    risks: [],
+    openQuestions: [],
+  });
+  const proposal = { workItemId: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d', artefactPrefix: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d/1/', planSha256: planSha256(json) };
+  const comment = (body: string) =>
+    ({
+      schemaVersion: 2,
+      id: '6d2f8a1c-4b3e-4f5a-9c7d-8e9f0a1b2c3d',
+      source: { type: 'github-issue-comment', id: '4123456789', url: 'https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789' },
+      repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' },
+      inReplyTo: { kind: 'issue', number: 169 },
+      title: 'Comment on #169: Propose',
+      body,
+      requestedBy: 'JamieGeddes',
+      createdAt: '2026-11-03T15:00:00Z',
+    }) as WorkItem;
+
+  it('starts from the plan as shown and the change asked for, redacted', () => {
+    const plan = checkProposedPlan(proposal, json);
+    const token = `ghp_${'a'.repeat(36)}`;
+    const revision = revisionFor(comment(`revise: skip the rename, token ${token}`), proposal, plan);
+    assert.equal(revision.proposal, proposal.workItemId);
+    assert.match(revision.previous, /Step 1: rename/);
+    assert.match(revision.request, /^skip the rename/);
+    assert.ok(!revision.request.includes(token));
+    assert.equal(revision.by, 'JamieGeddes');
+  });
+
+  it('is refused for a comment that asks for no revision', () => {
+    assert.throws(() => revisionFor(comment('approve'), proposal, checkProposedPlan(proposal, json)), /revise/);
   });
 });

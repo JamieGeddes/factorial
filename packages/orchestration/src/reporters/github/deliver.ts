@@ -52,7 +52,7 @@ export interface DeliveryPlan {
   reviewers: string[];
 }
 
-/** Where the requester is told: the pull request the turn continued, otherwise the source issue, if any. */
+/** Where the requester is told: the pull request or issue the turn continued, otherwise the source issue, if any. */
 export function commentTarget(outcome: Outcome): number | undefined {
   if (outcome.inReplyTo) return outcome.inReplyTo.number;
   if (!isIssueSource(outcome.source)) return undefined;
@@ -70,8 +70,8 @@ export function planDelivery(outcome: Outcome, delivery: Delivery | undefined): 
   if (target === undefined) return undefined;
   switch (outcome.result) {
     case 'pr-opened':
-      // Only an issue is told: a pull request that opened another would be told by its own outcome.
-      if (outcome.inReplyTo || !outcome.pullRequest) return undefined;
+      // Only an issue is told, whether the turn came from its label or its conversation: a pull request that opened another would be told by its own outcome.
+      if (outcome.inReplyTo?.kind === 'pull-request' || !outcome.pullRequest) return undefined;
       return { target, body: pullRequestOpenedMessage(outcome.pullRequest.url), reviewers: [] };
     case 'pr-updated': {
       const { reply, reviewers } = expect(delivery, 'rework-reply');
@@ -132,7 +132,7 @@ export async function deliverOutcome(outcome: Outcome, deps: ReporterDeps): Prom
   if (claim.kind === 'in-progress') throw new DeliveryInProgressError(outcome.workItemId);
 
   const repo = { owner: outcome.repository.owner, name: outcome.repository.name };
-  const onPullRequest = outcome.inReplyTo !== undefined;
+  const onPullRequest = outcome.inReplyTo?.kind === 'pull-request';
   const permissions: TokenPermissions = { issues: 'write', ...(onPullRequest || plan.reviewers.length > 0 ? { pull_requests: 'write' } : {}) };
   try {
     const client = await deps.github(repo, permissions);

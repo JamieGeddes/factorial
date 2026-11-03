@@ -20,5 +20,6 @@ export const builder: RoleManifest = {
     buildPrompt(workItem, branch, baseBranch, options.round ?? 1, options.resumed ?? false, {
       ...(options.route ? { route: options.route } : {}),
       ...(options.approves ? { approves: options.approves } : {}),
+      ...(options.revises ? { revises: options.revises } : {}),
     }),
 };

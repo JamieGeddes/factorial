@@ -47,6 +47,21 @@ describe('the lists', () => {
     assert.ok(!seed.files.some((f) => f.path === 'route.json'));
   });
 
+  it('seed a turn asked for on an issue with the issue as its Task, not the comment (#169)', async () => {
+    const request = { title: 'Propose and Clarify', body: 'The issue body.', url: 'https://github.com/JamieGeddes/factorial/issues/169' };
+    const seed = await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem, { request }));
+    const notes = file(seed, 'notes.md');
+    assert.match(notes, /Copied from the issue by the orchestrator/);
+    assert.match(notes, /Source: https:\/\/github\.com\/JamieGeddes\/factorial\/issues\/169\n\n## Propose and Clarify\n\nThe issue body\./);
+  });
+
+  it('seed a revision with the previous plan and what was asked', async () => {
+    const revision = { proposal: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d', previous: 'Step 1: rename', request: 'skip step 3', by: 'JamieGeddes' };
+    const seed = await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem, { route: 'propose', revision }));
+    assert.deepEqual(Object.keys(snapshotOf(seed).files), ['workitem.json', 'notes.md', 'route.json', 'revision.md']);
+    assert.match(file(seed, 'revision.md'), /## What was asked\n\nskip step 3\n\n## The plan proposed before, as it was shown\n\nStep 1: rename/);
+  });
+
   it('name every provider, so a refusal says whose it was', () => {
     for (const p of [...PREPARE_PROVIDERS, ...CONTINUE_PROVIDERS, ...REVIEW_PROVIDERS]) assert.notEqual(p.name, '');
   });

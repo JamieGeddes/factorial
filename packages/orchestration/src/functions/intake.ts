@@ -10,6 +10,10 @@
  *   the `propose` route: the builder plans and changes nothing (#169).
  * - An issue labelled for work whose newest turn proposed a plan approves
  *   it: the `change` route on the proposal's thread, from its stored plan.
+ * - A comment in an issue's conversation (`inReplyTo` the issue) is read
+ *   by what it says: `plan this` proposes, `approve` approves the proposal
+ *   and `revise: …` proposes again from it, on its thread. Anything else is
+ *   refused with a reply that says what is understood.
  * - A turn on a pull request finds the thread of the pull request.
  * - An item in the superseded rework `context` shape is refused: nothing
  *   emits it since #163, and nothing downstream reads it.
@@ -31,7 +35,9 @@ import { assertIntakeRecord, type IntakeRecord, type RefusalStatus } from '../li
 import { unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { emitOutcome } from '../lib/outcome.ts';
 import { staged, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
+import { issueRequest, storeIssueRequest } from '../lib/issue-request.ts';
 import { REPORT_ARTEFACT, type ReportFile } from '../lib/report-file.ts';
+import type { SeedRequest } from '../lib/seed.ts';
 import { nextAttempt, resumableAttempt, sourceKey, type Attempt } from '../lib/resume.ts';
 import { commentToAcknowledge, inlineCommentIdFromUrl } from '../lib/rework-points.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
@@ -48,7 +54,7 @@ import {
   type Thread,
 } from '../lib/thread.ts';
 import { acceptWorkItem, attemptRecord, pullRequestKey, recordProgress, statusOf, turnsOf, type Turn } from '../lib/table.ts';
-import { continuedPullRequest, reworkCause } from '../lib/turn.ts';
+import { continuedIssue, continuedPullRequest, issueCommand, issueCommandHelp, reworkCause } from '../lib/turn.ts';
 
 interface IntakeInput extends ProgressInput {
   workItem: unknown;
@@ -68,6 +74,8 @@ export type IntakeResult =
       resumedFrom?: Attempt;
       rework?: ReworkTurn;
       approves?: Proposal;
+      /** For a revise turn, the proposal whose plan the new proposal starts from. */
+      revises?: Proposal;
     }
   | { route: 'refuse'; attempt: number; artefactPrefix: string; status: RefusalStatus; reason: string };
 
@@ -75,16 +83,19 @@ export type IntakeResult =
 export type Decision =
   | {
       route: 'change' | 'propose';
-      turn: 'new' | 'resume' | 'rework' | 'approve';
+      turn: 'new' | 'resume' | 'rework' | 'approve' | 'revise';
       reason: string;
       thread: Thread;
       resumedFrom?: Attempt;
       rework?: ReworkTurn;
       approves?: Proposal;
+      revises?: Proposal;
+      /** For a turn asked for in an issue's conversation: the issue as read now, stored as the turn's request. */
+      request?: SeedRequest;
     }
   | {
       route: 'refuse';
-      turn: 'new' | 'resume' | 'rework' | 'approve';
+      turn: 'new' | 'resume' | 'rework' | 'approve' | 'revise';
       status: RefusalStatus;
       reason: string;
       reply?: string;
@@ -209,6 +220,63 @@ async function approveTurn(workItem: WorkItem, found: { thread: Thread; proposal
   };
 }
 
+/**
+ * A comment in an issue's conversation (#169). The issue must be open and an
+ * issue, read from GitHub; then what was said decides the turn. A person
+ * asked, so every refusal carries a reply, posted on the issue by the
+ * reporter.
+ */
+async function issueTurn(repo: Repo, workItem: WorkItem, issue: { number: number; url: string }, log: Logger): Promise<Decision> {
+  const slug = (await botLogin()).replace(/\[bot\]$/, '');
+  const refuse = (reason: string, reply: string, extra: { status?: RefusalStatus; turn?: Decision['turn']; thread?: Thread } = {}): Decision => ({
+    route: 'refuse',
+    turn: extra.turn ?? 'new',
+    status: extra.status ?? 'not-eligible',
+    reason,
+    reply,
+    ...(extra.thread ? { thread: extra.thread } : {}),
+  });
+
+  const client = await repositoryClient(repo, { issues: 'read' });
+  const state = await client.getIssue(repo, issue.number);
+  if (state.isPullRequest) return refuse(`#${issue.number} is a pull request, not an issue`, `#${issue.number} is a pull request: ask for changes there as a review or a comment.`);
+  if (state.state !== 'open') return refuse(`issue #${issue.number} is ${state.state}`, `This issue is ${state.state}, so Factorial has not acted on it. Reopen it to ask again.`);
+
+  // The request as it is now, which every session for the turn is seeded from.
+  const request = issueRequest(state, issue.url);
+  const command = issueCommand(workItem.body);
+  switch (command.kind) {
+    case 'plan': {
+      const decision = await requestTurn(repo, workItem, undefined, 'propose');
+      return decision.route === 'refuse' ? decision : { ...decision, request };
+    }
+    case 'approve': {
+      const found = await approvable(workItem, log);
+      if (!found) return refuse('no proposed plan to approve', `There is no proposed plan on this issue to approve.\n\n${issueCommandHelp(slug)}`, { turn: 'approve' });
+      const decision = await approveTurn(workItem, found);
+      return decision.route === 'refuse' ? { ...decision, reply: 'Factorial is already working on this issue, so the approval was not started. Ask again once it has replied.' } : { ...decision, request };
+    }
+    case 'revise': {
+      const found = await approvable(workItem, log);
+      if (!found) return refuse('no proposed plan to revise', `There is no proposed plan on this issue to revise.\n\n${issueCommandHelp(slug)}`, { turn: 'revise' });
+      const admission = await claimThread(workItem.id, undefined, found.thread);
+      if (!admission.ok) {
+        return refuse(admission.reason, `Factorial is already working on this issue, so the revision was not started. Ask again once it has replied.`, { status: admission.status, turn: 'revise', thread: found.thread });
+      }
+      return {
+        route: 'propose',
+        turn: 'revise',
+        reason: `Revises the plan proposed by work item ${found.proposal.workItemId}, as asked in a comment on issue #${issue.number}.`,
+        thread: found.thread,
+        revises: found.proposal,
+        request,
+      };
+    }
+    case 'unknown':
+      return refuse('the comment asks for nothing Factorial understands on an issue', issueCommandHelp(slug));
+  }
+}
+
 /** A new request, or a new attempt at one: the thread of the branch it works on, opened if new. A request for a plan takes the `propose` route. */
 async function requestTurn(repo: Repo, workItem: WorkItem, resumedFrom: Attempt | undefined, route: 'change' | 'propose' = 'change'): Promise<Decision> {
   const branch = resumedFrom?.branch ?? branchFor(workItem);
@@ -297,6 +365,7 @@ export function intakeRecord(workItemId: string, decision: Decision, replied = f
   };
   if (decision.route !== 'refuse') {
     if (decision.approves) record.approves = decision.approves.workItemId;
+    if (decision.revises) record.revises = decision.revises.workItemId;
     if (decision.rework) {
       record.pullRequest = decision.rework.pullRequest.number;
       record.cause = decision.rework.cause;
@@ -341,11 +410,12 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
 
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const pr = continuedPullRequest(workItem);
+  const issue = continuedIssue(workItem);
   const superseded = workItem.context !== undefined;
-  // A request for a plan always starts afresh; a request for work first looks for a proposal to approve, then for an attempt to resume.
+  // A request for a plan always starts afresh; a request for work first looks for a proposal to approve, then for an attempt to resume. A comment on an issue says what it wants (issueTurn).
   const forPlan = workItem.source.type === TRIGGER_TYPES.githubIssuePlan;
-  const proposal = pr || superseded || forPlan ? undefined : await approvable(workItem, stageLog);
-  const resumedFrom = pr || superseded || forPlan || proposal ? undefined : await resumable(repo, workItem, stageLog);
+  const proposal = pr || issue || superseded || forPlan ? undefined : await approvable(workItem, stageLog);
+  const resumedFrom = pr || issue || superseded || forPlan || proposal ? undefined : await resumable(repo, workItem, stageLog);
   const attempt = nextAttempt(resumedFrom);
   const log = stageLog.with({ attempt });
   const prefix = artefactPrefix(workItem.id, attempt);
@@ -358,14 +428,16 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
     ? { route: 'refuse', turn: 'rework', status: 'not-eligible', reason: 'the rework context is superseded by inReplyTo (#163); the item names no pull request Intake reads' }
     : pr
       ? await pullRequestTurn(repo, workItem, pr)
-      : proposal
+      : issue
+        ? await issueTurn(repo, workItem, issue, log)
+        : proposal
         ? await approveTurn(workItem, proposal)
         : await requestTurn(repo, workItem, resumedFrom, forPlan ? 'propose' : 'change');
   const threadKey = decision.thread?.threadKey;
 
   if (decision.route === 'refuse') {
-    // A person who asked is answered on the pull request, by the reporter.
-    const reply = decision.reply !== undefined && decision.prNumber !== undefined ? decision.reply : undefined;
+    // A person who asked is answered where they asked, on the pull request or the issue, by the reporter.
+    const reply = decision.reply !== undefined && (decision.prNumber !== undefined || issue !== undefined) ? decision.reply : undefined;
     const record = intakeRecord(workItem.id, decision, reply !== undefined);
     await recordProgress(workItem.id, decision.status, {
       route: 'refuse',
@@ -406,9 +478,12 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
     threadKey,
     branch: decision.thread.branch,
     ...(decision.approves ? { approves: decision.approves.workItemId } : {}),
+    ...(decision.revises ? { revises: decision.revises.workItemId } : {}),
   });
+  // Stored before the intake record, which says the turn was admitted: a turn on an issue is never seeded without its request.
+  if (decision.request) await storeIssueRequest(prefix, decision.request);
   await putJsonArtefact(prefix, 'intake/intake.json', record);
-  if (decision.rework) await acknowledge(repo, workItem, log);
+  if (decision.rework || issue) await acknowledge(repo, workItem, log);
   log.info('admitted', { route: decision.route, turn: decision.turn, threadKey, ...(decision.approves ? { approves: decision.approves.workItemId } : {}) });
   return {
     route: decision.route,
@@ -419,5 +494,6 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
     ...(decision.resumedFrom ? { resumedFrom: decision.resumedFrom } : {}),
     ...(decision.rework ? { rework: decision.rework } : {}),
     ...(decision.approves ? { approves: decision.approves } : {}),
+    ...(decision.revises ? { revises: decision.revises } : {}),
   };
 });

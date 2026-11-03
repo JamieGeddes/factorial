@@ -94,6 +94,24 @@ describe('GitHubClient', () => {
     assert.deepEqual(seen[0]?.body, { reviewers: ['alice', 'bob'] });
   });
 
+  it('reads an issue trimmed to its request, state and author, and says whether it is a pull request', async () => {
+    const seen: Seen[] = [];
+    const issue = { number: 169, state: 'open', title: 'Propose', body: null, html_url: 'https://github.com/JamieGeddes/factorial/issues/169', user: { id: 7, login: 'alice' } };
+    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, issue, seen) });
+    assert.deepEqual(await client.getIssue(repo, 169), {
+      number: 169,
+      state: 'open',
+      title: 'Propose',
+      body: '',
+      htmlUrl: 'https://github.com/JamieGeddes/factorial/issues/169',
+      author: { id: 7, login: 'alice' },
+      isPullRequest: false,
+    });
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/169');
+    const pr = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { ...issue, pull_request: { url: 'x' } }, []) });
+    assert.equal((await pr.getIssue(repo, 169)).isPullRequest, true);
+  });
+
   it('reads a pull request trimmed to its state, author and branches', async () => {
     const seen: Seen[] = [];
     const client = new GitHubClient({

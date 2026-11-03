@@ -15,6 +15,25 @@ export function continuesPullRequest(workItem: WorkItem): boolean {
   return workItem.inReplyTo?.kind === 'pull-request';
 }
 
+/**
+ * The request, as a first message shows it. A turn asked for in an issue's
+ * conversation (#169) works on the issue, which the orchestrator copies to
+ * the notes' `# Task`; the message shows the comment that asked, and says so.
+ */
+export function requestLines(workItem: WorkItem): string[] {
+  if (workItem.inReplyTo?.kind === 'issue') {
+    return [
+      `## The request is issue #${workItem.inReplyTo.number}`,
+      '',
+      'It is copied to /workspace/notes.md under "# Task": read it there. This turn was asked for in a comment on the issue:',
+      '',
+      ...workItem.body.trim().split('\n').map((line) => `> ${line}`),
+      '',
+    ];
+  }
+  return [`## ${workItem.title}`, '', workItem.body.trim() || '_No further description was given._', ''];
+}
+
 /** The rework instructions added to the prompt when the item carries rework context. */
 export function reworkInstructions(): string[] {
   return [
@@ -38,6 +57,13 @@ export function proposalInstructions(): string[] {
   ];
 }
 
+/** A revision of a proposal (#169): what to start from, before the proposal's own instructions. */
+export function revisionInstructions(proposal: string): string[] {
+  return [
+    `This revises the plan proposed by work item ${proposal}. /workspace/revision.md holds that plan, as the requester was shown it, and what they asked to change. Give the plan subagent both, and have it write a whole new plan that makes the change asked for and keeps the rest unless the change requires otherwise.`,
+  ];
+}
+
 /** The user message that starts the builder's session. The system prompt is the Runtime version's. */
 export function buildPrompt(
   workItem: WorkItem,
@@ -45,7 +71,7 @@ export function buildPrompt(
   baseBranch: string,
   round = 1,
   resumed = false,
-  turn: { route?: SessionRoute; approves?: string } = {},
+  turn: { route?: SessionRoute; approves?: string; revises?: string } = {},
 ): string {
   const isRework = continuesPullRequest(workItem);
   const head = [
@@ -56,16 +82,14 @@ export function buildPrompt(
     `Branch: ${branch} (based on ${baseBranch})`,
     `Requested by: ${workItem.requestedBy}`,
     '',
-    `## ${workItem.title}`,
-    '',
-    workItem.body.trim() || '_No further description was given._',
-    '',
+    ...requestLines(workItem),
   ];
   if (turn.route === 'propose') {
     return [
       ...head,
       '---',
       'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json, and /workspace/notes.md starts with this request under "# Task".',
+      ...(turn.revises ? revisionInstructions(turn.revises) : []),
       ...proposalInstructions(),
     ].join('\n');
   }
@@ -104,10 +128,7 @@ export function reviewPrompt(workItem: WorkItem, branch: string, baseBranch: str
     `Branch under review: ${branch} (against ${baseBranch})`,
     `Requested by: ${workItem.requestedBy}`,
     '',
-    `## ${workItem.title}`,
-    '',
-    workItem.body.trim() || '_No further description was given._',
-    '',
+    ...requestLines(workItem),
     ...(isRework ? ['This is rework of an existing pull request: /workspace/rework.md lists every point the change must address.', ''] : []),
     '---',
     'The repository is cloned at /workspace/repo at the head of the branch above, the commit the tests passed on. Read it; do not change it.',

@@ -16,7 +16,7 @@ import { continuingSection } from './continue-files.ts';
 import type { Attempt } from './resume.ts';
 import { MAX_SENSITIVE_JSON_CHARS, sensitivePathsJson } from './review-files.ts';
 import { inlineCommentIdFromUrl, reviewIdFromUrl, reworkPoints } from './rework-points.ts';
-import type { SeedPart, SeedProvider } from './seed.ts';
+import type { SeedPart, SeedProvider, SeedRequest } from './seed.ts';
 import { logExcerpt } from './log-excerpt.ts';
 import type { SessionRole } from './session.ts';
 import { assertGitBranch, shellQuote } from './shell.ts';
@@ -34,6 +34,8 @@ const MAX_JOB_LOG_BYTES = 64 * KIB;
 const MIN_JOB_LOG_BYTES = 4 * KIB;
 /** Room for a job's heading and fence. */
 const JOB_SECTION_OVERHEAD = 1 * KIB;
+/** A revision's request, as the comment gave it, and the previous plan as shown: each well inside a comment. */
+export const MAX_REVISION_BYTES = 128 * KIB;
 /** The plan files are read back from the artefact store at most this large. */
 export const MAX_PLAN_BYTES = 64 * KIB;
 /** The builder's summary, which Collect reads at most 60000 bytes of. */
@@ -48,18 +50,22 @@ export const MAX_DIFF_BYTES = 5 * 1024 * KIB;
  */
 export function initialNotes(
   workItem: WorkItem,
-  options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole; route?: 'change' | 'propose'; approves?: string } = {},
+  options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole; route?: 'change' | 'propose'; approves?: string; request?: SeedRequest } = {},
 ): string {
+  // A turn asked for in an issue's conversation works on the issue: its request is the issue, not the comment.
+  const request = options.request ?? { title: workItem.title, body: workItem.body, url: workItem.source.url };
   return [
     '# Task',
     '',
-    '_Copied from the work item by the orchestrator. Do not edit this section; re-read it before you plan, before each commit and before writing summary.md._',
+    options.request
+      ? `_Copied from the issue by the orchestrator: the turn was asked for in a comment on it (${workItem.source.url}). Do not edit this section; re-read it before you plan, before each commit and before writing summary.md._`
+      : '_Copied from the work item by the orchestrator. Do not edit this section; re-read it before you plan, before each commit and before writing summary.md._',
     '',
-    `Source: ${workItem.source.url}`,
+    `Source: ${request.url}`,
     '',
-    `## ${workItem.title}`,
+    `## ${request.title}`,
     '',
-    workItem.body.trim() || '_No further description was given._',
+    request.body.trim() || '_No further description was given._',
     ...(options.rework ? ['', 'This is rework: every numbered point in /workspace/rework.md must be addressed, and answered by its number under `## Rework points` in summary.md.'] : []),
     ...(options.resumedFrom ? ['', ...previousAttemptSection(options.resumedFrom)] : []),
     ...(options.route === 'propose' ? ['', ...proposalSection()] : []),
@@ -222,6 +228,7 @@ export const notesProvider: SeedProvider = (context): SeedPart => ({
         ...(context.resumedFrom ? { resumedFrom: context.resumedFrom } : {}),
         ...(context.route ? { route: context.route } : {}),
         ...(context.approves ? { approves: context.approves } : {}),
+        ...(context.request ? { request: context.request } : {}),
       }),
       cap: MAX_NOTES_BYTES,
       truncate: true,
@@ -243,6 +250,7 @@ export const roundNotesProvider: SeedProvider = (context): SeedPart => {
       role: context.role,
       ...(context.resumedFrom ? { resumedFrom: context.resumedFrom } : {}),
       ...(context.approves ? { approves: context.approves } : {}),
+      ...(context.request ? { request: context.request } : {}),
     });
   const section = continuingSection({
     round: context.round,
@@ -286,6 +294,31 @@ export const planProvider: SeedProvider = (context): SeedPart => {
 export const routeProvider: SeedProvider = (context): SeedPart => {
   if (context.route !== 'propose') return {};
   return { files: [{ path: ROUTE_FILE, content: routeFileContent('propose'), cap: 1024 }] };
+};
+
+/**
+ * A revision (#169): the plan proposed before, as its approver was shown it
+ * (rendered by the orchestrator from the stored plan.json), and what the
+ * requester asked to change, redacted. The planner starts from both.
+ */
+export const revisionProvider: SeedProvider = (context): SeedPart => {
+  const { revision } = context;
+  if (revision === undefined) return {};
+  const content = [
+    '# Revision requested',
+    '',
+    `_Written by the orchestrator. @${revision.by} asked for the plan proposed by work item ${revision.proposal} to be revised. Plan again from the Task in /workspace/notes.md, the plan below and this request; the new plan replaces the old one whole._`,
+    '',
+    '## What was asked',
+    '',
+    revision.request,
+    '',
+    '## The plan proposed before, as it was shown',
+    '',
+    revision.previous,
+    '',
+  ].join('\n');
+  return { files: [{ path: 'revision.md', content, cap: MAX_REVISION_BYTES, truncate: true }] };
 };
 
 /** The builder's account of its work. */

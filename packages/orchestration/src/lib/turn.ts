@@ -48,3 +48,44 @@ export function reworkDetails(workItem: WorkItem): WorkItemReviewDetail[] {
   const author = reworkCause(workItem) === 'checks-failed' ? CHECKS_AUTHOR : workItem.requestedBy;
   return [{ author, body }];
 }
+
+/** The issue an item continues, when it was said in an issue's conversation (#169), or undefined. */
+export function continuedIssue(workItem: WorkItem): { number: number; url: string } | undefined {
+  if (workItem.inReplyTo?.kind !== 'issue') return undefined;
+  const { owner, name } = workItem.repository;
+  return { number: workItem.inReplyTo.number, url: `https://github.com/${owner}/${name}/issues/${workItem.inReplyTo.number}` };
+}
+
+/**
+ * What a comment in an issue's conversation asks for (#169), read from what
+ * was said after the mention: a plan (`plan` or `plan this`), the approval
+ * of the proposed plan (`approve`), or a revision of it (`revise`, then the
+ * change wanted, after a colon or on the same line). Case is ignored, and so
+ * is anything after `approve` or `plan this` on the first line. Anything else
+ * is not understood: Intake refuses it and says what is.
+ */
+export type IssueCommand = { kind: 'plan' } | { kind: 'approve' } | { kind: 'revise'; request: string } | { kind: 'unknown' };
+
+export function issueCommand(body: string): IssueCommand {
+  const text = body.trim();
+  const revise = /^revise\b[ \t]*:?\s*([\s\S]*)$/i.exec(text);
+  if (revise) {
+    const request = (revise[1] ?? '').trim();
+    return request ? { kind: 'revise', request } : { kind: 'unknown' };
+  }
+  const first = (text.split('\n')[0] ?? '').trim();
+  if (/^plan(?:\s+(?:this|it))?\b/i.test(first)) return { kind: 'plan' };
+  if (/^approve\b/i.test(first)) return { kind: 'approve' };
+  return { kind: 'unknown' };
+}
+
+/** What Intake says to a comment it does not understand, or to an approval or revision with no plan to act on. `slug` is the App's. */
+export function issueCommandHelp(slug: string): string {
+  return [
+    `On an issue, Factorial understands:`,
+    '',
+    `- \`@${slug} plan this\`: propose a plan for this issue, changing nothing.`,
+    `- \`@${slug} approve\`: build the plan last proposed here.`,
+    `- \`@${slug} revise: <what to change>\`: propose a revised plan.`,
+  ].join('\n');
+}

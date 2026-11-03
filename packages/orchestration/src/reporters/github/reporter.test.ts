@@ -254,6 +254,26 @@ describe('where an outcome is told', () => {
     assert.equal(commentTarget(example('pr-opened.json')), 165);
     // An issue labelled for a plan is the same issue.
     assert.equal(commentTarget(example('proposed.json')), 169);
+    // A comment in an issue's conversation is answered on that issue.
+    assert.equal(commentTarget(example('proposed-from-comment.json')), 169);
+  });
+
+  it('tells the issue a pull request opened for an approval made in its conversation, with an issues-only token', async () => {
+    const h = harness();
+    const outcome: Outcome = { ...example('pr-opened.json'), source: { type: 'github-issue-comment', id: '4123456789', url: 'https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789' }, inReplyTo: { kind: 'issue', number: 169 } };
+    await handleEvent(outcomeEvent(outcome), h.deps);
+    assert.equal(h.calls[0], 'token JamieGeddes/factorial {"issues":"write"}');
+    assert.match(h.calls[1] ?? '', /^comment JamieGeddes\/factorial#169 Factorial has opened/);
+  });
+
+  it('answers a refused comment on the issue it was made on', async () => {
+    const h = harness();
+    const { pullRequest: _p, ...base } = example('refused.json');
+    const outcome: Outcome = { ...base, source: { type: 'github-issue-comment', id: '4123456789', url: 'https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789' }, inReplyTo: { kind: 'issue', number: 169 } };
+    h.reports.set(outcome.artefactPrefix, reportFile({ kind: 'refusal', reply: 'There is no proposed plan on this issue to approve.' }));
+    await handleEvent(outcomeEvent(outcome), h.deps);
+    assert.equal(h.calls[0], 'token JamieGeddes/factorial {"issues":"write"}');
+    assert.match(h.calls[1] ?? '', /^comment JamieGeddes\/factorial#169 There is no proposed plan/);
   });
 
   it('nowhere for a source that is neither', () => {

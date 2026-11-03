@@ -277,12 +277,14 @@ async function main(): Promise<number> {
   // Intake's route and approval, on the row (#169): a proposal plans and changes nothing; an approval follows the plan it was seeded with.
   const route = row.Item?.route === 'propose' ? ('propose' as const) : undefined;
   const approves = typeof row.Item?.approves === 'string' ? row.Item.approves : undefined;
+  const revises = typeof row.Item?.revises === 'string' ? row.Item.revises : undefined;
   const prompt = manifest.firstMessage(workItem, branch, baseBranch, {
     sensitivePaths,
     ...(round !== undefined ? { round } : {}),
     resumed,
     ...(route ? { route } : {}),
     ...(approves ? { approves } : {}),
+    ...(revises ? { revises } : {}),
   });
   run.version = await runtimeInfo(target);
   // A version from either side of a run contract change fails here, before
