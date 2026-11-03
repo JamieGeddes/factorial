@@ -205,7 +205,7 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
 
   // Quoted literal redirection targets are unquoted, so `> "src/a.ts"` is judged too.
   const { shell } = splitHeredocs(command);
-  const text = unquoted(shell.replace(/(>>?\s*)(['"])([^'"$`\\\s]+)\2/g, '$1$3'));
+  const text = unquoted(shell.replace(/(>>?\s*)(['"])([^'"$`\\\s]+)\2/g, '$1$3')).replace(/&&[ \t]*(?:\\[ \t]*)?\n\s*/g, '&& ');
   const parts = text.split(SEPARATOR);
   let cwd: string | undefined = repository;
   // Whether a check has come before in this command, and whether something other than `&&` followed it.

@@ -216,7 +216,10 @@ describe('builderShellRule (#250)', () => {
     for (const command of [
       "quiet 'npm run ci' && git commit -m x",
       "quiet 'npm run ci' 2>&1 && git commit -m x",
-      "quiet 'x' && git add -A && git commit -m x",
+      "quiet 'npm test' && \\\ngit commit -m x",
+      "quiet 'npm test' &&\ngit commit -m x",
+      "quiet 'npm test' && \\\n  git add -A &&\n  git commit -m 'Add x\n\nMore; git commit y'",
+      'quiet "npm test" &&\ngit commit -m "Add x\n\nBody"',      "quiet 'x' && git add -A && git commit -m x",
       'git status --short; git add -A && git commit -m x',
       'git log | head; git commit -m x',
       'npm ci; git commit -am x',

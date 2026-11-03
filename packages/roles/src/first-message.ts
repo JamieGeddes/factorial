@@ -75,7 +75,7 @@ export function buildPrompt(
     '',
     '---',
     'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json.',
-    'Commit on this branch as you go, after each coherent step: if the session ends early, only committed work is kept.',
+    'Commit on this branch as you go, after each step whose verification has passed: if the session ends early, Collect saves uncommitted work.',
     `This session may be one of several: if you run out of steps or time, the orchestrator saves your commits to the branch and starts a fresh session that continues from the branch and /workspace/notes.md, with nothing else from this conversation. That file already starts with this request under "# Task": keep that section, keep the step record under "# Plan" current, add your notes below, and re-read it${isRework ? ' and /workspace/rework.md' : ''} rather than relying on memory.`,
     // #120's resumed attempt rewrote the earlier commit without reading it:
     // the resume was only in notes.md, which it never opened.
