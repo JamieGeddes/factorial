@@ -49,7 +49,7 @@ flowchart TB
         agentrole["factorial-agent-builder role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents;<br/>named Bedrock profiles only)"]
         bedrock["Amazon Bedrock<br/>EU inference profiles"]
         reviewerruntime["AgentCore Runtime:<br/>factorial_reviewer<br/>same image and host, review mode,<br/>Sonnet 5.5 on Bedrock"]
-        verifierruntime["AgentCore Runtime:<br/>factorial_verifier<br/>same image, no model;<br/>runs the target's declared checks<br/>as the agent user"]
+        verifierrole["factorial-agent-verifier role<br/>(agent permissions boundary:<br/>the npm mirror only, no model)"]
         builderruntime --- agentrole
         builderruntime -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
         reviewerruntime -->|"InvokeModel with<br/>its execution role<br/>(data)"| bedrock
@@ -62,16 +62,18 @@ flowchart TB
         ledger["DynamoDB:<br/>factorial-work-items<br/>(idempotency + progress)"]
         sfn["Step Functions: factorial-work<br/>(live alias)<br/>Prepare → Build → Collect →<br/>HasChanges → Verify → Review →<br/>OpenPullRequest"]
         prepare["Lambda: factorial-prepare-seed<br/>(fetches and bundles the repo,<br/>seeds the session from the bundle,<br/>creates work branch)"]
-        transfer["S3: factorial-transfer<br/>(repo bundles, presigned 5 min,<br/>expire after a day)"]
+        transfer["S3: factorial-transfer<br/>(repo bundles, presigned 5 min<br/>or 15 for a verifier task,<br/>expire after a day)"]
         invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync, egress only)<br/>runs each agent to completion,<br/>streams transcript to logs"]
+        verifiertask["Fargate task: factorial-verifier<br/>(ecs:runTask.sync, egress only)<br/>agent image, no model; checks out<br/>the bundle, runs the declared check<br/>as the agent user, exits with its status"]
         collect["Lambda: factorial-collect-clean-room<br/>(commits leftovers, exports git<br/>bundle from hostile session,<br/>pushes from its own clean room)"]
-        prepareverify["Lambda: factorial-prepare-verify<br/>(seeds a fresh verifier session<br/>at the pushed head, from a bundle)"]
-        collectverifier["Lambda: factorial-collect-verifier<br/>(judges each verifier's result;<br/>a required failure stops Verify)"]
+        prepareverify["Lambda: factorial-prepare-verify<br/>(bundles the pushed head<br/>for the verifier task)"]
+        collectverifier["Lambda: factorial-collect-verifier<br/>(judges each verifier from its<br/>task's exit status and log;<br/>a required failure stops Verify)"]
         openpr["Lambda: factorial-open-pr<br/>(verifies head = verified sha,<br/>opens PR, emits the outcome)"]
         report["Lambda: factorial-report<br/>(ends a turn with no PR,<br/>emits the outcome)"]
         reporter["Lambda: factorial-report-github<br/>(one comment per outcome,<br/>the started notice)"]
         sfn --> prepare
         sfn -->|"RunTask"| invoker
+        sfn -->|"RunTask: one per verifier"| verifiertask
         sfn --> collect
         sfn --> prepareverify
         sfn --> collectverifier
@@ -89,8 +91,11 @@ flowchart TB
     invoker -->|"InvokeAgentRuntime: review<br/>qualifier 'live'<br/>(control)"| reviewerruntime
     collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| builderruntime
     collect -->|"push branch with<br/>App installation token<br/>(data)"| github
-    prepareverify -->|"session command API:<br/>fetch from bundle<br/>(data)"| verifierruntime
-    invoker -->|"session command API:<br/>run the declared check<br/>(control)"| verifierruntime
+    github -->|"fetch with read token,<br/>in the Lambda<br/>(data)"| prepareverify
+    prepareverify -->|"upload bundle<br/>(data)"| transfer
+    transfer -->|"presigned GET, 15 min<br/>(data)"| verifiertask
+    verifiertask --- verifierrole
+    verifiertask -->|"exit status, log<br/>(data)"| collectverifier
     openpr -->|"create PR<br/>(data)"| pr
     openpr -->|"PutEvents: Outcome<br/>(data)"| bus
     report -->|"PutEvents: Outcome<br/>(data)"| bus
@@ -117,7 +122,7 @@ flowchart TB
 5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` Runtime on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. Factorial's host process runs pi there, with every tool the model calls running as the unprivileged `agent` user. The builder first plans with its read-only plan subagent and writes `plan.json` and `plan.md`, which the host checks against the plan contract; the agent edits the code inside the sandbox, which holds no credentials beyond the execution role's model access.
 6. **Collect** (Lambda, deterministic). Treats the session as hostile: validates and stores the builder's plan (no valid plan → **report** `invalid-plan`), commits anything uncommitted, exports the commits as a git bundle, and pushes the branch itself, from a pristine clone in its own `/tmp` with hooks disabled, using a fresh installation token that never enters a session.
 7. **HasChanges** (Choice). No pushed commits → **report** (`no-changes`) and finish.
-8. **Verify** (Map, one verifier at a time). For each check the base branch declares in `.factorial/verifiers.json`, PrepareVerify seeds a fresh `factorial_verifier` session at the pushed head from a bundle, the invoker runs the check there as the unprivileged user with no credentials and stores its result, and CollectVerifier judges it. A required verifier that does not pass → **report** (`tests-failed`) and fail. No file → the pull request says it was not verified.
+8. **Verify** (Map, one verifier at a time). For each check the base branch declares in `.factorial/verifiers.json`, PrepareVerify bundles the pushed head through the transfer bucket, a fresh `factorial-verifier` Fargate task from the agent image checks it out and runs the check as the unprivileged user with none of the task's credentials, and CollectVerifier judges it from the task's exit status and stores the end of its log. A required verifier that does not pass → **report** (`tests-failed`) and fail. No file → the pull request says it was not verified.
 9. **Review**. A fresh `factorial_reviewer` session judges the change; advisory.
 10. **OpenPullRequest** (Lambda). Confirms every required verifier passed on the branch head and that it is still that commit, opens the PR attributed to `factorial[bot]`, and emits the turn's `Outcome`; `factorial-report-github` comments on the issue (#165). A human reviews and approves.
 

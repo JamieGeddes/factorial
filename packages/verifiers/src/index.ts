@@ -13,6 +13,11 @@ import addFormatsModule from 'ajv-formats';
 import resultSchema from '../../../contracts/verifiers/v1/result.schema.json' with { type: 'json' };
 import settingsSchema from '../../../contracts/verifiers/v1/verifiers.schema.json' with { type: 'json' };
 
+import type { VerifierResult, VerifierSettings } from './types.ts';
+
+export { VERIFIER_OUTCOMES, type Verifier, type VerifierOutcome, type VerifierResult, type VerifierSettings } from './types.ts';
+export { KILL_AFTER_SECONDS, SETUP_FAILED, VERIFIER_CONTAINER, outcomeOf } from './exit.ts';
+
 // ajv and ajv-formats are CommonJS. Under Node's ESM loader their default import is the
 // module object, which also carries the class or function on `.default`.
 const Ajv2020 = Ajv2020Module.default;
@@ -23,40 +28,6 @@ export const VERIFIERS_FILE = '.factorial/verifiers.json';
 
 /** The most bytes of the settings file read: far beyond ten verifiers. */
 export const MAX_VERIFIERS_FILE_BYTES = 64 * 1024;
-
-export const VERIFIER_OUTCOMES = ['passed', 'failed', 'timed-out', 'error'] as const;
-export type VerifierOutcome = (typeof VERIFIER_OUTCOMES)[number];
-
-export interface Verifier {
-  name: string;
-  kind: 'command';
-  /** The shell command, run by bash in the repository's root. */
-  run: string;
-  required: boolean;
-  timeoutSeconds: number;
-}
-
-/** A target repository's `.factorial/verifiers.json`. */
-export interface VerifierSettings {
-  schemaVersion: 1;
-  verifiers: Verifier[];
-}
-
-/** `verify/<name>/result.json`. */
-export interface VerifierResult {
-  schemaVersion: 1;
-  name: string;
-  kind: Verifier['kind'];
-  required: boolean;
-  sha: string;
-  outcome: VerifierOutcome;
-  exitCode?: number;
-  detail?: string;
-  startedAt: string;
-  finishedAt: string;
-  durationSeconds: number;
-  log?: { key: string; bytes: number; truncated: boolean };
-}
 
 export type Validated<T> = { ok: true; value: T } | { ok: false; errors: string[] };
 
@@ -116,14 +87,3 @@ export function parseVerifierResult(text: string): Validated<VerifierResult> {
 
 /** A verifier's directory under the attempt's artefact prefix. */
 export const verifierPath = (name: string, file: 'result.json' | 'output.log'): string => `verify/${name}/${file}`;
-
-/**
- * A verifier's session id on the verifier Runtime: one fresh session per
- * verifier, named for the work item and its place in the list, so a retried
- * step reaches the same session and no two verifiers share one.
- */
-export function verifierSessionId(workItemId: string, index: number): string {
-  if (!/^[0-9a-f-]{36}$/.test(workItemId)) throw new Error('work item id is not a UUID');
-  if (!Number.isInteger(index) || index < 0 || index > 99) throw new Error(`verifier index ${index} is out of range`);
-  return `${workItemId}-verify-${index + 1}`;
-}

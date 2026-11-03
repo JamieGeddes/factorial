@@ -27,7 +27,7 @@ fields @timestamp, execution_arn
 
 The execution name (`<uuid>_<uuid>`) is EventBridge's, so searching the **Executions** tab for the id finds nothing.
 
-Every state's output carries `workItemId` and `attempt`. **Build**, **Review** and each verifier's **RunVerifier** (inside the **Verify** Map, one iteration per verifier) output `taskArn`; its last segment is the invoker task id for that run. Runs before 2026-10-25's phase 3.1 also had **Plan** (twice when the first plan was rejected, shown by `planAttempt`) and **CollectPlan**.
+Every state's output carries `workItemId` and `attempt`. **Build**, **Review** and each verifier's **RunVerifier** (inside the **Verify** Map, one iteration per verifier) output `taskArn`; its last segment is the task id: the invoker's for a run, the verifier task's for a check. Runs before 2026-10-25's phase 3.1 also had **Plan** (twice when the first plan was rejected, shown by `planAttempt`) and **CollectPlan**.
 
 The execution log, with full state inputs and outputs, is the log group `/aws/vendedlogs/states/factorial-work`.
 
@@ -36,6 +36,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 **CloudWatch** → left nav **Logs** → **Logs Insights** → select the log groups:
 
 - `/factorial/invoker`
+- `/factorial/verifier` (each verifier task's output; see below)
 - `/aws/lambda/factorial-intake`
 - `/aws/lambda/factorial-prepare`
 - `/aws/lambda/factorial-collect` (the push is Collect's own: `branch pushed from clean room`, or `work in progress saved from clean room` when salvaging, with the pushed `headSha` and the agent's `agentHeadSha`; runs before #261 pushed from a second builder session, `<id>-push`)
@@ -58,7 +59,7 @@ fields @timestamp, stage, attempt, level, message, @log
 | limit 10000
 ```
 
-Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`. A verifier's lines (`MODE=verify`) carry the stage `verify/<name>`: `running verifier` (session, commit, timeout), `verifier finished` (outcome, exit code, duration, output bytes) or `verifier could not be run`.
+Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`. A verifier task's stream is `verifier/verifier/<task id>` in `/factorial/verifier`: the check runner's own lines (stage `verifier`, with `workItemId`: `seeding the repository`, `running the check`, `the check ended` with its exit code, or `the repository could not be set up` and `the check was not started`) around the check's output, which carries no id. CollectVerifier's `verifier judged` line gives the outcome, exit code and `taskArn`, which names the stream.
 
 Before a work item exists, the GitHub adapter's group `/aws/lambda/factorial-github-issues-adapter` has one `delivery` line per webhook delivery (#59): `deliveryId` (GitHub's `X-GitHub-Delivery`), `event`, `outcome` (`work-item` with its `workItemId`, `closed`, `ignored`, `rejected` or `failed`) and, unless it placed an event, `reason`. `| filter message = "delivery" and deliveryId = "<id>"` finds what one delivery did; the command centre's Health view counts them per hour.
 

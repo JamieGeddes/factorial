@@ -11,6 +11,10 @@ Parameters:
     Type: String
     Description: Tag of the invoker image in the factorial/invoker repository.
     AllowedPattern: '^[A-Za-z0-9._-]+$'
+  AgentRuntimeImageTag:
+    Type: String
+    Description: Tag of the agent image in the factorial/agent-runtime repository, which the verifier tasks run.
+    AllowedPattern: '^[A-Za-z0-9._-]+$'
   OrchestrationImageTag:
     Type: String
     Description: Tag of the orchestration image (the functions that run git) in the factorial/orchestration repository.
@@ -70,7 +74,6 @@ Globals:
         RUNTIME_QUALIFIER: live
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
         REVIEWER_RUNTIME_ARN: !ImportValue Factorial-ReviewerRuntimeArn
-        VERIFIER_RUNTIME_ARN: !ImportValue Factorial-VerifierRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
         GITHUB_PRIVATE_KEY_SECRET: factorial/github/app-private-key
@@ -284,11 +287,13 @@ Resources:
             Resource: !Sub ${WorkArtefactsBucket.Arn}/*
 
   # ---------------------------------------------------------------------------
-  # Transfer bucket (#262): how the repository reaches a session without the
-  # session reaching GitHub. Prepare, ContinueBuild, PrepareReview and
-  # PrepareVerify write a git bundle here (lib/repo-seed.ts) and pass the session a presigned GET
-  # that expires in five minutes; the stage deletes the object once the
-  # session has it. Separate from the artefact store, which is write-once,
+  # Transfer bucket (#262): how the repository reaches a session or a verifier
+  # task without either reaching GitHub. Prepare, ContinueBuild and
+  # PrepareReview write a git bundle here (lib/repo-seed.ts) and pass the
+  # session a presigned GET that expires in five minutes, and delete the
+  # object once the session has it. PrepareVerify passes its verifier task a
+  # URL that expires in fifteen, and CollectVerifier deletes the object once
+  # the task has ended. Separate from the artefact store, which is write-once,
   # delete-denied and read by no session: this one is ephemeral, unversioned
   # and read only through those URLs, signed by the four stages' roles. Keys:
   # <workItemId>/<attempt>/<stage>/repo.bundle. No aws:SourceVpce condition
@@ -673,19 +678,6 @@ Resources:
                   - !Sub
                     - ${RuntimeArn}/runtime-endpoint/*
                     - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
-              # The verify mode (#167): the check runs in a verifier session
-              # through the command API, never in this task, and the task
-              # stops the session once the check has ended.
-              - Sid: RunVerifiers
-                Effect: Allow
-                Action:
-                  - bedrock-agentcore:InvokeAgentRuntimeCommand
-                  - bedrock-agentcore:StopRuntimeSession
-                Resource:
-                  - !ImportValue Factorial-VerifierRuntimeArn
-                  - !Sub
-                    - ${RuntimeArn}/runtime-endpoint/*
-                    - RuntimeArn: !ImportValue Factorial-VerifierRuntimeArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
@@ -749,6 +741,133 @@ Resources:
               awslogs-group: !Ref InvokerLogGroup
               awslogs-region: !Ref AWS::Region
               awslogs-stream-prefix: invoker
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # ---------------------------------------------------------------------------
+  # The verifier task (#167): a Fargate task that runs one of a target's
+  # declared checks, from the agent image with the check runner as its
+  # entrypoint (packages/agent-runtime/src/verifier/runner.ts). Step Functions
+  # starts one per verifier (RunVerifier) and waits on it with runTask.sync;
+  # it exits with the check's status, which CollectVerifier judges. The check
+  # is untrusted code: the task role is the agent stack's
+  # factorial-agent-verifier (the npm mirror only), the code arrives as a
+  # bundle through a presigned URL, and the network is egress only.
+  # ---------------------------------------------------------------------------
+  VerifierSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: factorial-verifier
+      GroupDescription: Factorial verifier tasks (egress only)
+      VpcId: !Ref Vpc
+      Tags:
+        - Key: Name
+          Value: factorial-verifier
+        - Key: Project
+          Value: Factorial
+
+  # The check's whole output, redacted line by line by the runner. CollectVerifier
+  # stores the end of it in the artefact store.
+  VerifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /factorial/verifier
+      RetentionInDays: !Ref LogRetentionDays
+
+  # Used by ECS to pull the image and write the log, never by the task.
+  VerifierExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-verifier-execution
+      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-verifier-execution
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource: !Sub arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/factorial/agent-runtime
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub ${VerifierLogGroup.Arn}:*
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  # Retained like the invoker's: an execution in flight during a deploy
+  # starts its verifiers on the revision its state machine version names.
+  VerifierTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    UpdateReplacePolicy: Retain
+    DeletionPolicy: Retain
+    Properties:
+      Family: factorial-verifier
+      RequiresCompatibilities:
+        - FARGATE
+      NetworkMode: awsvpc
+      # As much as a builder session has, so a check that passed there fits here.
+      Cpu: '2048'
+      Memory: '8192'
+      RuntimePlatform:
+        CpuArchitecture: ARM64
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !GetAtt VerifierExecutionRole.Arn
+      TaskRoleArn: !ImportValue Factorial-VerifierTaskRoleArn
+      ContainerDefinitions:
+        - Name: verifier
+          Image: !Join
+            - ':'
+            - - !ImportValue Factorial-AgentRuntimeRepositoryUri
+              - !Ref AgentRuntimeImageTag
+          Essential: true
+          EntryPoint:
+            - node
+            - /opt/factorial/agent-runtime/verify.mjs
+          # An init process as PID 1 reaps the check's children; the runner is root,
+          # as the agent host is, and drops to the agent user for the check.
+          LinuxParameters:
+            InitProcessEnabled: true
+          StopTimeout: 30
+          # The verifier, the commit, the branches and the bundle URL come from
+          # the state machine's container overrides.
+          Environment:
+            - Name: AWS_REGION
+              Value: !Ref AWS::Region
+            # The npm mirror (#242): the runner writes a token for it to the
+            # agent's ~/.npmrc and puts the registry in the check's environment,
+            # and starts no check without it.
+            - Name: FACTORIAL_CODEARTIFACT_DOMAIN
+              Value: !ImportValue Factorial-NpmDomainName
+            - Name: FACTORIAL_CODEARTIFACT_DOMAIN_OWNER
+              Value: !ImportValue Factorial-NpmDomainOwner
+            - Name: FACTORIAL_CODEARTIFACT_REPOSITORY
+              Value: !ImportValue Factorial-NpmRepositoryName
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref VerifierLogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: verifier
       Tags:
         - Key: Project
           Value: Factorial
@@ -1033,15 +1152,15 @@ Resources:
         - !Ref TransferSeedPolicy
         - !Ref ProgressEventsPolicy
 
-  # Verify (#167), one verifier at a time. PrepareVerify seeds a fresh session
-  # on the verifier Runtime with the tested commit, from a bundle, as
-  # PrepareReview does: the orchestration image, the transfer bucket, a
-  # read-only token that never enters the session. It reads no artefact.
+  # Verify (#167), one verifier at a time. PrepareVerify bundles the tested
+  # commit for the verifier's task, as PrepareReview does for a session: the
+  # orchestration image, the transfer bucket, a read-only token that never
+  # reaches the task. It reads no artefact.
   PrepareVerifyFunction:
     Type: AWS::Serverless::Function
     Properties:
       FunctionName: factorial-prepare-verify
-      Description: Set up a fresh verifier session at the tested commit, from a bundle.
+      Description: Bundle the tested commit for one verifier's task, through the transfer bucket.
       PackageType: Image
       ImageUri: !Sub
         - ${RepositoryUri}:${OrchestrationImageTag}
@@ -1064,14 +1183,13 @@ Resources:
               Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-        - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref TransferSeedPolicy
         - !Ref ProgressEventsPolicy
 
-  # CollectVerifier reads back the result the invoker wrote, the one key of
-  # the stage it is granted, writes one when there is none, and stops the
-  # verifier's session. No GitHub access.
+  # CollectVerifier judges a verifier from its stopped task, reads the end of
+  # the task's log, writes the result and the log, and deletes the bundle the
+  # task fetched. It reads no artefact and has no GitHub access.
   CollectVerifierFunction:
     Type: AWS::Serverless::Function
     Properties:
@@ -1081,6 +1199,10 @@ Resources:
       Runtime: nodejs24.x
       Handler: index.handler
       Timeout: 120
+      Environment:
+        Variables:
+          TRANSFER_BUCKET: !Ref TransferBucket
+          VERIFIER_LOG_GROUP: !Ref VerifierLogGroup
       LoggingConfig:
         LogGroup: !Ref CollectVerifierLogGroup
       Policies:
@@ -1089,11 +1211,14 @@ Resources:
               Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-            - Sid: ReadVerifierResults
+            - Sid: ReadVerifierLogs
               Effect: Allow
-              Action: s3:GetObject
-              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/verify/*/result.json
-        - !Ref SessionCommandPolicy
+              Action: logs:GetLogEvents
+              Resource: !Sub ${VerifierLogGroup.Arn}:log-stream:verifier/verifier/*
+            - Sid: DeleteVerifierBundles
+              Effect: Allow
+              Action: s3:DeleteObject
+              Resource: !Sub ${TransferBucket.Arn}/*/verify/*/repo.bundle
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
 
@@ -1313,7 +1438,7 @@ Resources:
       Policies:
         - !Ref LivePublishPolicy
 
-  # Covers the reviewer's and the verifiers' sessions as well as the builder's.
+  # Covers the reviewer's session as well as the builder's.
   # The description still names only the builder: changing a managed policy's
   # description replaces it, and the replacement collides with the fixed name.
   SessionCommandPolicy:
@@ -1327,9 +1452,9 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Each role's Runtime and the verifier Runtime: commands only, since
-          # the invoker runs the agent and the checks, and stopping the session
-          # once Collect, CollectReview or CollectVerifier has finished with it.
+          # Each role's Runtime: commands only, since the invoker runs the
+          # agent, and stopping the session once Collect or CollectReview has
+          # finished with it.
           - Effect: Allow
             Action:
               - bedrock-agentcore:InvokeAgentRuntimeCommand
@@ -1343,10 +1468,6 @@ Resources:
               - !Sub
                 - ${RuntimeArn}/runtime-endpoint/*
                 - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
-              - !ImportValue Factorial-VerifierRuntimeArn
-              - !Sub
-                - ${RuntimeArn}/runtime-endpoint/*
-                - RuntimeArn: !ImportValue Factorial-VerifierRuntimeArn
 
   # Only orchestrator functions, outside the agent sandbox, may read the App
   # key and mint tokens.
@@ -1413,7 +1534,9 @@ Resources:
               - Sid: RunInvoker
                 Effect: Allow
                 Action: ecs:RunTask
-                Resource: !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/factorial-invoker:*
+                Resource:
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/factorial-invoker:*
+                  - !Sub arn:${AWS::Partition}:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/factorial-verifier:*
                 Condition:
                   ArnEquals:
                     ecs:cluster: !GetAtt BuildCluster.Arn
@@ -1432,6 +1555,8 @@ Resources:
                 Resource:
                   - !GetAtt InvokerExecutionRole.Arn
                   - !GetAtt InvokerTaskRole.Arn
+                  - !GetAtt VerifierExecutionRole.Arn
+                  - !ImportValue Factorial-VerifierTaskRoleArn
                 Condition:
                   StringEquals:
                     iam:PassedToService: ecs-tasks.amazonaws.com
@@ -1499,7 +1624,8 @@ Resources:
         TaskDefinitionArn: !Ref InvokerTaskDefinition
         BuilderRuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
         ReviewerRuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
-        VerifierRuntimeArn: !ImportValue Factorial-VerifierRuntimeArn
+        VerifierTaskDefinitionArn: !Ref VerifierTaskDefinition
+        VerifierSecurityGroup: !Ref VerifierSecurityGroup
         SubnetA: !Ref SubnetA
         SubnetB: !Ref SubnetB
         SecurityGroup: !Ref InvokerSecurityGroup
@@ -1730,7 +1856,7 @@ Resources:
             },
             "Verify": {
               "Type": "Map",
-              "Comment": "Each declared verifier in order, on the pushed head, each in a fresh session on the verifier Runtime, which can call no model and reach none of Factorial's data. A required verifier that does not pass fails its iteration, which stops the rest and ends the turn as tests-failed.",
+              "Comment": "Each declared verifier in order, on the pushed head, each in a fresh Fargate task from the agent image, which can call no model and reach none of Factorial's data. A required verifier that does not pass fails its iteration, which stops the rest and ends the turn as tests-failed.",
               "Items": "{% $collect.verify.verifiers %}",
               "ItemSelector": { "verifier": "{% $states.context.Map.Item.Value %}", "index": "{% $states.context.Map.Item.Index %}" },
               "MaxConcurrency": 1,
@@ -1740,20 +1866,20 @@ Resources:
                 "States": {
                   "Verifier": {
                     "Type": "Pass",
-                    "Assign": { "verifier": "{% $states.input.verifier %}", "verifierIndex": "{% $states.input.index %}", "verifierStart": "{% $states.context.State.EnteredTime %}", "verifierError": null },
+                    "Assign": { "verifier": "{% $states.input.verifier %}", "verifierIndex": "{% $states.input.index %}", "verifierStart": "{% $states.context.State.EnteredTime %}", "verifierError": null, "verifierTask": null },
                     "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verifier": "{% $states.input.verifier.name %}" },
                     "Next": "PrepareVerify"
                   },
                   "PrepareVerify": {
                     "Type": "Task",
-                    "Comment": "Seed a fresh verifier session with the tested commit, from a bundle. A failure is the verifier's error, judged by CollectVerifier.",
+                    "Comment": "Bundle the tested commit for the verifier's task, through the transfer bucket. A failure is the verifier's error, judged by CollectVerifier.",
                     "Resource": "arn:aws:states:::lambda:invoke",
                     "Arguments": {
                       "FunctionName": "${PrepareVerifyFunctionAlias}",
                       "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verifier": "{% $verifier %}", "index": "{% $verifierIndex %}", "progress": { "stage": "Verify", "round": "{% $buildRound %}" } }
                     },
-                    "Assign": { "verifierSession": "{% $states.result.Payload.sessionId %}" },
-                    "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "sessionId": "{% $states.result.Payload.sessionId %}" },
+                    "Assign": { "verifierSeed": "{% $states.result.Payload %}" },
+                    "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verifier": "{% $verifier.name %}" },
                     "Retry": [
                       {
                         "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
@@ -1769,40 +1895,39 @@ Resources:
                   },
                   "RunVerifier": {
                     "Type": "Task",
-                    "Comment": "The invoker runs the declared command in the verifier session through the command API, as the unprivileged user, and stores its result and the end of its output. Bounded by the verifier's own timeout and a margin for the task to start.",
+                    "Comment": "A fresh Fargate task from the agent image fetches the bundle, checks out the tested commit and runs the declared command as the unprivileged user; it exits with the command's status. Bounded by the verifier's own timeout and a margin for the task to start and fetch.",
                     "Resource": "arn:aws:states:::ecs:runTask.sync",
                     "Arguments": {
                       "Cluster": "${ClusterArn}",
-                      "TaskDefinition": "${TaskDefinitionArn}",
+                      "TaskDefinition": "${VerifierTaskDefinitionArn}",
                       "LaunchType": "FARGATE",
                       "PropagateTags": "TASK_DEFINITION",
                       "NetworkConfiguration": {
                         "AwsvpcConfiguration": {
                           "Subnets": ["${SubnetA}", "${SubnetB}"],
-                          "SecurityGroups": ["${SecurityGroup}"],
+                          "SecurityGroups": ["${VerifierSecurityGroup}"],
                           "AssignPublicIp": "ENABLED"
                         }
                       },
                       "Overrides": {
                         "ContainerOverrides": [
                           {
-                            "Name": "invoker",
+                            "Name": "verifier",
                             "Environment": [
-                              { "Name": "MODE", "Value": "verify" },
-                              { "Name": "STAGE", "Value": "Verify" },
-                              { "Name": "RUNTIME_ARN", "Value": "${VerifierRuntimeArn}" },
-                              { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
                               { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
-                              { "Name": "SESSION_ID", "Value": "{% $verifierSession %}" },
-                              { "Name": "ARTEFACT_PREFIX", "Value": "{% $ctx.artefactPrefix %}" },
+                              { "Name": "VERIFIER", "Value": "{% $string($verifier) %}" },
                               { "Name": "VERIFY_SHA", "Value": "{% $collect.headSha %}" },
-                              { "Name": "VERIFIER", "Value": "{% $string($verifier) %}" }
+                              { "Name": "VERIFY_BRANCH", "Value": "{% $ctx.branch %}" },
+                              { "Name": "DEFAULT_BRANCH", "Value": "{% $verifierSeed.defaultBranch %}" },
+                              { "Name": "REPOSITORY", "Value": "{% $verifierSeed.repository %}" },
+                              { "Name": "BUNDLE_URL", "Value": "{% $verifierSeed.bundleUrl %}" }
                             ]
                           }
                         ]
                       }
                     },
                     "TimeoutSeconds": "{% $verifier.timeoutSeconds + 600 %}",
+                    "Assign": { "verifierTask": "{% $states.result %}" },
                     "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "taskArn": "{% $states.result.TaskArn %}" },
                     "Catch": [
                       { "ErrorEquals": ["States.ALL"], "Assign": { "verifierError": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "CollectVerifier" }
@@ -1811,11 +1936,11 @@ Resources:
                   },
                   "CollectVerifier": {
                     "Type": "Task",
-                    "Comment": "Judge the verifier from its stored result, recording one when there is none. A required verifier that did not pass throws VerifierFailed, which ends the Map.",
+                    "Comment": "Judge the verifier from its task's exit status (the result, or the cause of a TaskFailed error) and store the end of its log. No exit status is timed-out or error, never a pass. A required verifier that did not pass throws VerifierFailed, which ends the Map.",
                     "Resource": "arn:aws:states:::lambda:invoke",
                     "Arguments": {
                       "FunctionName": "${CollectVerifierFunctionAlias}",
-                      "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verifier": "{% $verifier %}", "index": "{% $verifierIndex %}", "error": "{% $verifierError %}", "startedAt": "{% $verifierStart %}", "progress": { "stage": "Verify", "round": "{% $buildRound %}" } }
+                      "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verifier": "{% $verifier %}", "index": "{% $verifierIndex %}", "task": "{% $verifierTask %}", "error": "{% $verifierError %}", "startedAt": "{% $verifierStart %}", "progress": { "stage": "Verify", "round": "{% $buildRound %}" } }
                     },
                     "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verifier": "{% $states.result.Payload %}" },
                     "Retry": [

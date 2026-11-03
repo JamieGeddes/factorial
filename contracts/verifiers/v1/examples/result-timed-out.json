@@ -10,5 +10,5 @@
   "startedAt": "2026-11-02T10:00:00.000Z",
   "finishedAt": "2026-11-02T10:20:00.000Z",
   "durationSeconds": 1200,
-  "log": { "key": "0b6e1f3a-0c1d-4e2f-9a3b-4c5d6e7f8a9b/1/verify/checks/output.log", "bytes": 4200000, "truncated": true }
+  "log": { "key": "0b6e1f3a-0c1d-4e2f-9a3b-4c5d6e7f8a9b/1/verify/checks/output.log", "bytes": 262144, "truncated": true }
 }

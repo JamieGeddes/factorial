@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:factorial:contracts:verifiers:v1",
   "title": "Verifiers",
-  "description": "The checks a target repository declares for Factorial to run on every change before it opens or updates a pull request, kept at .factorial/verifiers.json. Read from the base branch, never from the branch under test. Each verifier runs at the tested commit, in order, in a fresh session on Factorial's verifier Runtime, which can call no model and reach none of Factorial's data. A repository without the file is not verified, and its pull requests say so.",
+  "description": "The checks a target repository declares for Factorial to run on every change before it opens or updates a pull request, kept at .factorial/verifiers.json. Read from the base branch, never from the branch under test. Each verifier runs at the tested commit, in order, in a fresh Fargate task of Factorial's, which can call no model and reach none of Factorial's data. A repository without the file is not verified, and its pull requests say so.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "verifiers"],
@@ -46,10 +46,10 @@
           "type": "boolean"
         },
         "timeoutSeconds": {
-          "description": "How long the command may run before it is stopped and recorded as timed-out. At most 3300: a session command runs for at most an hour, and the rest is the margin for starting it.",
+          "description": "How long the command may run before it is stopped and recorded as timed-out. At most 7200: two hours, so one check cannot hold the turn much longer than a build round.",
           "type": "integer",
           "minimum": 30,
-          "maximum": 3300
+          "maximum": 7200
         }
       }
     }

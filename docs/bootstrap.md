@@ -68,7 +68,7 @@ The foundation template is over CloudFormation's 51,200-byte limit for an inline
      --output text)"
    ```
 
-3. Nothing else is stored for tests: the Verify stage runs the checks in `.factorial/verifiers.json` in Factorial's own sessions (#167). A repository set up before #167 still holds the `AWS_TEST_CALLBACK_ROLE_ARN` secret for the retired `test.yml`; delete it once a deploy with #167 has finished:
+3. Nothing else is stored for tests: the Verify stage runs the checks in `.factorial/verifiers.json` in Factorial's own Fargate tasks (#167). A repository set up before #167 still holds the `AWS_TEST_CALLBACK_ROLE_ARN` secret for the retired `test.yml`; delete it once a deploy with #167 has finished:
 
    ```sh
    gh secret delete AWS_TEST_CALLBACK_ROLE_ARN

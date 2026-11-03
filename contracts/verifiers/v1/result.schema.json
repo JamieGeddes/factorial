@@ -30,7 +30,7 @@
       "pattern": "^[0-9a-f]{40}$"
     },
     "outcome": {
-      "description": "passed: exit status 0. failed: any other status from the command. timed-out: stopped at its timeoutSeconds, or the stage's own timeout. error: the command could not be run or judged (not found, not executable, the session or the task failed); never a pass.",
+      "description": "passed: exit status 0. failed: any other status from the command. timed-out: stopped at its timeoutSeconds, or the stage's own timeout. error: the command could not be run or judged (not found, not executable, the task failed or could not start); never a pass.",
       "enum": ["passed", "failed", "timed-out", "error"]
     },
     "exitCode": {
@@ -55,8 +55,8 @@
       "required": ["key", "bytes", "truncated"],
       "properties": {
         "key": { "description": "The artefact key.", "type": "string", "minLength": 1, "maxLength": 300 },
-        "bytes": { "description": "How many bytes the command wrote in all.", "type": "integer", "minimum": 0 },
-        "truncated": { "description": "Whether the stored log keeps only the end of the output.", "type": "boolean" }
+        "bytes": { "description": "How many bytes the stored log holds.", "type": "integer", "minimum": 0 },
+        "truncated": { "description": "Whether earlier output is left out of the stored log. All of it, redacted, is in the verifier task's CloudWatch log stream until its retention ends.", "type": "boolean" }
       }
     }
   }

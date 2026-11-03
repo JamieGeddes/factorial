@@ -1,7 +1,7 @@
 /**
  * Bundle the host process, the `quiet` tool (packages/agent-tools), pi's
  * file helper (src/pi/agent-ops.ts, run as the agent user) and the verifier
- * sessions' check runner (src/verifier/verify.ts, #167) into
+ * task's check runner (src/verifier/verify.ts, #167) into
  * agent-runtime/dist/ for the container image. pi stays external: its
  * WebAssembly modules load from their own package. The image installs it from
  * agent-runtime/package-lock.json.

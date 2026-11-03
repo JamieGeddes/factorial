@@ -529,7 +529,7 @@ td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: now
 <ul>
 <li><code>factorial-session</code> on the Runtime ENIs: no ingress; egress TCP 443 to <code>factorial-endpoints</code>, to the S3 prefix list, and one rule per private API naming that API's security group and port. Never a CIDR, neither the VPC's nor the peer's.</li>
 <li><code>factorial-endpoints</code> on the interface endpoints: ingress TCP 443 from <code>factorial-session</code> only.</li>
-<li>Both roles share the same subnets and both get the session group. A later role that needs less (the verifier Runtime, which may call no model) gets its own group with fewer destinations. Private API rules belong on the group of the role whose work needs them, which is usually the verifier's, not the builder's.</li>
+<li>Both roles share the same subnets and both get the session group. Anything that needs less (the verifier task, which may call no model) gets its own group with fewer destinations. Private API rules belong on the group of the role whose work needs them, which is usually the verifier's, not the builder's.</li>
 </ul>
 </div>
 <div class="card">

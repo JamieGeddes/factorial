@@ -16,9 +16,10 @@ interface State {
   Output?: Record<string, unknown> | string;
   Catch?: Array<{ ErrorEquals: string[]; Output?: Record<string, unknown> }>;
   Resource?: string;
+  TimeoutSeconds?: number | string;
   Arguments?: {
     Payload?: Record<string, unknown> | string;
-    Overrides?: { ContainerOverrides?: Array<{ Environment?: Array<{ Name: string; Value: string }> }> };
+    Overrides?: { ContainerOverrides?: Array<{ Name?: string; Environment?: Array<{ Name: string; Value: string }> }> };
   };
 }
 
@@ -92,7 +93,10 @@ test('every task tells its Lambda or invoker the state it runs in, for the progr
         assert.deepEqual(payload?.progress, { stage, round: '{% $buildRound %}' }, `${name} payload lacks progress`);
       }
     } else {
-      const environment = state.Arguments?.Overrides?.ContainerOverrides?.[0]?.Environment ?? [];
+      const container = state.Arguments?.Overrides?.ContainerOverrides?.[0];
+      // The verifier task records no progress: PrepareVerify and CollectVerifier around it do.
+      if (container?.Name === 'verifier') continue;
+      const environment = container?.Environment ?? [];
       assert.ok(environment.some((variable) => variable.Name === 'STAGE' && variable.Value === stage), `${name} does not pass STAGE`);
     }
   }
@@ -130,11 +134,28 @@ test('Verify runs the declared verifiers one at a time, each through PrepareVeri
   );
   // A failed seed or run is still judged, as the verifier's error or timeout.
   for (const name of ['PrepareVerify', 'RunVerifier']) assert.deepEqual(inner[name]?.Catch?.map((c) => (c as { Next?: string }).Next), ['CollectVerifier'], name);
-  const env = inner.RunVerifier?.Arguments?.Overrides?.ContainerOverrides?.[0]?.Environment ?? [];
-  assert.deepEqual(env.find((v) => v.Name === 'MODE'), { Name: 'MODE', Value: 'verify' });
-  // Substituted away by definition(); the template names the verifier's Runtime.
+  // The verifier's own task, never the invoker: the check runs in a container
+  // with the verifier's role, given the bundle PrepareVerify made.
+  const run = inner.RunVerifier;
+  assert.equal(run?.Resource, 'arn:aws:states:::ecs:runTask.sync');
+  const container = run?.Arguments?.Overrides?.ContainerOverrides?.[0];
+  assert.equal(container?.Name, 'verifier');
+  assert.deepEqual(
+    (container?.Environment ?? []).map((v) => v.Name),
+    ['WORK_ITEM_ID', 'VERIFIER', 'VERIFY_SHA', 'VERIFY_BRANCH', 'DEFAULT_BRANCH', 'REPOSITORY', 'BUNDLE_URL'],
+  );
+  assert.equal(run?.TimeoutSeconds, '{% $verifier.timeoutSeconds + 600 %}');
+  // CollectVerifier is given the stopped task on a zero exit, and the error (whose cause holds it) otherwise.
+  const payload = inner.CollectVerifier?.Arguments?.Payload;
+  assert.ok(typeof payload === 'object');
+  assert.equal(payload.task, '{% $verifierTask %}');
+  assert.equal(payload.error, '{% $verifierError %}');
+  assert.equal(run?.Assign?.verifierTask, '{% $states.result %}');
+  assert.equal(inner.Verifier?.Assign?.verifierTask, null);
+  // Substituted away by definition(); the template names the verifier's task definition and security group.
   const template = readFileSync(new URL('../../../templates/orchestration.yml', import.meta.url), 'utf8');
-  assert.ok(template.includes('{ "Name": "RUNTIME_ARN", "Value": "${VerifierRuntimeArn}" }'));
+  assert.ok(template.includes('"TaskDefinition": "${VerifierTaskDefinitionArn}"'));
+  assert.ok(template.includes('"SecurityGroups": ["${VerifierSecurityGroup}"]'));
 });
 
 test('the pull request and the review are given how Verify went', () => {

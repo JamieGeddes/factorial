@@ -1,7 +1,8 @@
 /**
  * Checks on the transfer bucket (#262): ephemeral, private, TLS only, and
- * read and written only by the four stages that seed sessions from a
- * repository bundle, which run from the orchestration image with room for it.
+ * read and written only by the four stages that seed a session or a verifier
+ * task from a repository bundle, which run from the orchestration image with
+ * room for it. CollectVerifier may delete a verifier's bundle and nothing else.
  */
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -46,7 +47,11 @@ test('only the seeding stages are granted the transfer bucket, and the artefact 
   const mentions = Object.entries(resources())
     .filter(([name, d]) => !name.startsWith('Transfer') && JSON.stringify(d).includes('TransferBucket.Arn'))
     .map(([name]) => name);
-  assert.deepEqual(mentions, []);
+  assert.deepEqual(mentions, ['CollectVerifierFunction']);
+  const grants = ((resource('CollectVerifierFunction').Properties as Json).Policies as Json[])
+    .flatMap((p) => (p.Statement as Json[] | undefined) ?? [])
+    .filter((st) => JSON.stringify(st).includes('TransferBucket.Arn'));
+  assert.deepEqual(grants, [{ Sid: 'DeleteVerifierBundles', Effect: 'Allow', Action: 's3:DeleteObject', Resource: { 'Fn::Sub': '${TransferBucket.Arn}/*/verify/*/repo.bundle' } }]);
 });
 
 test('the seeding stages run from the orchestration image with 2 GB of memory and of /tmp, and know the bucket', () => {

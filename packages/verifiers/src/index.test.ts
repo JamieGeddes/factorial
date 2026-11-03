@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { VERIFIERS_FILE, parseVerifierResult, parseVerifierSettings, validateVerifierResult, verifierPath, verifierSessionId } from './index.ts';
+import { VERIFIERS_FILE, parseVerifierResult, parseVerifierSettings, validateVerifierResult, outcomeOf, verifierPath } from './index.ts';
 
 const examplesDir = fileURLToPath(new URL('../../../contracts/verifiers/v1/examples/', import.meta.url));
 const repository = fileURLToPath(new URL('../../../', import.meta.url));
@@ -20,6 +20,10 @@ describe('verifier settings', () => {
     }
   });
 
+  it('accepts a timeout of two hours', () => {
+    assert.equal(parseVerifierSettings(settings([{ ...checks, timeoutSeconds: 7200 }])).ok, true);
+  });
+
   it('refuses a name used twice, naming the later entry', () => {
     const result = parseVerifierSettings(settings([checks, { ...checks, required: false }]));
     assert.deepEqual(result, { ok: false, errors: ['/verifiers/1/name "checks" is used by an earlier verifier'] });
@@ -29,7 +33,7 @@ describe('verifier settings', () => {
     assert.equal(parseVerifierSettings(settings([])).ok, false);
     assert.equal(parseVerifierSettings(settings([{ ...checks, kind: 'sandbox' }])).ok, false);
     assert.equal(parseVerifierSettings(settings([{ ...checks, name: '../x' }])).ok, false);
-    assert.equal(parseVerifierSettings(settings([{ ...checks, timeoutSeconds: 3301 }])).ok, false);
+    assert.equal(parseVerifierSettings(settings([{ ...checks, timeoutSeconds: 7201 }])).ok, false);
     assert.equal(parseVerifierSettings(settings([{ ...checks, extra: true }])).ok, false);
   });
 
@@ -59,15 +63,21 @@ describe('verifier result', () => {
   });
 });
 
-describe('paths and sessions', () => {
+describe('paths', () => {
   it("puts a verifier's files under verify/<name>/", () => {
     assert.equal(verifierPath('checks', 'result.json'), 'verify/checks/result.json');
   });
+});
 
-  it('gives each verifier its own session, the same on a retry', () => {
-    const id = '0b6e1f3a-0c1d-4e2f-9a3b-4c5d6e7f8a9b';
-    assert.equal(verifierSessionId(id, 0), `${id}-verify-1`);
-    assert.notEqual(verifierSessionId(id, 0), verifierSessionId(id, 1));
-    assert.throws(() => verifierSessionId('not-an-id', 0));
+describe('outcomeOf', () => {
+  it('reads exit statuses', () => {
+    assert.deepEqual(outcomeOf(0, 5, 600), { outcome: 'passed' });
+    assert.equal(outcomeOf(1, 5, 600).outcome, 'failed');
+    assert.equal(outcomeOf(124, 600, 600).outcome, 'timed-out');
+    assert.equal(outcomeOf(137, 631, 600).outcome, 'timed-out');
+    assert.equal(outcomeOf(137, 20, 600).outcome, 'failed');
+    assert.equal(outcomeOf(125, 1, 600).outcome, 'error');
+    assert.equal(outcomeOf(127, 1, 600).outcome, 'error');
+    assert.equal(outcomeOf(-1, 1, 600).outcome, 'error');
   });
 });

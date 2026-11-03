@@ -1,4 +1,4 @@
-/** The verify.mjs bundle: run one declared check in a verifier session (command.ts). */
-import { main } from './command.ts';
+/** The verify.mjs bundle: the verifier task's entrypoint, which runs one declared check (runner.ts). */
+import { main } from './runner.ts';
 
-process.exitCode = await main(process.argv.slice(2));
+process.exitCode = await main();
