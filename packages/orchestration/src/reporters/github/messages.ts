@@ -6,6 +6,9 @@
 import { agentBlock } from '../../functions/pr-body.ts';
 import type { ReportFacts } from '../../lib/report-file.ts';
 
+/** How a failed verifier's outcome reads in a sentence. */
+const VERIFIER_OUTCOME_TEXT: Readonly<Record<string, string>> = { failed: 'failed', 'timed-out': 'timed out', error: 'could not be run' };
+
 /** How much of what the agent said a no-changes comment shows. */
 export const AGENT_SAID_CHARS = 4000;
 
@@ -38,11 +41,11 @@ export function reportMessage(facts: ReportFacts, repository: { owner: string; n
         facts.agentSaid?.trim() ? `\n**The agent said:**\n\n${agentBlock(facts.agentSaid.trim(), AGENT_SAID_CHARS)}` : '',
       ].join('\n');
     case 'tests-failed': {
-      const run = facts.testRunUrl ? ` ([run](${facts.testRunUrl}))` : '';
+      const which = facts.failedVerifier ? ` (verifier \`${facts.failedVerifier.name}\` ${VERIFIER_OUTCOME_TEXT[facts.failedVerifier.outcome] ?? 'did not pass'})` : '';
       if (facts.rework) {
-        return `Factorial's rework did not pass the repository's checks${run}. Its commits are on this pull request's branch, so the pull request now includes them. Do not merge until they are fixed or reverted.`;
+        return `Factorial's rework did not pass the repository's checks${which}. Its commits are on this pull request's branch, so the pull request now includes them. Do not merge until they are fixed or reverted.`;
       }
-      return `Factorial's change did not pass the repository's checks${run}, so no pull request was opened. The branch \`${facts.branch ?? ''}\` is left for inspection.`;
+      return `Factorial's change did not pass the repository's checks${which}, so no pull request was opened. The branch \`${facts.branch ?? ''}\` is left for inspection.`;
     }
     case 'invalid-plan': {
       const problems = facts.planProblems ?? [];
@@ -52,6 +55,13 @@ export function reportMessage(facts: ReportFacts, repository: { owner: string; n
       ].join('\n');
     }
     case 'failed':
+      if (facts.errorName === 'VerifyUnconfigured') {
+        const problems = facts.verifyProblems ?? [];
+        return [
+          `Factorial could not verify this change: \`.factorial/verifiers.json\` on the base branch is not valid, so ${notOpened}. Fix the file on the base branch, then ask again.${savedWorkNote(facts, repository)}`,
+          ...(problems.length > 0 ? ['', '**Problems with the file:**', '', ...problems.map((p) => `- ${p}`)] : []),
+        ].join('\n');
+      }
       if (facts.incomplete) {
         const rounds = typeof facts.buildRound === 'number' && facts.buildRound > 1 ? ` in ${facts.buildRound} sessions` : '';
         return `Factorial's builder reached its iteration or time limit${rounds} before finishing, so the change was not tested and ${notOpened}. Session \`${session}\`.${savedWorkNote(facts, repository)}`;

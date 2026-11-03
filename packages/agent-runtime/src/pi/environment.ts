@@ -23,7 +23,7 @@ const PASSED_THROUGH: readonly string[] = ['PATH', 'LANG', 'TZ', 'CI', 'NPM_CONF
  */
 const PLAIN_OUTPUT: Readonly<Record<string, string>> = { NO_COLOR: '1', FORCE_COLOR: '0', TERM: 'dumb' };
 
-export function shellEnvironment(config: Config, host: NodeJS.ProcessEnv): Record<string, string> {
+export function shellEnvironment(config: Pick<Config, 'npmMirror' | 'agentHome' | 'region'>, host: NodeJS.ProcessEnv): Record<string, string> {
   const env: Record<string, string> = {};
   for (const name of PASSED_THROUGH) {
     const value = host[name];

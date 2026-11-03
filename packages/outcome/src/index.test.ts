@@ -42,12 +42,17 @@ describe('the outcome contract', () => {
     assert.notDeepEqual(errorsOf({ ...example('refused.json'), route: 'change' }), []);
   });
 
-  it('requires the pull request, branch and tested commit when one was opened or updated', () => {
-    for (const field of ['pullRequest', 'branch', 'testedSha'] as const) {
+  it('requires the pull request and branch when one was opened or updated', () => {
+    for (const field of ['pullRequest', 'branch'] as const) {
       const opened = { ...example('pr-opened.json') } as Record<string, unknown>;
       delete opened[field];
       assert.notDeepEqual(errorsOf(opened), [], field);
     }
+  });
+
+  it('accepts an opened pull request with no tested commit: the target declares no verifiers', () => {
+    const { testedSha: _t, ...unverified } = example('pr-opened.json');
+    assert.deepEqual(errorsOf(unverified), []);
   });
 
   it('requires what an update continues', () => {

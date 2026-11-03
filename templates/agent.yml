@@ -498,7 +498,7 @@ Resources:
   # into the artefact store and the pull request body and never blocks the
   # pull request. It makes no changes, and only review.json is read out of its
   # session. No gateways: everything it judges is in the session. The
-  # Review stage, after Test, runs it.
+  # Review stage, after Verify, runs it.
   # Factorial's host in review mode (FACTORIAL_ROLE: reviewer), on Claude
   # through Bedrock with this role and no model key, as the builder is. The
   # role keeps the logical id it had when it served the reviewer harness: a
@@ -614,6 +614,63 @@ Resources:
       Tags:
         Project: Factorial
 
+  # ===========================================================================
+  # The verifier (#167). Not a role and not a Runtime: no model, no prompt, no
+  # run. Each verifier a target declares in .factorial/verifiers.json runs as
+  # a Fargate task from this image (the orchestration stack's
+  # VerifierTaskDefinition), whose entrypoint is the check runner
+  # (packages/agent-runtime/src/verifier/): it fetches the tested commit from
+  # a bundle and runs the check as the agent user. This is its task role. The
+  # check is untrusted code, so the role holds only what the runner needs to
+  # mint a read-only token for the npm mirror; the check's environment carries
+  # none of the task's credentials. No model, no gateway, and no bucket,
+  # table or secret of Factorial's. It carries the agent boundary, as every
+  # role untrusted code runs under does.
+  # ===========================================================================
+  VerifierTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-agent-verifier
+      Description: Task role of Factorial's verifier tasks. The npm mirror only.
+      PermissionsBoundary: !ImportValue Factorial-AgentPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+      Policies:
+        - PolicyName: factorial-agent-verifier
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The check runner mints a read-only token for the npm mirror as
+              # the check starts (packages/agent-runtime/src/npm.ts), as the
+              # builder's host does for a run, and writes it to the agent
+              # user's ~/.npmrc, where the check can read it.
+              - Sid: NpmMirrorToken
+                Effect: Allow
+                Action: codeartifact:GetAuthorizationToken
+                Resource: !GetAtt NpmDomain.Arn
+              - Sid: NpmMirrorBearerToken
+                Effect: Allow
+                Action: sts:GetServiceBearerToken
+                Resource: '*'
+                Condition:
+                  StringEquals:
+                    sts:AWSServiceName: codeartifact.amazonaws.com
+              - Sid: NpmMirrorRead
+                Effect: Allow
+                Action: codeartifact:ReadFromRepository
+                Resource: !GetAtt NpmRepository.Arn
+      Tags:
+        - Key: Project
+          Value: Factorial
+
 Outputs:
   BuilderRuntimeArn:
     Value: !GetAtt BuilderRuntime.AgentRuntimeArn
@@ -648,3 +705,21 @@ Outputs:
     Value: !GetAtt NpmRepository.Arn
     Export:
       Name: Factorial-NpmRepositoryArn
+  # The verifier task (orchestration stack): its role, and the npm mirror its
+  # check runner configures.
+  VerifierTaskRoleArn:
+    Value: !GetAtt VerifierTaskRole.Arn
+    Export:
+      Name: Factorial-VerifierTaskRoleArn
+  NpmDomainName:
+    Value: !GetAtt NpmDomain.Name
+    Export:
+      Name: Factorial-NpmDomainName
+  NpmDomainOwner:
+    Value: !GetAtt NpmDomain.Owner
+    Export:
+      Name: Factorial-NpmDomainOwner
+  NpmRepositoryName:
+    Value: !GetAtt NpmRepository.Name
+    Export:
+      Name: Factorial-NpmRepositoryName

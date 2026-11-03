@@ -8,7 +8,7 @@
  *
  * Most stages start when the handler is called and end when it returns or
  * throws. A policy covers the rest: a stage whose result arrives in a later
- * state (Test), stages whose end only a later state knows (a Build task
+ * state (Verify), stages whose end only a later state knows (a Build task
  * that never ran its invoker), and the states that end the work item.
  */
 import { isStageName, progressRecorder, stageError, type ProgressRecorder, type StageError, type StageOutcome } from '@factorial/progress';
@@ -32,8 +32,10 @@ export interface Closing {
 export interface StagePolicy<I, O> {
   /** The handler calls `start` itself: Intake, once the item's ledger row exists. */
   startsInHandler?: boolean;
-  /** The stage ends in a later state, not when the handler returns (Test: the workflow reports back). Still ends here on a failure. */
+  /** The stage ends in a later state, not when the handler returns (Verify: once every verifier has run). Still ends here on a failure, unless `failureEndsLater`. */
   endsLater?: boolean;
+  /** A failure here is judged by a later state too (PrepareVerify: CollectVerifier records it as the verifier's result), so the stage stays open. */
+  failureEndsLater?: boolean;
   /** Stages ended when this one starts, recorded only if they have not ended already. */
   closes?: (input: I) => Closing[];
   /** Whether the work item ends with this stage; `result` is undefined when the handler failed. */
@@ -102,7 +104,7 @@ export function staged<I extends ProgressInput, O>(
     try {
       result = await handler(input, log, { start });
     } catch (error) {
-      if (started) await recorder.ended(id, at.stage, at.round, 'failed', { error: thrownError(error) });
+      if (started && !policy.failureEndsLater) await recorder.ended(id, at.stage, at.round, 'failed', { error: thrownError(error) });
       if (started && policy.ends?.(input, undefined)) await recorder.workItemEnded(id, policy.failure?.(input) ?? thrownError(error));
       throw error;
     }

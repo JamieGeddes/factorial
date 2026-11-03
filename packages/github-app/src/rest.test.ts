@@ -26,14 +26,14 @@ function fakeFetch(status: number, responseBody: unknown, seen: Seen[]): typeof 
 const repo = { owner: 'JamieGeddes', name: 'factorial' };
 
 describe('GitHubClient', () => {
-  it('dispatches a workflow with ref and inputs and sends the token', async () => {
+  it('comments on an issue and sends the token', async () => {
     const seen: Seen[] = [];
-    const client = new GitHubClient({ token: 'ghs_x', fetchImpl: fakeFetch(204, undefined, seen) });
-    await client.dispatchWorkflow(repo, 'test.yml', 'factorial/abc', { task_token: 'tok' });
-    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/actions/workflows/test.yml/dispatches');
+    const client = new GitHubClient({ token: 'ghs_x', fetchImpl: fakeFetch(201, {}, seen) });
+    await client.commentOnIssue(repo, 7, 'hello');
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/7/comments');
     assert.equal(seen[0]?.method, 'POST');
     assert.equal(seen[0]?.headers.authorization, 'Bearer ghs_x');
-    assert.deepEqual(seen[0]?.body, { ref: 'factorial/abc', inputs: { task_token: 'tok' } });
+    assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
   it('creates a pull request and returns its number and URL', async () => {
@@ -45,14 +45,6 @@ describe('GitHubClient', () => {
     const pr = await client.createPullRequest(repo, { title: 'T', body: 'B', head: 'factorial/abc', base: 'main' });
     assert.deepEqual(pr, { number: 12, htmlUrl: 'https://github.com/JamieGeddes/factorial/pull/12' });
     assert.deepEqual(seen[0]?.body, { title: 'T', body: 'B', head: 'factorial/abc', base: 'main' });
-  });
-
-  it('comments on an issue', async () => {
-    const seen: Seen[] = [];
-    const client = new GitHubClient({ token: 't', fetchImpl: fakeFetch(201, { id: 1 }, seen) });
-    await client.commentOnIssue(repo, 7, 'hello');
-    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/issues/7/comments');
-    assert.deepEqual(seen[0]?.body, { body: 'hello' });
   });
 
   it('lists conversation comments since a time, page by page', async () => {
@@ -246,15 +238,23 @@ describe('GitHubClient', () => {
     assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/git/ref/heads/factorial/abc');
   });
 
-  it('says whether a file exists on a ref, and throws on anything but found or not found', async () => {
+  it("reads a file's text on a ref, undefined when it is not there, and throws on anything else", async () => {
     const seen: Seen[] = [];
-    const found = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { type: 'file' }, seen) });
-    assert.equal(await found.fileExists(repo, '.github/workflows/test.yml', 'main'), true);
-    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/contents/.github/workflows/test.yml?ref=main');
+    const text = '{"schemaVersion":1}\n';
+    const found = new GitHubClient({
+      token: 't',
+      fetchImpl: fakeFetch(200, { type: 'file', size: text.length, encoding: 'base64', content: Buffer.from(text).toString('base64') }, seen),
+    });
+    assert.equal(await found.fileText(repo, '.factorial/verifiers.json', 'main', 1024), text);
+    assert.equal(seen[0]?.url, 'https://api.github.com/repos/JamieGeddes/factorial/contents/.factorial/verifiers.json?ref=main');
     const missing = new GitHubClient({ token: 't', fetchImpl: fakeFetch(404, { message: 'Not Found' }, []) });
-    assert.equal(await missing.fileExists(repo, '.github/workflows/test.yml', 'main'), false);
+    assert.equal(await missing.fileText(repo, '.factorial/verifiers.json', 'main', 1024), undefined);
+    const large = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, { type: 'file', size: 4096, encoding: 'base64', content: '' }, []) });
+    await assert.rejects(large.fileText(repo, '.factorial/verifiers.json', 'main', 1024), /over 1024 bytes/);
+    const directory = new GitHubClient({ token: 't', fetchImpl: fakeFetch(200, [{ type: 'file' }], []) });
+    await assert.rejects(directory.fileText(repo, '.factorial', 'main', 1024), /not a file/);
     const denied = new GitHubClient({ token: 't', fetchImpl: fakeFetch(403, { message: 'Forbidden' }, []) });
-    await assert.rejects(denied.fileExists(repo, '.github/workflows/test.yml', 'main'), (e: unknown) => e instanceof GitHubApiError && e.status === 403);
+    await assert.rejects(denied.fileText(repo, '.factorial/verifiers.json', 'main', 1024), (e: unknown) => e instanceof GitHubApiError && e.status === 403);
   });
 
   it('throws a GitHubApiError carrying the status on failure', async () => {

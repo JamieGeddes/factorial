@@ -44,7 +44,7 @@ test('the timeline shows each stage as work and the wait since the one before, t
   assert.equal(timeline(row)[2]?.current, false);
   assert.deepEqual(rows.slice(4).map((r) => [r.name, r.state]), [
     ['Collect', 'todo'],
-    ['Test', 'todo'],
+    ['Verify', 'todo'],
     ['Prepare review', 'todo'],
     ['Review', 'todo'],
     ['Collect review', 'todo'],

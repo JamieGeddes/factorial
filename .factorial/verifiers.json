@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "verifiers": [
+    {
+      "name": "checks",
+      "kind": "command",
+      "run": "npm ci && npm run ci",
+      "required": true,
+      "timeoutSeconds": 1800
+    }
+  ]
+}

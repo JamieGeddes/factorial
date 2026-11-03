@@ -68,14 +68,13 @@ The foundation template is over CloudFormation's 51,200-byte limit for an inline
      --output text)"
    ```
 
-3. After the first successful deploy of the orchestration stack, give the test workflow its callback role (also an account-specific ARN, so a secret):
+3. Nothing else is stored for tests: the Verify stage runs the checks in `.factorial/verifiers.json` in Factorial's own Fargate tasks (#167). A repository set up before #167 still holds the `AWS_TEST_CALLBACK_ROLE_ARN` secret for the retired `test.yml`; delete it once a deploy with #167 has finished:
 
    ```sh
-   gh secret set AWS_TEST_CALLBACK_ROLE_ARN --body "$(aws cloudformation describe-stacks \
-     --stack-name factorial-orchestration \
-     --query "Stacks[0].Outputs[?OutputKey=='TestCallbackRoleArn'].OutputValue" \
-     --output text)"
+   gh secret delete AWS_TEST_CALLBACK_ROLE_ARN
    ```
+
+   Or in the browser: the repository's **Settings** tab → left nav **Secrets and variables** → **Actions** → **Repository secrets** → the bin icon beside `AWS_TEST_CALLBACK_ROLE_ARN` → **Yes, remove this secret**.
 
 4. Enable Anthropic models in Amazon Bedrock. Agents on the Runtime call Claude through Bedrock with their execution role, so the account needs Anthropic's one-off use-case form on file. Access is granted as soon as it is submitted.
 

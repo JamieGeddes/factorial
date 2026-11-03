@@ -1,8 +1,9 @@
 /**
  * The transfer bucket (#262): how a file too large for a session command
- * reaches a session. A stage writes the file under the work item's key,
- * presigns a GET that expires in five minutes, and passes the URL to the
- * session's command; the session downloads it with curl. Nothing else reads
+ * reaches a session, or a verifier task. A stage writes the file under the
+ * work item's key, presigns a GET that expires in five minutes (fifteen for a
+ * task), and passes the URL to the session's command or the task; either
+ * downloads it with curl. Nothing else reads
  * the bucket, and a lifecycle rule expires every object after a day. The
  * stage also deletes its object once the session has it, so it rarely lives
  * that long.
@@ -23,6 +24,9 @@ import { requireEnv } from './env.ts';
 /** How long a presigned URL is valid: long enough for one session command to start and download. */
 export const PRESIGNED_URL_SECONDS = 300;
 
+/** For a verifier task, which downloads only once Fargate has started it and pulled the image. */
+export const TASK_PRESIGNED_URL_SECONDS = 900;
+
 const STAGE = /^[a-z0-9-]+(?:\/[a-z0-9-]+)*$/;
 const FILE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
@@ -38,8 +42,8 @@ export function transferKey(artefactPrefix: string, stage: string, file: string)
 export interface Transfer {
   /** Upload a file from disk, streamed, in parts when it is large. */
   upload(key: string, filePath: string): Promise<void>;
-  /** A GET URL for the key, signed with this function's credentials. */
-  presign(key: string): Promise<string>;
+  /** A GET URL for the key, signed with this function's credentials, valid for PRESIGNED_URL_SECONDS unless told otherwise. */
+  presign(key: string, expiresInSeconds?: number): Promise<string>;
   /** Delete the key; a missing key is not an error. */
   remove(key: string): Promise<void>;
 }
@@ -60,8 +64,8 @@ export const s3Transfer: Transfer = {
       leavePartsOnError: false,
     }).done();
   },
-  presign(key) {
-    return getSignedUrl(s3(), new GetObjectCommand({ Bucket: bucket(), Key: key }), { expiresIn: PRESIGNED_URL_SECONDS });
+  presign(key, expiresInSeconds = PRESIGNED_URL_SECONDS) {
+    return getSignedUrl(s3(), new GetObjectCommand({ Bucket: bucket(), Key: key }), { expiresIn: expiresInSeconds });
   },
   async remove(key) {
     await s3().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }));

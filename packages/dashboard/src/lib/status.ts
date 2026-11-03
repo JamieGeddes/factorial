@@ -7,6 +7,7 @@
  */
 import { parseStageKey } from './stage-key.ts';
 import type { LedgerRow, ThreadRow } from './records.ts';
+import { isVerifyStage } from './stages.ts';
 
 /** When #165 (PR #224) reached `main`: every turn accepted since has a `result` once it ends. */
 export const RESULT_SINCE = '2026-10-31T13:22:52Z';
@@ -73,7 +74,7 @@ export function statusPill(row: LedgerRow, thread?: ThreadRow, resultSince = RES
   if (result === undefined) {
     const current = currentStage(row);
     const stage = current?.stage;
-    if (stage === 'Test') return { label: 'testing', tone: 'waiting' };
+    if (isVerifyStage(stage)) return { label: 'verifying', tone: 'waiting' };
     if (stage && AGENT_STAGES[stage]) {
       const round = current?.round;
       return { label: round && round > 1 ? `${AGENT_STAGES[stage]} r${round}` : AGENT_STAGES[stage] ?? stage, tone: 'running' };

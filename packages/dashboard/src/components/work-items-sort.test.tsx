@@ -53,7 +53,7 @@ const ITEMS: WorkItemSummary[] = [
     repository: { owner: 'Alpha', name: 'zeta' },
     branch: 'b-10',
     status: { label: 'Merged', kind: 'done' } as never,
-    stage: 'Test',
+    stage: 'Verify',
     attempt: 2,
     createdAt: '2026-11-01T10:00:00Z',
     endedAt: '2026-11-01T10:30:00Z',
@@ -95,7 +95,7 @@ test('every Work items column sorts both ways', () => {
   // Failed < Merged < Refused < Running.
   assert.equal(by(ITEMS, 'status', 'asc'), 'acdb');
   assert.equal(by(ITEMS, 'status', 'desc'), 'bdca');
-  // Build < Intake (the refused turn) < Review < Test.
+  // Build < Intake (the refused turn) < Review < Verify.
   assert.equal(by(ITEMS, 'stage', 'asc'), 'bdac');
   assert.equal(by(ITEMS, 'stage', 'desc'), 'cadb');
   assert.equal(by(ITEMS, 'attempt', 'asc'), 'bcad');

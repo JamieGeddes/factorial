@@ -5,7 +5,8 @@
   "description": "The artefact store: key layout, redaction and upload, shared by the orchestrator and the invoker",
   "type": "module",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./redact": "./src/redact.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

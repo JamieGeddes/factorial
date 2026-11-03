@@ -94,15 +94,23 @@ test('a stage that starts in the handler records nothing when it never starts', 
 });
 
 test('a stage that ends later stays open on success but ends on a failure', async () => {
-  const dispatched = harness({ endsLater: true }, async () => undefined);
-  await dispatched.handler({ id: ID, ...progress('Test') });
-  assert.deepEqual(dispatched.transitions(), ['Test:started']);
+  const judged = harness({ endsLater: true }, async () => undefined);
+  await judged.handler({ id: ID, ...progress('Verify') });
+  assert.deepEqual(judged.transitions(), ['Verify:started']);
 
   const failed = harness({ endsLater: true }, async () => {
-    throw new Error('dispatch refused');
+    throw new Error('required verifier failed');
   });
-  await assert.rejects(failed.handler({ id: ID, ...progress('Test') }));
-  assert.deepEqual(failed.transitions(), ['Test:started', 'Test:failed']);
+  await assert.rejects(failed.handler({ id: ID, ...progress('Verify') }));
+  assert.deepEqual(failed.transitions(), ['Verify:started', 'Verify:failed']);
+});
+
+test('a stage whose failure a later state judges stays open on a failure too', async () => {
+  const seeding = harness({ endsLater: true, failureEndsLater: true }, async () => {
+    throw new Error('branch moved');
+  });
+  await assert.rejects(seeding.handler({ id: ID, ...progress('Verify') }));
+  assert.deepEqual(seeding.transitions(), ['Verify:started']);
 });
 
 test('a stage closes earlier ones in its round before it starts, without overwriting a recorded end', async () => {

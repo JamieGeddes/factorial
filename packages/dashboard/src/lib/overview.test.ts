@@ -29,7 +29,7 @@ const testing = row(2, {
   workItem: { title: 'rework', source: { type: 'github-pull-request-review', id: 'r' }, repository: repo, inReplyTo: { kind: 'pull-request', number: 9 } },
   threadKey: 't1',
   testRunUrl: 'https://github.com/JamieGeddes/factorial/actions/runs/123',
-  stages: { Build: { startedAt: '2026-11-01T11:11:00Z', endedAt: '2026-11-01T11:29:00Z' }, Test: { startedAt: '2026-11-01T11:30:00Z' } },
+  stages: { Build: { startedAt: '2026-11-01T11:11:00Z', endedAt: '2026-11-01T11:29:00Z' }, Verify: { startedAt: '2026-11-01T11:30:00Z' } },
 });
 const refused = row(3, { createdAt: '2026-11-01T11:50:00Z', endedAt: '2026-11-01T11:50:01Z', result: 'refused', route: 'refuse', status: 'busy', refusedReason: 'the thread is busy', threadKey: 't1' });
 const opened = row(4, {
@@ -40,10 +40,10 @@ const opened = row(4, {
   workItem: { title: 'opened', createdAt: '2026-11-01T09:20:00Z', source: { type: 'github-issue', id: '4' }, repository: repo },
   stages: {
     Build: { startedAt: '2026-11-01T09:21:00Z', endedAt: '2026-11-01T09:50:00Z', run: { costUsd: 1.5, usage: { inputTokens: 2000, outputTokens: 200, cacheReadInputTokens: 1600 } } },
-    Test: { startedAt: '2026-11-01T09:51:00Z', endedAt: '2026-11-01T09:55:00Z' },
+    Verify: { startedAt: '2026-11-01T09:51:00Z', endedAt: '2026-11-01T09:55:00Z' },
   },
 });
-const failed = row(5, { createdAt: '2026-11-01T11:00:00Z', endedAt: '2026-11-01T11:30:00Z', result: 'tests-failed', stages: { Test: { startedAt: '2026-11-01T11:20:00Z', endedAt: '2026-11-01T11:24:00Z' } } });
+const failed = row(5, { createdAt: '2026-11-01T11:00:00Z', endedAt: '2026-11-01T11:30:00Z', result: 'tests-failed', stages: { Verify: { startedAt: '2026-11-01T11:20:00Z', endedAt: '2026-11-01T11:24:00Z' } } });
 const yesterday = row(6, {
   createdAt: '2026-10-31T09:00:00Z',
   endedAt: '2026-10-31T10:00:00Z',
@@ -94,24 +94,24 @@ test('one puck per item in flight, on its stage, styled by kind, with its build 
   assert.equal(pucks[id(1)]?.round, 2);
   assert.equal(pucks[id(1)]?.kind, 'builder');
   assert.equal(pucks[id(1)]?.href, `/runs/${id(1)}/build/2`);
-  assert.equal(pucks[id(2)]?.stage, 'Test');
+  assert.equal(pucks[id(2)]?.stage, 'Verify');
   assert.equal(pucks[id(2)]?.kind, 'waiting');
   assert.equal(pucks[id(7)]?.kind, 'reviewer');
   assert.equal(view.pucks.length, 3);
 });
 
-test('attention lists refusals with the thread holder, failed outcomes, a stopped invoker, a long Test and alarms, newest first', () => {
+test('attention lists refusals with the thread holder, failed outcomes, a stopped invoker, a long Verify and alarms, newest first', () => {
   const texts = view.notices.map((n) => `${n.tone}: ${n.text}`);
   assert.ok(texts.includes(`info: Intake refused 00000003 (busy): thread factorial/x is held by 00000002. the thread is busy`), texts.join('\n'));
-  assert.ok(texts.some((t) => t.startsWith('crit: 00000005 ended tests-failed in Test')));
+  assert.ok(texts.some((t) => t.startsWith('crit: 00000005 ended tests-failed in Verify')));
   assert.ok(texts.some((t) => t.startsWith("crit: 00000007's run has not reported for 5m 00s")));
-  assert.ok(texts.some((t) => t.startsWith('warn: Test stage waiting 30m 00s on GitHub Actions for 00000002')));
+  assert.ok(texts.some((t) => t.startsWith('warn: Verify stage running 30m 00s for 00000002')));
   assert.ok(texts.includes('crit: CloudWatch alarm factorial-report-dlq is in ALARM'));
   assert.deepEqual([...view.notices].sort((a, b) => b.at.localeCompare(a.at)), view.notices);
   assert.ok(!texts.some((t) => t.includes('00000006')), 'yesterday is outside the hour');
 });
 
-test('sessions: one row per running agent run with its limits, and a row for an item in Test', () => {
+test('sessions: one row per running agent run with its limits, and a row for an item in Verify', () => {
   const rows = Object.fromEntries(view.sessions.map((s) => [s.id, s]));
   assert.equal(rows[id(1)]?.kind, 'agent');
   assert.equal(rows[id(1)]?.round, 2);

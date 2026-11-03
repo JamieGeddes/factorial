@@ -9,7 +9,7 @@ import { useRefreshed } from '../../client/refresh.tsx';
 import { clip, fmtDur, fmtK, fmtUsd, refAndTitle, shortId } from '../../lib/format.ts';
 import { noticeTime, type Overview, type Puck, type SessionRow } from '../../lib/overview.ts';
 import { emptyWatch, retryNotices, watchEvent, type RunWatch } from '../../lib/run-watch.ts';
-import { graphStage, stageLabel, STAGES } from '../../lib/stages.ts';
+import { graphStage, isVerifyStage, stageLabel, STAGES } from '../../lib/stages.ts';
 import { fromEnvelope } from '../../lib/transcript.ts';
 import { ColumnChart } from '../charts/ColumnChart.tsx';
 import { HBarChart } from '../charts/HBarChart.tsx';
@@ -39,10 +39,10 @@ function applyMoves(pucks: Puck[], moves: Map<string, { stage: Puck['stage']; ro
   for (const puck of pucks) {
     const move = moves.get(puck.id);
     if (move === null) continue;
-    out.push(move ? { ...puck, stage: move.stage, kind: move.stage === 'Test' ? 'waiting' : puck.kind === 'waiting' ? 'builder' : puck.kind, ...(move.round && move.round > 1 ? { round: move.round } : {}) } : puck);
+    out.push(move ? { ...puck, stage: move.stage, kind: isVerifyStage(move.stage) ? 'waiting' : puck.kind === 'waiting' ? 'builder' : puck.kind, ...(move.round && move.round > 1 ? { round: move.round } : {}) } : puck);
   }
   for (const [id, move] of moves) {
-    if (move && !pucks.some((p) => p.id === id)) out.push({ id, title: 'new work item', ref: '', stage: move.stage, kind: move.stage === 'Test' ? 'waiting' : 'builder', href: `/work-items/${id}` });
+    if (move && !pucks.some((p) => p.id === id)) out.push({ id, title: 'new work item', ref: '', stage: move.stage, kind: isVerifyStage(move.stage) ? 'waiting' : 'builder', href: `/work-items/${id}` });
   }
   return out;
 }

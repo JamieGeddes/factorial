@@ -7,6 +7,7 @@ import { after, before, beforeEach, describe, it } from 'node:test';
 
 import { withGitWorkspace } from './git.ts';
 import {
+  bundleForTask,
   bundleRepository,
   parseDefaultBranch,
   parseSeedOutput,
@@ -256,6 +257,29 @@ describe('seeding end to end, against a local repository', () => {
     assert.equal(session('merge-base', 'origin/release/1', 'HEAD'), sha.release);
     assert.match(session('diff', '--stat', 'origin/release/1...HEAD'), /r1\.txt[\s\S]*r2\.txt/);
     assert.equal(session('show', 'origin/release/1:release.txt'), 'release');
+  });
+
+  it('a verifier task gets a bundle of the work branch at the tested commit, presigned for fifteen minutes and left for the task', async () => {
+    const presigned: Array<number | undefined> = [];
+    const transfer = {
+      ...deps.transfer,
+      presign: async (key: string, seconds?: number) => {
+        presigned.push(seconds);
+        return `file://${join(transferDir, key)}`;
+      },
+    };
+    const result = await bundleForTask({ repository: { owner: 'o', name: 'n' }, transferKey: KEY, branch: ON_MAIN, at: sha.onMain }, { ...deps, transfer });
+    assert.equal(result.head, sha.onMain);
+    assert.equal(result.defaultBranch, 'main');
+    assert.equal(result.bundleUrl, `file://${join(transferDir, KEY)}`);
+    assert.deepEqual(presigned, [900]);
+    assert.ok(existsSync(join(transferDir, KEY)));
+    assert.equal(runs.length, 0);
+  });
+
+  it('a verifier task is refused a branch that has moved on from the tested commit', async () => {
+    await assert.rejects(bundleForTask({ repository: { owner: 'o', name: 'n' }, transferKey: KEY, branch: ON_MAIN, at: sha.main1 }, deps), /is not at the expected commit/);
+    assert.deepEqual(readdirSync(transferDir), []);
   });
 
   it('a rework whose base is the default branch has it once, as origin/HEAD and origin/main', async () => {

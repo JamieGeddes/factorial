@@ -17,16 +17,30 @@ import type { PrFacts } from '../lib/pr-facts.ts';
 import type { ReworkReplyFacts, RunDetails } from '../lib/report-file.ts';
 import { GUARD_FINDING_PREFIX, type ReviewDigest } from '../lib/review-files.ts';
 import type { ReworkPoint } from '../lib/rework-points.ts';
-
-export interface TestResult {
-  runUrl?: string;
-  outcome?: string;
-  /** Why Test was skipped (Collect's `testSkipReason`): the change was not verified. */
-  skipped?: string;
-}
+import type { VerifySummary } from '../lib/verify.ts';
 
 /** The skip reason as the body shows it: one line of text, never markup. */
 const skipText = (reason: string): string => reason.replace(/[\r\n`<>]/g, ' ').slice(0, 300);
+
+/** A duration as a person reads it: `45s`, `4m 12s`, `1h 2m`. */
+export function durationText(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/**
+ * How Verify went, in one line: each verifier the target declares, in order,
+ * with its outcome and time, or why nothing ran. Every required verifier
+ * passed by the time a pull request opens; an optional one may not have.
+ */
+export function verifyResultText(verify: VerifySummary): string {
+  if ('skipped' in verify) return `**not verified**: ${skipText(verify.skipped)}, so no automated checks ran on this change. Check it before merging.`;
+  return verify.verifiers
+    .map((v) => `${codeSpan(v.name)} ${v.outcome} in ${durationText(v.durationSeconds)}${v.required ? '' : ' (optional)'}`)
+    .join('; ');
+}
 
 const GITHUB_ISSUE_URL = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([A-Za-z0-9._-]+)\/issues\/([1-9][0-9]*)\/?$/;
 
@@ -50,7 +64,7 @@ export function closingReference(workItem: WorkItem): string | undefined {
  * The pull request description. Every PR has the same sections in the same
  * order: Summary, Impact, Review focus, Automated review, Tests, Plan and
  * (collapsed) Run details. Facts the orchestrator computed (paths,
- * dependencies, deploy settings, the test result, the plan, the review) never
+ * dependencies, deploy settings, the verifier results, the plan, the review) never
  * come from agent text; the builder's own words fill only the slots set aside
  * for them, are capped, and go through `agentText`. Each section is a pure
  * function of its inputs.
@@ -278,16 +292,13 @@ const listPaths = (paths: readonly string[]): string => {
 };
 
 /**
- * Tests: the CI result with its run, the test files the change touches (from
- * the diff), and what the builder says is not tested. The plan's `tests.add`
- * is what was planned, so it is labelled as that and collapsed.
+ * Tests: each verifier's result on the head, the test files the change
+ * touches (from the diff), and what the builder says is not tested. The
+ * plan's `tests.add` is what was planned, so it is labelled as that and
+ * collapsed.
  */
-export function testsSection(test: TestResult, summary: BuilderSummary | undefined, facts: PrFacts | null | undefined, plan: PlanView | undefined): string {
-  const result = test.skipped
-    ? `**not verified**: ${skipText(test.skipped)}, so no automated tests ran on this change. Check it before merging.`
-    : test.runUrl
-      ? `[${test.outcome ?? 'run'}](${test.runUrl})`
-      : 'not run';
+export function testsSection(verify: VerifySummary, summary: BuilderSummary | undefined, facts: PrFacts | null | undefined, plan: PlanView | undefined): string {
+  const result = verifyResultText(verify);
   const files = facts ? (facts.testFiles.length ? listPaths(facts.testFiles) : 'none among the changed files') : 'not determined (the review stage did not run)';
   const notTested = summary?.notTested === undefined
     ? NOT_REPORTED
@@ -297,7 +308,7 @@ export function testsSection(test: TestResult, summary: BuilderSummary | undefin
   return [
     '## Tests',
     '',
-    `- **Result:** ${result}`,
+    `- **Verifiers:** ${result}`,
     `- **Test files added or changed:** ${files}`,
     `- **Not tested:** ${notTested}`,
     ...(plan?.plannedTests.length
@@ -392,7 +403,7 @@ export function runDetailsOf(ctx: WorkContext): RunDetails {
 }
 
 /** The pull request description. The builder's text is `summaryText`, as read from summary.md. */
-export function pullRequestBody(ctx: WorkContext, summaryText: string, test: TestResult, headSha: string, extras: BodyExtras = {}): string {
+export function pullRequestBody(ctx: WorkContext, summaryText: string, verify: VerifySummary, headSha: string, extras: BodyExtras = {}): string {
   const summary = parseBuilderSummary(summaryText);
   const plan = planView(extras);
   const facts = extras.facts ?? null;
@@ -401,7 +412,7 @@ export function pullRequestBody(ctx: WorkContext, summaryText: string, test: Tes
     impactSection(summary, facts),
     reviewFocusSection(summary, facts, extras.review, plan),
     reviewSection(extras.review),
-    testsSection(test, summary, facts, plan),
+    testsSection(verify, summary, facts, plan),
     planSection(plan, summary),
     runDetailsSection(runDetailsOf(ctx), headSha),
   ].join('\n\n');
@@ -449,7 +460,7 @@ export function reworkReplyFacts(
   ctx: WorkContext,
   rework: Pick<ReworkTurn, 'cause'>,
   summaryText: string,
-  test: TestResult,
+  verify: VerifySummary,
   headSha: string,
   extras: Pick<BodyExtras, 'review' | 'facts'> = {},
 ): ReworkReplyFacts {
@@ -457,7 +468,7 @@ export function reworkReplyFacts(
     cause: rework.cause,
     requestedBy: ctx.workItem.requestedBy,
     headSha,
-    test: { ...(test.runUrl ? { runUrl: test.runUrl } : {}), ...(test.outcome ? { outcome: test.outcome } : {}), ...(test.skipped ? { skipped: test.skipped } : {}) },
+    verify,
     points: ctx.reworkPoints ?? [],
     summaryText,
     ...(extras.review !== undefined ? { review: extras.review } : {}),
@@ -473,7 +484,7 @@ export function reworkReplyFacts(
  * it describes the change as first opened, and this comment the rework.
  */
 export function reworkComment(reply: ReworkReplyFacts): string {
-  const { test, headSha, summaryText } = reply;
+  const { verify, headSha, summaryText } = reply;
   const summary = parseBuilderSummary(summaryText);
   const requester = safeLogin(reply.requestedBy);
   const why = {
@@ -481,14 +492,14 @@ export function reworkComment(reply: ReworkReplyFacts): string {
     'checks-failed': 'the failing checks',
     comment: requester ? `the request from @${requester}` : 'the request in the conversation',
   }[reply.cause];
-  // Only a run whose tests passed, or skipped them for want of a test workflow, reaches this reply.
-  const tested = test.skipped ? 'it was **not verified**: no automated tests ran (see Tests below)' : test.runUrl ? `the [tests](${test.runUrl}) passed on it` : 'its tests passed';
+  // Only a turn whose required verifiers passed, or whose target declares none, reaches this reply.
+  const tested = 'skipped' in verify ? 'it was **not verified**: no automated checks ran (see Tests below)' : 'its required verifiers passed on it (see Tests below)';
   const body = [
     `Factorial has reworked this pull request after ${why}. The branch is now at \`${headSha.slice(0, 12)}\`, and ${tested}. The description above still describes the change as first opened; this comment covers the rework.`,
     reworkPointsSection(reply, reply.points, summary),
     summarySection(summary, summaryText, undefined),
     reviewSection(reply.review),
-    testsSection(test, summary, reply.facts ?? null, undefined),
+    testsSection(verify, summary, reply.facts ?? null, undefined),
     runDetailsSection(reply.runDetails, headSha),
   ].join('\n\n');
   return `${replaceEmDashes(body)}\n`;

@@ -1,0 +1,19 @@
+{
+  "name": "@factorial/verifiers",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Types and validation for the verifier contracts: a target's declared checks and each one's result",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./exit": "./src/exit.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1"
+  }
+}
