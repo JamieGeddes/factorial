@@ -28,7 +28,6 @@ import { putArtefact, putBinaryArtefact, putJsonArtefact, redactSecrets } from '
 
 import type { WorkContext } from '../lib/context.ts';
 import { LIMIT_COMMIT_MESSAGE } from '../lib/continue-files.ts';
-import { requireEnv } from '../lib/env.ts';
 import { cleanRoomPush, githubRemote } from '../lib/clean-room.ts';
 import { commitIdentity, repositoryClient, repositoryToken } from '../lib/github.ts';
 import { builderIncomplete, type StepFailure } from '../lib/incomplete.ts';
@@ -40,6 +39,7 @@ import { asAgent, mustRun, runCommand, sessionTarget, stopSessionQuietly, type S
 import { exportSessionFiles } from '../lib/session-files.ts';
 import { HARDENED_GIT_ENV, assertCommitSha, shellQuote } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
+import { verifyPlan, type ReadFile, type VerifyPlan } from '../lib/verify.ts';
 
 export interface CollectResult {
   pushed: boolean;
@@ -54,11 +54,13 @@ export interface CollectResult {
   /** The validated plan, as the state machine carries it to the pull request; absent when the plan was not valid. */
   plan?: PlanDigest;
   /**
-   * Why the Test stage is skipped: the target's base branch has no test
-   * workflow to dispatch, so the change opens a pull request that says it was
-   * not verified (decided 2026-10-31). Absent when Test runs.
+   * The verifiers the target's base branch declares (lib/verify.ts), for the
+   * Verify stage: the list, why nothing runs (no settings file: the pull
+   * request says it was not verified, decided 2026-10-31), or the settings'
+   * problems, which end the turn. Absent after a failed build, which is not
+   * verified.
    */
-  testSkipReason?: string;
+  verify?: VerifyPlan;
 }
 
 const SECTION = '\n===FACTORIAL-SECTION===\n';
@@ -241,25 +243,22 @@ export interface CollectDeps {
   repositoryToken: typeof repositoryToken;
   /** The clean-room push; lib/clean-room.ts's when absent. */
   push?: typeof cleanRoomPush;
-  /** Whether a file exists on a branch of the repository; read with a `contents: read` token. */
-  fileExists?: (repo: { owner: string; name: string }, path: string, ref: string) => Promise<boolean>;
+  /** A file's text on a branch of the repository, read with a `contents: read` token. */
+  readFile?: ReadFile;
 }
 
 const repoOf = (ctx: WorkContext) => ({ owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name });
 
-const fileOnBranch = async (repo: { owner: string; name: string }, path: string, ref: string): Promise<boolean> =>
-  (await repositoryClient(repo, { contents: 'read' })).fileExists(repo, path, ref);
+const fileOnBranch: ReadFile = async (repo, path, ref, maxBytes) => (await repositoryClient(repo, { contents: 'read' })).fileText(repo, path, ref, maxBytes);
 
-/**
- * Why Test is skipped for this target, or undefined when it runs. Test
- * dispatches `TEST_WORKFLOW_FILE` on the base branch, so a base branch
- * without that workflow has nothing to verify the change with. The check
- * reads the base branch, never the work branch, so the builder cannot
- * remove the gate.
- */
-export async function testSkipReason(repo: { owner: string; name: string }, baseBranch: string, exists: NonNullable<CollectDeps['fileExists']>): Promise<string | undefined> {
-  const path = `.github/workflows/${requireEnv('TEST_WORKFLOW_FILE')}`;
-  return (await exists(repo, path, baseBranch)) ? undefined : `${repo.owner}/${repo.name} has no ${path} on ${baseBranch}`;
+/** The verifiers for a pushed change, logged; none for a failed build's saved work, which is not verified. */
+async function verifyFor(ctx: WorkContext, salvage: boolean, deps: CollectDeps, log: Logger): Promise<{ verify?: VerifyPlan }> {
+  if (salvage) return {};
+  const verify = await verifyPlan(repoOf(ctx), ctx.baseBranch, deps.readFile ?? fileOnBranch);
+  if ('skipped' in verify) log.info('verify skipped', { reason: verify.skipped });
+  else if ('invalid' in verify) log.error('verifier settings invalid', { problems: verify.invalid });
+  else log.info('verifiers declared', { verifiers: verify.verifiers.map((v) => v.name) });
+  return { verify };
 }
 
 export async function collect(input: CollectInput, log: Logger, deps: CollectDeps = { commitIdentity, repositoryToken }): Promise<CollectResult> {
@@ -297,9 +296,7 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
     // is on the branch: that pushed head is what is tested.
     log.info('no new commits this round; the branch keeps the earlier work', { incomplete, headSha: start.commit, resumed: ctx.resumedFrom !== undefined });
     await stopSessionQuietly(agentSession, log);
-    const skip = salvage ? undefined : await testSkipReason(repoOf(ctx), ctx.baseBranch, deps.fileExists ?? fileOnBranch);
-    if (skip) log.info('test skipped', { reason: skip });
-    return { pushed: true, commitCount, itemCommitCount, headSha: start.commit, summary, incomplete, ...digest, ...(skip ? { testSkipReason: skip } : {}) };
+    return { pushed: true, commitCount, itemCommitCount, headSha: start.commit, summary, incomplete, ...digest, ...(await verifyFor(ctx, salvage, deps, log)) };
   }
   if (commitCount === 0) {
     if (!salvage) await recordProgress(ctx.workItem.id, 'no-changes', { headSha, summary, ...planFields });
@@ -364,9 +361,7 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
   });
   // Nothing reads the agent's session after this.
   await stopSessionQuietly(agentSession, log);
-  const skip = salvage ? undefined : await testSkipReason(repo, ctx.baseBranch, deps.fileExists ?? fileOnBranch);
-  if (skip) log.info('test skipped', { reason: skip });
-  return { pushed: true, commitCount, itemCommitCount, headSha: pushedSha, summary, incomplete, ...digest, ...(skip ? { testSkipReason: skip } : {}) };
+  return { pushed: true, commitCount, itemCommitCount, headSha: pushedSha, summary, incomplete, ...digest, ...(await verifyFor(ctx, salvage, deps, log)) };
 }
 
 export const handler = staged('collect', (input: CollectInput) => runKey(input), collectStage, (input, log) => collect(input, log));

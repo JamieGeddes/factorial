@@ -13,7 +13,7 @@
 import { BedrockAgentCoreClient, InvokeAgentRuntimeCommandCommand, StopRuntimeSessionCommand } from '@aws-sdk/client-bedrock-agentcore';
 
 import { redactSecrets } from '@factorial/artefacts';
-import { runtimeArnVariable, type RoleName } from '@factorial/roles';
+import { runtimeArnVariable, type RoleName, type RuntimeName } from '@factorial/roles';
 
 import { requireEnv } from './env.ts';
 import type { Logger } from './log.ts';
@@ -41,11 +41,12 @@ export type SessionRole = RoleName;
  * Every role runs on Factorial's host on its own Runtime, its ARN in
  * `<ROLE>_RUNTIME_ARN` from the agent stack's outputs: the builder, which
  * plans with its subagent, on BUILDER_RUNTIME_ARN, the reviewer on
- * REVIEWER_RUNTIME_ARN. Both are addressed through the `live` qualifier.
+ * REVIEWER_RUNTIME_ARN, and the verifier sessions (#167) on
+ * VERIFIER_RUNTIME_ARN. All are addressed through the `live` qualifier.
  */
-export function sessionTarget(sessionId: string, role: SessionRole = 'builder'): SessionTarget {
+export function sessionTarget(sessionId: string, runtime: RuntimeName = 'builder'): SessionTarget {
   const qualifier = requireEnv('RUNTIME_QUALIFIER');
-  const arn = requireEnv(runtimeArnVariable(role));
+  const arn = requireEnv(runtimeArnVariable(runtime));
   return { arn, qualifier, sessionId };
 }
 

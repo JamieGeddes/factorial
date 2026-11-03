@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:verifiers:v1",
+  "title": "Verifiers",
+  "description": "The checks a target repository declares for Factorial to run on every change before it opens or updates a pull request, kept at .factorial/verifiers.json. Read from the base branch, never from the branch under test. Each verifier runs at the tested commit, in order, in a fresh session on Factorial's verifier Runtime, which can call no model and reach none of Factorial's data. A repository without the file is not verified, and its pull requests say so.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "verifiers"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "verifiers": {
+      "description": "Run in this order, each on the same commit. A required verifier that does not pass stops the rest. Names are unique.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "$ref": "#/$defs/verifier" }
+    }
+  },
+  "$defs": {
+    "verifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "run", "required", "timeoutSeconds"],
+      "properties": {
+        "name": {
+          "description": "Names the verifier in the pull request and the artefact store (verify/<name>/).",
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+        },
+        "kind": {
+          "description": "command: a shell command run by bash in the repository's root, as an unprivileged user with no credentials. The sandbox smoke test (#51) adds a kind.",
+          "const": "command"
+        },
+        "run": {
+          "description": "The command, such as \"npm ci && npm test\". Exit status 0 is a pass. npm installs come from Factorial's npm mirror.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "pattern": "^[^\\u0000]*$"
+        },
+        "required": {
+          "description": "true: the change opens or updates no pull request unless this verifier passes. false: its result is shown, and the list goes on whatever it is.",
+          "type": "boolean"
+        },
+        "timeoutSeconds": {
+          "description": "How long the command may run before it is stopped and recorded as timed-out. At most 3300: a session command runs for at most an hour, and the rest is the margin for starting it.",
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3300
+        }
+      }
+    }
+  }
+}

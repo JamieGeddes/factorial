@@ -1,6 +1,6 @@
 /**
  * Checks on the transfer bucket (#262): ephemeral, private, TLS only, and
- * read and written only by the three stages that seed sessions from a
+ * read and written only by the four stages that seed sessions from a
  * repository bundle, which run from the orchestration image with room for it.
  */
 import assert from 'node:assert/strict';
@@ -8,7 +8,7 @@ import { test } from 'node:test';
 
 import { resource, resources, type Json } from './template-checks.ts';
 
-const SEEDING = ['PrepareFunction', 'ContinueBuildFunction', 'PrepareReviewFunction'];
+const SEEDING = ['PrepareFunction', 'ContinueBuildFunction', 'PrepareReviewFunction', 'PrepareVerifyFunction'];
 
 test('the transfer bucket is private, unversioned, encrypted and expires every object after a day', () => {
   const properties = resource('TransferBucket').Properties as Json;

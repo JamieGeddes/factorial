@@ -25,9 +25,20 @@ export function isRoleName(value: string): value is RoleName {
   return (ROLE_NAMES as readonly string[]).includes(value);
 }
 
-/** The orchestrator's environment variable holding the role's Runtime ARN, set from the agent stack's outputs. */
-export function runtimeArnVariable(role: RoleName): string {
-  return `${role.toUpperCase()}_RUNTIME_ARN`;
+/**
+ * The verifier Runtime (#167): `factorial_verifier`, on the same image as the
+ * roles, whose sessions run a target's declared checks through the command
+ * API. It is not a role: no model, no prompt, no run, so no manifest. Its host
+ * serves health checks and refuses every invocation.
+ */
+export const VERIFIER_RUNTIME = 'verifier';
+
+/** Every Runtime the orchestrator opens sessions on: each role's, and the verifier's. */
+export type RuntimeName = RoleName | typeof VERIFIER_RUNTIME;
+
+/** The orchestrator's environment variable holding a Runtime's ARN, set from the agent stack's outputs. */
+export function runtimeArnVariable(runtime: RuntimeName): string {
+  return `${runtime.toUpperCase()}_RUNTIME_ARN`;
 }
 
 /** The Runtime version's environment variable naming the model for a purpose. */

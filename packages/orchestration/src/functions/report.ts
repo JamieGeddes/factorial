@@ -1,7 +1,7 @@
 /**
  * Report: end a turn that opens or updates no pull request, whether because
- * the agent made no changes, tests failed, the plan was invalid, or a step
- * errored. It records the status on the ledger, writes `report.json` with
+ * the agent made no changes, a required verifier did not pass, the plan was
+ * invalid, or a step errored. It records the status on the ledger, writes `report.json` with
  * what delivery needs and emits the outcome (#165); the reporter for the
  * item's source type tells the requester. Report itself speaks to no one.
  */
@@ -15,8 +15,8 @@ import { emitOutcome, type OutcomeFacts } from '../lib/outcome.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { REPORT_ARTEFACT, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
 import { attemptRecord, recordProgress, type AttemptRecord } from '../lib/table.ts';
-import { testResultArtefact } from '../lib/test-result.ts';
 import { continuedPullRequest } from '../lib/turn.ts';
+import { failedVerifierOf, verifyProblemsOf } from '../lib/verify.ts';
 
 export interface ReportInput extends ProgressInput {
   status: ReportStatus;
@@ -84,6 +84,14 @@ export function invalidPlanProblems(cause: string | undefined): string[] {
     .slice(0, 10);
 }
 
+/** The error the state machine raises for an invalid `.factorial/verifiers.json` on the base branch. */
+export const VERIFY_UNCONFIGURED = 'VerifyUnconfigured';
+
+/** A problem as a public comment shows it: redacted, one line, cut short, as inline code, which GitHub renders literally. */
+function codeSpan(problem: string): string {
+  return `\`${redactSecrets(problem).replace(/[`\r\n\t]/g, ' ').slice(0, 200)}\``;
+}
+
 /** The work pushed to the branch after a failed build, when Collect ran and pushed. */
 function savedWork(input: Pick<ReportInput, 'ctx' | 'saved'>): { branch: string; commits?: number } | undefined {
   if (!input.saved?.pushed || !input.ctx) return undefined;
@@ -101,8 +109,8 @@ export function reportFacts(input: ReportInput, workItemId?: string): ReportFact
     case 'no-changes':
       return { ...base, ...(sessionId ? { sessionId } : {}), ...(input.summary?.trim() ? { agentSaid: input.summary } : {}) };
     case 'tests-failed': {
-      const runUrl = safeJson(input.error?.Cause)?.runUrl;
-      return { ...base, ...(sessionId ? { sessionId } : {}), ...(typeof runUrl === 'string' ? { testRunUrl: runUrl } : {}) };
+      const failed = failedVerifierOf(input.error?.Cause);
+      return { ...base, ...(sessionId ? { sessionId } : {}), ...(failed ? { failedVerifier: failed } : {}) };
     }
     case 'invalid-plan': {
       const problems = invalidPlanProblems(input.error?.Cause);
@@ -114,10 +122,12 @@ export function reportFacts(input: ReportInput, workItemId?: string): ReportFact
       const session = incomplete ? sessionId : (sessionId ?? workItemId);
       const saved = savedWork(input);
       const round = typeof input.buildRound === 'number' && Number.isInteger(input.buildRound) && input.buildRound > 0 ? input.buildRound : undefined;
+      const problems = input.error?.Error === VERIFY_UNCONFIGURED ? verifyProblemsOf(input.error.Cause).map(codeSpan) : [];
       return {
         ...base,
         ...(session ? { sessionId: session } : {}),
         ...(incomplete ? { incomplete: true } : { errorName: input.error?.Error ?? 'unknown error' }),
+        ...(problems.length > 0 ? { verifyProblems: problems } : {}),
         ...(incomplete && round !== undefined ? { buildRound: round } : {}),
         ...(saved ? { savedWork: saved } : {}),
       };
@@ -130,7 +140,11 @@ export function reportArtefact(input: ReportInput, workItemId?: string): ReportF
   const reasons = {
     'no-changes': 'The agent made no changes.',
     'tests-failed': "The change did not pass the repository's checks.",
-    failed: builderIncomplete(input.error) ? 'The builder reached its iteration or time limit before finishing.' : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
+    failed: builderIncomplete(input.error)
+      ? 'The builder reached its iteration or time limit before finishing.'
+      : input.error?.Error === VERIFY_UNCONFIGURED
+        ? "The base branch's .factorial/verifiers.json is not valid, so the change could not be verified."
+        : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
     'invalid-plan': 'The builder did not produce a valid plan.',
   };
   return {
@@ -178,12 +192,12 @@ function reportKey(input: ReportInput): RunKey {
 }
 
 /**
- * Every Report state ends the work item. Failed tests end the Test stage,
- * which only the workflow's result decides; any other stage still open ends
- * with the failure that brought the item here.
+ * Every Report state ends the work item. A failed verifier ends the Verify
+ * stage, which CollectVerifier has usually ended already; any other stage
+ * still open ends with the failure that brought the item here.
  */
 const reportStage: StagePolicy<ReportInput, void> = {
-  closes: (input) => (input.status === 'tests-failed' ? [{ stage: 'Test', outcome: 'failed', error: stepError(input.error) ?? stageError('TestsFailed') }] : []),
+  closes: (input) => (input.status === 'tests-failed' ? [{ stage: 'Verify', outcome: 'failed', error: stepError(input.error) ?? stageError('VerifierFailed') }] : []),
   ends: () => true,
   failure: (input) => stepError(input.error),
 };
@@ -196,13 +210,6 @@ export const handler = staged('report', reportKey, reportStage, async (input: Re
   await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
   const facts = outcomeFacts(input, workItem, await recordFor(input, workItem, log));
   const redacted = { ...input, ...(error ? { error } : {}) };
-  if (input.status === 'tests-failed') {
-    try {
-      await putJsonArtefact(facts.artefactPrefix, 'test/result.json', testResultArtefact(safeJson(error?.Cause) ?? {}));
-    } catch (storeError) {
-      log.error('test result not stored', { error: storeError });
-    }
-  }
   // The reporter reads report.json, so it is written before the outcome that points at it.
   await putJsonArtefact(facts.artefactPrefix, REPORT_ARTEFACT, reportArtefact(redacted, workItem.id));
   const outcome = await emitOutcome(facts);

@@ -175,7 +175,7 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.invoker_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:invoker HEAD:packages/invoker HEAD:packages/artefacts HEAD:packages/log HEAD:packages/progress HEAD:contracts/progress HEAD:packages/roles HEAD:packages/run HEAD:contracts/run HEAD:packages/workitem HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:invoker HEAD:packages/invoker HEAD:packages/artefacts HEAD:packages/log HEAD:packages/progress HEAD:contracts/progress HEAD:packages/roles HEAD:packages/run HEAD:contracts/run HEAD:packages/verifiers HEAD:contracts/verifiers HEAD:packages/workitem HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/invoker --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Invoker image $tag already exists; skipping the build."
@@ -204,7 +204,7 @@ jobs:
             echo "Agent runtime image $tag already exists; skipping the build."
             exit 0
           fi
-          test -f agent-runtime/dist/host.mjs && test -f agent-runtime/dist/quiet.mjs
+          test -f agent-runtime/dist/host.mjs && test -f agent-runtime/dist/quiet.mjs && test -f agent-runtime/dist/verify.mjs
           aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
           aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
           docker buildx build --platform linux/arm64 --provenance=false --push \
@@ -221,13 +221,13 @@ jobs:
           REPO_URI: ${{ steps.foundation.outputs.orchestration_repo_uri }}
         run: |
           set -euo pipefail
-          tag=$(git rev-parse HEAD:orchestration HEAD:packages/orchestration HEAD:packages/agent-tools HEAD:packages/artefacts HEAD:packages/github-app HEAD:packages/live HEAD:packages/log HEAD:packages/outcome HEAD:packages/plan HEAD:packages/progress HEAD:packages/pull-request-closed HEAD:packages/review HEAD:packages/roles HEAD:packages/workitem HEAD:contracts HEAD:package-lock.json | sha256sum | cut -c1-32)
+          tag=$(git rev-parse HEAD:orchestration HEAD:packages/orchestration HEAD:packages/agent-tools HEAD:packages/artefacts HEAD:packages/github-app HEAD:packages/live HEAD:packages/log HEAD:packages/outcome HEAD:packages/plan HEAD:packages/progress HEAD:packages/pull-request-closed HEAD:packages/review HEAD:packages/roles HEAD:packages/verifiers HEAD:packages/workitem HEAD:contracts HEAD:package-lock.json | sha256sum | cut -c1-32)
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           if aws ecr describe-images --repository-name factorial/orchestration --image-ids "imageTag=$tag" >/dev/null 2>&1; then
             echo "Orchestration image $tag already exists; skipping the build."
             exit 0
           fi
-          for fn in collect prepare continue-build prepare-review; do test -f "orchestration/dist/$fn/index.mjs"; done
+          for fn in collect prepare continue-build prepare-review prepare-verify; do test -f "orchestration/dist/$fn/index.mjs"; done
           aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws
           aws ecr get-login-password | docker login --username AWS --password-stdin "${REPO_URI%%/*}"
           docker buildx build --platform linux/arm64 --provenance=false --push \

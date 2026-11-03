@@ -30,7 +30,7 @@ aws secretsmanager get-secret-value --secret-id factorial/github/webhook-secret 
    | Issues | Read and write | Receive issue events; comment progress back on the issue. |
    | Contents | Read and write | Clone and push branches. |
    | Pull requests | Read and write | Open the PR; check a PR and read a review's comments before rework, reply on it and re-request review. |
-   | Actions | Read and write | Dispatch the test workflow and read its result. Rework of failed checks also reads the failing jobs' logs (the orchestrator's token is narrowed to `actions: read` for that). |
+   | Actions | Read-only | Rework of failed checks reads the failing jobs' logs. Read and write before #167, which retired the dispatched test workflow. |
    | Workflows | Read and write | Push branches that change files under `.github/workflows/`. GitHub rejects such pushes otherwise. The orchestrator requests this permission on a token only when the change edits a workflow file. |
 
 6. Under **Subscribe to events**, tick **Issues**, **Issue comment**, **Pull request**, **Pull request review**, **Pull request review comment** and **Workflow run**. **Pull request** records whether Factorial's pull requests were merged; the other four let Factorial rework them (see **Pull request events** below).
@@ -115,3 +115,11 @@ Changing the App's permissions does not change existing installations until the 
 1. Click your profile photo, then **Settings**, then **Developer settings** at the bottom of the left nav, then **GitHub Apps**, then **Edit** next to the Factorial App.
 2. In the left nav click **Permissions & events**. Under **Repository permissions**, set the permission (for example **Workflows** to **Read and write**), scroll down and click **Save changes**.
 3. Accept it on the installation: profile photo, **Settings**, **Applications** in the left nav, the **Installed GitHub Apps** tab, **Configure** next to the Factorial App. A banner reads "This app has requested new permissions"; click **Review request**, then **Accept new permissions**.
+
+## Removing a permission
+
+Since #167 Factorial dispatches no workflow, so **Actions** needs only **Read-only**. Lowering it on an App created before then:
+
+1. Click your profile photo, then **Settings**, then **Developer settings** at the bottom of the left nav, then **GitHub Apps**, then **Edit** next to the Factorial App.
+2. In the left nav click **Permissions & events**. Under **Repository permissions**, set **Actions** to **Read-only**, scroll down and click **Save changes**.
+3. Check the installation: profile photo, **Settings**, **Applications** in the left nav, the **Installed GitHub Apps** tab, **Configure** next to the Factorial App. Its permissions list should show **Read access to actions**. If a banner reads "This app has requested new permissions", click **Review request**, then **Accept new permissions**.

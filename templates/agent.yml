@@ -498,7 +498,7 @@ Resources:
   # into the artefact store and the pull request body and never blocks the
   # pull request. It makes no changes, and only review.json is read out of its
   # session. No gateways: everything it judges is in the session. The
-  # Review stage, after Test, runs it.
+  # Review stage, after Verify, runs it.
   # Factorial's host in review mode (FACTORIAL_ROLE: reviewer), on Claude
   # through Bedrock with this role and no model key, as the builder is. The
   # role keeps the logical id it had when it served the reviewer harness: a
@@ -614,6 +614,110 @@ Resources:
       Tags:
         Project: Factorial
 
+  # ===========================================================================
+  # The verifier Runtime (#167). Not a role: no model, no prompt, no run. Each
+  # verifier a target declares in .factorial/verifiers.json runs in a fresh
+  # session here: PrepareVerify seeds the tested commit from a bundle, and the
+  # invoker runs the check through the session command API, as the agent user
+  # (packages/agent-runtime/src/verifier/). The host (FACTORIAL_ROLE: verifier)
+  # answers health checks and refuses every invocation. The check is untrusted
+  # code, so this role holds as little as a session can run with: the shared
+  # runtime policy (image pull, logs, traces), and the npm mirror, read-only,
+  # for installs. No model, no gateway, and no bucket, table or secret of
+  # Factorial's. Promoted with the roles: the deploy moves the live endpoint
+  # of every *RuntimeId output.
+  # ===========================================================================
+  VerifierRuntimeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: factorial-agent-verifier
+      Description: Execution role of the Factorial verifier runtime. No model access.
+      PermissionsBoundary: !ImportValue Factorial-AgentPermissionsBoundaryArn
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: bedrock-agentcore.amazonaws.com
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:bedrock-agentcore:${AWS::Region}:${AWS::AccountId}:runtime/factorial_verifier-*
+      ManagedPolicyArns:
+        - !Ref AgentRuntimePolicy
+      Policies:
+        - PolicyName: factorial-agent-verifier
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # The check runner mints a read-only token for the npm mirror as
+              # each check starts (packages/agent-runtime/src/verifier/command.ts),
+              # as the builder's host does for a run. The check shares the
+              # role, so could mint one too: the same read of public packages.
+              - Sid: NpmMirrorToken
+                Effect: Allow
+                Action: codeartifact:GetAuthorizationToken
+                Resource: !GetAtt NpmDomain.Arn
+              - Sid: NpmMirrorRead
+                Effect: Allow
+                Action: codeartifact:ReadFromRepository
+                Resource: !GetAtt NpmRepository.Arn
+      Tags:
+        - Key: Project
+          Value: Factorial
+
+  VerifierRuntime:
+    Type: AWS::BedrockAgentCore::Runtime
+    Properties:
+      AgentRuntimeName: factorial_verifier
+      # Runtime V2 restores sessions from a snapshot. Set explicitly; rollback is V1.
+      PlatformVersion: V2
+      Description: Factorial verifier sessions, which run each target's declared checks.
+      RoleArn: !GetAtt VerifierRuntimeRole.Arn
+      AgentRuntimeArtifact:
+        ContainerConfiguration:
+          ContainerUri: !Join
+            - ':'
+            - - !ImportValue Factorial-AgentRuntimeRepositoryUri
+              - !Ref AgentRuntimeImageTag
+      ProtocolConfiguration: HTTP
+      NetworkConfiguration:
+        NetworkMode: PUBLIC
+      LifecycleConfiguration:
+        # A fallback behind the invoker's and CollectVerifier's explicit
+        # stops. The host reports HealthyBusy while a check runs, so a long
+        # check is not idle; the gap to cover is PrepareVerify's last command
+        # to the invoker's first (the Fargate task start).
+        IdleRuntimeSessionTimeout: 600
+        # Above the longest check (3300 s, contracts/verifiers/v1) and the
+        # task start.
+        MaxLifetime: 5400
+      # Part of the immutable runtime version. No model, no limits and no
+      # gateways: the verifier runs no model.
+      EnvironmentVariables:
+        FACTORIAL_ROLE: verifier
+        # The npm mirror (#242): the check runner writes a token for it to the
+        # agent's ~/.npmrc and puts the registry in the check's environment,
+        # and starts no check without it.
+        FACTORIAL_CODEARTIFACT_DOMAIN: !GetAtt NpmDomain.Name
+        FACTORIAL_CODEARTIFACT_DOMAIN_OWNER: !GetAtt NpmDomain.Owner
+        FACTORIAL_CODEARTIFACT_REPOSITORY: !GetAtt NpmRepository.Name
+      Tags:
+        Project: Factorial
+
+  # Created once at whatever version is current; promoted by the deploy
+  # workflow, never by this template.
+  VerifierRuntimeLiveEndpoint:
+    Type: AWS::BedrockAgentCore::RuntimeEndpoint
+    Properties:
+      AgentRuntimeId: !GetAtt VerifierRuntime.AgentRuntimeId
+      Name: live
+      Description: The verifier runtime version handling new checks.
+      Tags:
+        Project: Factorial
+
 Outputs:
   BuilderRuntimeArn:
     Value: !GetAtt BuilderRuntime.AgentRuntimeArn
@@ -639,6 +743,18 @@ Outputs:
     Value: !GetAtt ReviewerRuntimeLiveEndpoint.AgentRuntimeEndpointArn
     Export:
       Name: Factorial-ReviewerRuntimeLiveEndpointArn
+  VerifierRuntimeArn:
+    Value: !GetAtt VerifierRuntime.AgentRuntimeArn
+    Export:
+      Name: Factorial-VerifierRuntimeArn
+  VerifierRuntimeId:
+    Value: !GetAtt VerifierRuntime.AgentRuntimeId
+    Export:
+      Name: Factorial-VerifierRuntimeId
+  VerifierRuntimeLiveEndpointArn:
+    Value: !GetAtt VerifierRuntimeLiveEndpoint.AgentRuntimeEndpointArn
+    Export:
+      Name: Factorial-VerifierRuntimeLiveEndpointArn
   # For the network stack's endpoint policies when the Runtimes move to VPC mode.
   NpmDomainArn:
     Value: !GetAtt NpmDomain.Arn

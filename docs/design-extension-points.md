@@ -50,7 +50,7 @@ Seeding a session is spread across Prepare (`notes.md`, `rework.md`), ContinueBu
 
 ### 2.8 Verification is one hardwired dispatch
 
-Test dispatches one workflow file in the target repository and waits on a task-token callback. The callback trust is bound to Factorial's own repository (#91): `TestCallbackRole` trusts the OIDC subject built from Factorial's owner and repository ids, so a run anywhere else cannot report and waits out the timeout. Enrolling a target would cost a workflow in that repository, a secret and a change to the human-deployed trust policy, and would let anyone who can edit that repository's workflows report success for a failed run. The smoke test (#50, #51) would be a second hardwired state with its own result shape.
+_Done in #167: see 3.7. What this section described:_ Test dispatched one workflow file in the target repository and waits on a task-token callback. The callback trust is bound to Factorial's own repository (#91): `TestCallbackRole` trusts the OIDC subject built from Factorial's owner and repository ids, so a run anywhere else cannot report and waits out the timeout. Enrolling a target would cost a workflow in that repository, a secret and a change to the human-deployed trust policy, and would let anyone who can edit that repository's workflows report success for a failed run. The smoke test (#50, #51) would be a second hardwired state with its own result shape.
 
 ## 3. The generalisation
 
@@ -151,11 +151,11 @@ One function assembles a seed: files to place in `/workspace` and sections to ad
 
 ### 3.7 Verifiers
 
-Verify runs an ordered list of verifiers read from the target's `.factorial/verifiers.json` on the base branch, each reporting through one result contract (`verify/<name>/result.json`: name, kind, sha, outcome, exit code, duration and a log pointer), which replaces `lib/test-result.ts`. Verification is Factorial's gate, so Factorial runs it in compute it owns, from a command the target declares, and never by dispatching the target's CI.
+Verify runs an ordered list of verifiers read from the target's `.factorial/verifiers.json` on the base branch (`contracts/verifiers/v1/`), each reporting through one result contract (`verify/<name>/result.json`: name, kind, sha, outcome, exit code, duration and a log pointer), which replaced `lib/test-result.ts`. Verification is Factorial's gate, so Factorial runs it in compute it owns, from a command the target declares, and never by dispatching the target's CI. Built in #167; `docs/current-stage.md` (Verify) is the record.
 
-- A `command` verifier runs at the tested commit in a fresh session on a verifier Runtime whose role can call no model and read nothing of Factorial's. The orchestrator clones with a short-lived token that never enters the session, checks the head, and hands the workspace to the unprivileged user; the invoker runs the command there through the command API and waits for it. Untrusted test code therefore holds no credentials, spends no model budget and cannot forge its result.
+- A `command` verifier runs at the tested commit in a fresh session on a verifier Runtime whose role can call no model and read nothing of Factorial's. The orchestrator seeds the session from a bundle it fetched, so no token enters it, checks the head, and hands the workspace to the unprivileged user; the invoker runs the command there through the command API and waits for it. Untrusted test code therefore holds no credentials beyond the npm mirror's read-only token, spends no model budget and cannot forge its result.
 - The sandbox smoke test (#51) is the second kind, run by orchestrator code against a leased account (#50), reporting through the same contract.
-- A target with no settings, or an invalid file, is not verified and gets no pull request: an untested change never becomes one.
+- A target with no settings is not verified, and its pull request says so (decided 2026-10-31). An invalid file ends the turn with no pull request, so a typo cannot remove the gate.
 
 The target's own CI still runs on the pull request and remains the independent second check. #91's test-gate question is then answered once, for every target: no workflow to install, no secret and no trust policy per repository (#167).
 
@@ -187,7 +187,7 @@ The canary (#13) stays first. After that, each item below is done when its first
 | 2. Role manifests | The PR that adds the triager and responder | The first new roles since the reviewer |
 | 3. Outcomes and the GitHub reporter | #15 | The notifier seam is the same thing. Done in #165: `contracts/outcome/v1/`, `lib/outcome.ts`, `reporters/github/` (`docs/current-stage.md`, Outcomes and the GitHub reporter) |
 | 4. Session seeds from providers | The next change to seeding | Pure refactor; do it when the code is open anyway. Done in #166: `lib/seed.ts`, `lib/seed-providers.ts` (`docs/current-stage.md`, The seed) |
-| 5. Verifiers | Before #50 and #51 | The smoke test is the second verifier and should land on this shape, not beside a dispatched workflow |
+| 5. Verifiers | Before #50 and #51 | The smoke test is the second verifier and should land on this shape, not beside a dispatched workflow. Done in #167: `contracts/verifiers/v1/`, the Verify stage and the verifier Runtime (`docs/current-stage.md`, Verify) |
 | 6. Integrate route | #155 | Reuses the thread and Verify |
 | 7. Propose and Clarify routes | When wanted | No new infrastructure; a prompt section, a route and a reporter case each |
 | 8. Service catalog | The first source that names a subject rather than a repository (#61, #62, chat) | The `subject` contract change and the shared lookup module land with their first reader |

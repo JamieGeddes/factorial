@@ -71,7 +71,7 @@ test('the stage graph draws every stage and a puck per item, styled by kind', ()
       stages={[{ stage: 'Build', p50: 1460, runs: 3 }]}
       pucks={[
         { id: ID, title: HOSTILE, ref: '#1', stage: 'Build', kind: 'builder', round: 2, href: `/runs/${ID}/build/2` },
-        { id: ID.replace('7', '8'), title: 't', ref: '#2', stage: 'Test', kind: 'waiting', href: '/work-items/x' },
+        { id: ID.replace('7', '8'), title: 't', ref: '#2', stage: 'Verify', kind: 'waiting', href: '/work-items/x' },
       ]}
     />,
   );

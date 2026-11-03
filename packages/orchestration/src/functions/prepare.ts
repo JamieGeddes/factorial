@@ -19,6 +19,7 @@
  */
 import { putJsonArtefact } from '@factorial/artefacts';
 import type { GitHubClient } from '@factorial/github-app';
+import type { RuntimeName } from '@factorial/roles';
 import { assertWorkItem, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
 import type { ReworkTurn, WorkContext } from '../lib/context.ts';
@@ -63,6 +64,11 @@ export interface SessionParams {
 }
 
 /** What a stage supplies to its providers beyond the item and the checkout. */
+/** What seeding the repository alone takes: any Runtime's session, the verifier's too, which gets no seed files. */
+export interface CheckoutParams extends Omit<SessionParams, 'role'> {
+  role: RuntimeName;
+}
+
 export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive'>>;
 
 export interface SeededCheckout {
@@ -79,7 +85,7 @@ export interface SeededCheckout {
  * same commit. Nothing is placed in /workspace beside the repository: that is
  * `placeSeed`.
  */
-export async function seedCheckout(params: SessionParams, deps?: SeedRepositoryDeps): Promise<SeededCheckout> {
+export async function seedCheckout(params: CheckoutParams, deps?: SeedRepositoryDeps): Promise<SeededCheckout> {
   const { workItem, branch, resumedFrom, rework } = params;
   const target = sessionTarget(params.sessionId ?? workItem.id, params.role);
   const { head, defaultBranch } = await seedRepository(

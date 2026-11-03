@@ -1,6 +1,7 @@
 /**
- * Bundle the host process, the `quiet` tool (packages/agent-tools) and pi's
- * file helper (src/pi/agent-ops.ts, run as the agent user) into
+ * Bundle the host process, the `quiet` tool (packages/agent-tools), pi's
+ * file helper (src/pi/agent-ops.ts, run as the agent user) and the verifier
+ * sessions' check runner (src/verifier/verify.ts, #167) into
  * agent-runtime/dist/ for the container image. pi stays external: its
  * WebAssembly modules load from their own package. The image installs it from
  * agent-runtime/package-lock.json.
@@ -8,7 +9,7 @@
 import { build } from 'esbuild';
 
 await build({
-  entryPoints: { host: 'src/index.ts', quiet: '../agent-tools/src/quiet.ts', 'agent-ops': 'src/pi/agent-ops.ts' },
+  entryPoints: { host: 'src/index.ts', quiet: '../agent-tools/src/quiet.ts', 'agent-ops': 'src/pi/agent-ops.ts', verify: 'src/verifier/verify.ts' },
   outdir: '../../agent-runtime/dist',
   outExtension: { '.js': '.mjs' },
   bundle: true,

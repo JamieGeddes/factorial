@@ -2,7 +2,7 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 Description: >-
   Factorial orchestration: the work ledger, the Step Functions state machine
-  (plan -> build -> test -> PR) with its live alias, the rule that starts it from the
+  (plan -> build -> verify -> review -> PR) with its live alias, the rule that starts it from the
   work bus, the Fargate invoker that runs the agents, and the Lambda steps
   around the agent. Deployed by GitHub Actions.
 
@@ -27,17 +27,9 @@ Parameters:
     Type: Number
     Default: 7200
     Description: Upper bound for one round of the agent build step, including the builder host's own time limit (FACTORIAL_MAX_DURATION_SECONDS).
-  TestTimeoutSeconds:
-    Type: Number
-    Default: 3600
-    Description: How long to wait for the dispatched test workflow to report back.
   LogRetentionDays:
     Type: Number
     Default: 30
-  DefaultBranch:
-    Type: String
-    Default: main
-    Description: Branch whose test workflow definition is trusted and dispatched.
   ArtefactRetentionDays:
     Type: Number
     Default: 365
@@ -78,10 +70,10 @@ Globals:
         RUNTIME_QUALIFIER: live
         BUILDER_RUNTIME_ARN: !ImportValue Factorial-BuilderRuntimeArn
         REVIEWER_RUNTIME_ARN: !ImportValue Factorial-ReviewerRuntimeArn
+        VERIFIER_RUNTIME_ARN: !ImportValue Factorial-VerifierRuntimeArn
         GITHUB_APP_ID_PARAM: /factorial/github/app-id
         GITHUB_INSTALLATION_ID_PARAM: /factorial/github/installation-id
         GITHUB_PRIVATE_KEY_SECRET: factorial/github/app-private-key
-        TEST_WORKFLOW_FILE: test.yml
     Tags:
       Project: Factorial
 
@@ -293,12 +285,12 @@ Resources:
 
   # ---------------------------------------------------------------------------
   # Transfer bucket (#262): how the repository reaches a session without the
-  # session reaching GitHub. Prepare, ContinueBuild and PrepareReview write a
-  # git bundle here (lib/repo-seed.ts) and pass the session a presigned GET
+  # session reaching GitHub. Prepare, ContinueBuild, PrepareReview and
+  # PrepareVerify write a git bundle here (lib/repo-seed.ts) and pass the session a presigned GET
   # that expires in five minutes; the stage deletes the object once the
   # session has it. Separate from the artefact store, which is write-once,
   # delete-denied and read by no session: this one is ephemeral, unversioned
-  # and read only through those URLs, signed by the three stages' roles. Keys:
+  # and read only through those URLs, signed by the four stages' roles. Keys:
   # <workItemId>/<attempt>/<stage>/repo.bundle. No aws:SourceVpce condition
   # while the Runtimes are PUBLIC; it comes with VPC mode.
   # ---------------------------------------------------------------------------
@@ -360,6 +352,7 @@ Resources:
                   - !GetAtt PrepareFunctionRole.Arn
                   - !GetAtt ContinueBuildFunctionRole.Arn
                   - !GetAtt PrepareReviewFunctionRole.Arn
+                  - !GetAtt PrepareVerifyFunctionRole.Arn
 
   # The seeding stages: write a bundle, presign its GET, delete it once the
   # session has it. Multipart uploads need AbortMultipartUpload on failure.
@@ -680,6 +673,19 @@ Resources:
                   - !Sub
                     - ${RuntimeArn}/runtime-endpoint/*
                     - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
+              # The verify mode (#167): the check runs in a verifier session
+              # through the command API, never in this task, and the task
+              # stops the session once the check has ended.
+              - Sid: RunVerifiers
+                Effect: Allow
+                Action:
+                  - bedrock-agentcore:InvokeAgentRuntimeCommand
+                  - bedrock-agentcore:StopRuntimeSession
+                Resource:
+                  - !ImportValue Factorial-VerifierRuntimeArn
+                  - !Sub
+                    - ${RuntimeArn}/runtime-endpoint/*
+                    - RuntimeArn: !ImportValue Factorial-VerifierRuntimeArn
               - Sid: Ledger
                 Effect: Allow
                 Action:
@@ -780,10 +786,15 @@ Resources:
     Properties:
       LogGroupName: /aws/lambda/factorial-collect
       RetentionInDays: !Ref LogRetentionDays
-  DispatchTestsLogGroup:
+  PrepareVerifyLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /aws/lambda/factorial-dispatch-tests
+      LogGroupName: /aws/lambda/factorial-prepare-verify
+      RetentionInDays: !Ref LogRetentionDays
+  CollectVerifierLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/factorial-collect-verifier
       RetentionInDays: !Ref LogRetentionDays
   OpenPullRequestLogGroup:
     Type: AWS::Logs::LogGroup
@@ -937,26 +948,6 @@ Resources:
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
 
-  DispatchTestsFunction:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: factorial-dispatch-tests
-      Description: Start the repository's test workflow on the work branch with a task token.
-      CodeUri: ../packages/orchestration/dist/dispatch-tests/
-      Runtime: nodejs24.x
-      Handler: index.handler
-      Timeout: 60
-      LoggingConfig:
-        LogGroup: !Ref DispatchTestsLogGroup
-      Policies:
-        - Statement:
-            - Sid: Ledger
-              Effect: Allow
-              Action: dynamodb:UpdateItem
-              Resource: !GetAtt WorkItemsTable.Arn
-        - !Ref GitHubAppPolicy
-        - !Ref ProgressEventsPolicy
-
   # Reads back the validated plan files, the one exception to the artefact
   # store being write-only: the builder's copy is in a session treated as
   # hostile, so the stored copy, validated by Collect, is the only one no
@@ -1040,6 +1031,70 @@ Resources:
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
         - !Ref TransferSeedPolicy
+        - !Ref ProgressEventsPolicy
+
+  # Verify (#167), one verifier at a time. PrepareVerify seeds a fresh session
+  # on the verifier Runtime with the tested commit, from a bundle, as
+  # PrepareReview does: the orchestration image, the transfer bucket, a
+  # read-only token that never enters the session. It reads no artefact.
+  PrepareVerifyFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-prepare-verify
+      Description: Set up a fresh verifier session at the tested commit, from a bundle.
+      PackageType: Image
+      ImageUri: !Sub
+        - ${RepositoryUri}:${OrchestrationImageTag}
+        - RepositoryUri: !ImportValue Factorial-OrchestrationRepositoryUri
+      ImageConfig:
+        Command:
+          - prepare-verify/index.handler
+      Timeout: 900
+      MemorySize: 2048
+      EphemeralStorage:
+        Size: 2048
+      Environment:
+        Variables:
+          TRANSFER_BUCKET: !Ref TransferBucket
+      LoggingConfig:
+        LogGroup: !Ref PrepareVerifyLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+        - !Ref SessionCommandPolicy
+        - !Ref GitHubAppPolicy
+        - !Ref TransferSeedPolicy
+        - !Ref ProgressEventsPolicy
+
+  # CollectVerifier reads back the result the invoker wrote, the one key of
+  # the stage it is granted, writes one when there is none, and stops the
+  # verifier's session. No GitHub access.
+  CollectVerifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: factorial-collect-verifier
+      Description: Judge one verifier's result, stopping the turn when a required verifier did not pass.
+      CodeUri: ../packages/orchestration/dist/collect-verifier/
+      Runtime: nodejs24.x
+      Handler: index.handler
+      Timeout: 120
+      LoggingConfig:
+        LogGroup: !Ref CollectVerifierLogGroup
+      Policies:
+        - Statement:
+            - Sid: Ledger
+              Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt WorkItemsTable.Arn
+            - Sid: ReadVerifierResults
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/verify/*/result.json
+        - !Ref SessionCommandPolicy
+        - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
 
   CollectReviewFunction:
@@ -1258,9 +1313,9 @@ Resources:
       Policies:
         - !Ref LivePublishPolicy
 
-  # Covers the reviewer's sessions as well as the builder's. The description
-  # still names only the builder: changing a managed policy's description
-  # replaces it, and the replacement collides with the fixed name.
+  # Covers the reviewer's and the verifiers' sessions as well as the builder's.
+  # The description still names only the builder: changing a managed policy's
+  # description replaces it, and the replacement collides with the fixed name.
   SessionCommandPolicy:
     Type: AWS::IAM::ManagedPolicy
     Properties:
@@ -1272,9 +1327,9 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Each role's Runtime: commands only, since the invoker runs the
-          # agent, and stopping the session once Collect or CollectReview has
-          # finished with it.
+          # Each role's Runtime and the verifier Runtime: commands only, since
+          # the invoker runs the agent and the checks, and stopping the session
+          # once Collect, CollectReview or CollectVerifier has finished with it.
           - Effect: Allow
             Action:
               - bedrock-agentcore:InvokeAgentRuntimeCommand
@@ -1288,6 +1343,10 @@ Resources:
               - !Sub
                 - ${RuntimeArn}/runtime-endpoint/*
                 - RuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
+              - !ImportValue Factorial-VerifierRuntimeArn
+              - !Sub
+                - ${RuntimeArn}/runtime-endpoint/*
+                - RuntimeArn: !ImportValue Factorial-VerifierRuntimeArn
 
   # Only orchestrator functions, outside the agent sandbox, may read the App
   # key and mint tokens.
@@ -1307,48 +1366,6 @@ Resources:
           - Effect: Allow
             Action: secretsmanager:GetSecretValue
             Resource: !Sub arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:factorial/github/app-private-key-*
-
-  # ---------------------------------------------------------------------------
-  # Test callback: the dispatched workflow reports its result with the task
-  # token through this role. The workflow is dispatched on the default branch
-  # (its definition is trusted; the work commit is checked out as data in a
-  # credential-less job), so the trust is for that branch only, and the role
-  # can only send task results.
-  # ---------------------------------------------------------------------------
-  TestCallbackRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: factorial-test-callback
-      Description: Assumed by the dispatched test workflow to report its result to Step Functions.
-      PermissionsBoundary: !ImportValue Factorial-PermissionsBoundaryArn
-      MaxSessionDuration: 3600
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Federated: !ImportValue Factorial-GitHubOidcProviderArn
-            Action: sts:AssumeRoleWithWebIdentity
-            Condition:
-              StringEquals:
-                token.actions.githubusercontent.com:aud: sts.amazonaws.com
-                token.actions.githubusercontent.com:sub: !Sub
-                  - ${Prefix}:ref:refs/heads/${DefaultBranch}
-                  - Prefix: !ImportValue Factorial-GitHubOidcSubjectPrefix
-      Policies:
-        - PolicyName: factorial-test-callback
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - states:SendTaskSuccess
-                  - states:SendTaskFailure
-                  - states:SendTaskHeartbeat
-                Resource: '*'
-      Tags:
-        - Key: Project
-          Value: Factorial
 
   # ---------------------------------------------------------------------------
   # The state machine. Deterministic; the agent runs inside the Build state.
@@ -1387,7 +1404,8 @@ Resources:
                   - !Ref PrepareFunction.Alias
                   - !Ref CollectFunction.Alias
                   - !Ref ContinueBuildFunction.Alias
-                  - !Ref DispatchTestsFunction.Alias
+                  - !Ref PrepareVerifyFunction.Alias
+                  - !Ref CollectVerifierFunction.Alias
                   - !Ref PrepareReviewFunction.Alias
                   - !Ref CollectReviewFunction.Alias
                   - !Ref OpenPullRequestFunction.Alias
@@ -1466,13 +1484,13 @@ Resources:
         FactorialVersion: !Ref FactorialVersion
         BuildTimeoutSeconds: !Ref BuildTimeoutSeconds
         MaxBuildRounds: !FindInMap [Builder, MaxRounds, Value]
-        TestTimeoutSeconds: !Ref TestTimeoutSeconds
         ReviewTimeoutSeconds: !Ref ReviewTimeoutSeconds
         IntakeFunctionAlias: !Ref IntakeFunction.Alias
         PrepareFunctionAlias: !Ref PrepareFunction.Alias
         CollectFunctionAlias: !Ref CollectFunction.Alias
         ContinueBuildFunctionAlias: !Ref ContinueBuildFunction.Alias
-        DispatchTestsFunctionAlias: !Ref DispatchTestsFunction.Alias
+        PrepareVerifyFunctionAlias: !Ref PrepareVerifyFunction.Alias
+        CollectVerifierFunctionAlias: !Ref CollectVerifierFunction.Alias
         PrepareReviewFunctionAlias: !Ref PrepareReviewFunction.Alias
         CollectReviewFunctionAlias: !Ref CollectReviewFunction.Alias
         OpenPullRequestFunctionAlias: !Ref OpenPullRequestFunction.Alias
@@ -1481,12 +1499,13 @@ Resources:
         TaskDefinitionArn: !Ref InvokerTaskDefinition
         BuilderRuntimeArn: !ImportValue Factorial-BuilderRuntimeArn
         ReviewerRuntimeArn: !ImportValue Factorial-ReviewerRuntimeArn
+        VerifierRuntimeArn: !ImportValue Factorial-VerifierRuntimeArn
         SubnetA: !Ref SubnetA
         SubnetB: !Ref SubnetB
         SecurityGroup: !Ref InvokerSecurityGroup
       DefinitionString: |
         {
-          "Comment": "Factorial: intake -> build (planning first) -> test -> review -> PR. Deterministic; Intake chooses the route from a fixed set, and the agents run inside Build and Review.",
+          "Comment": "Factorial: intake -> build (planning first) -> verify -> review -> PR. Deterministic; Intake chooses the route from a fixed set, the agents run inside Build and Review, and the target's declared checks run inside Verify.",
           "QueryLanguage": "JSONata",
           "StartAt": "Start",
           "States": {
@@ -1497,7 +1516,7 @@ Resources:
                 "intake": null,
                 "ctx": null,
                 "collect": null,
-                "test": null,
+                "verify": null,
                 "failure": null,
                 "plan": null,
                 "buildRound": 1,
@@ -1687,43 +1706,145 @@ Resources:
             },
             "HasChanges": {
               "Type": "Choice",
-              "Comment": "A pushed change is tested, unless the target's base branch has no test workflow to dispatch (Collect's testSkipReason): then it goes to review unverified, and its pull request says so.",
+              "Comment": "A pushed change is verified by the checks its target's base branch declares in .factorial/verifiers.json (Collect's verify). No file: it goes to review unverified, and its pull request says so. An invalid file ends the turn, so a typo cannot remove the gate.",
               "Choices": [
-                { "Condition": "{% $collect.pushed = true and $exists($collect.testSkipReason) %}", "Next": "SkipTest" },
-                { "Condition": "{% $collect.pushed = true %}", "Next": "Test" }
+                { "Condition": "{% $collect.pushed = true and $exists($collect.verify.invalid) %}", "Next": "VerifyUnconfigured" },
+                { "Condition": "{% $collect.pushed = true and $exists($collect.verify.skipped) %}", "Next": "SkipVerify" },
+                { "Condition": "{% $collect.pushed = true %}", "Next": "Verify" }
               ],
               "Default": "ReportNoChanges"
             },
-            "SkipTest": {
+            "VerifyUnconfigured": {
               "Type": "Pass",
-              "Comment": "No test workflow on the target's base branch: nothing is dispatched, and the test result records why, for the pull request and the reply.",
-              "Assign": { "test": "{% { 'skipped': $collect.testSkipReason } %}" },
-              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "test": "{% { 'skipped': $collect.testSkipReason } %}" },
+              "Comment": "The base branch's .factorial/verifiers.json is not valid: the pushed work is saved on the branch and the turn ends with the file's problems.",
+              "Assign": { "failure": "{% { 'Error': 'VerifyUnconfigured', 'Cause': $string({ 'problems': $collect.verify.invalid }) } %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "problems": "{% $collect.verify.invalid %}" },
+              "Next": "ReportFailure"
+            },
+            "SkipVerify": {
+              "Type": "Pass",
+              "Comment": "The target declares no verifiers: nothing runs, and the result records why, for the pull request and the reply.",
+              "Assign": { "verify": "{% { 'skipped': $collect.verify.skipped } %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verify": "{% { 'skipped': $collect.verify.skipped } %}" },
               "Next": "PrepareReview"
             },
-            "Test": {
-              "Type": "Task",
-              "Resource": "arn:aws:states:::lambda:invoke.waitForTaskToken",
-              "Arguments": {
-                "FunctionName": "${DispatchTestsFunctionAlias}",
-                "Payload": { "taskToken": "{% $states.context.Task.Token %}", "ctx": "{% $ctx %}", "collect": "{% $collect %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
+            "Verify": {
+              "Type": "Map",
+              "Comment": "Each declared verifier in order, on the pushed head, each in a fresh session on the verifier Runtime, which can call no model and reach none of Factorial's data. A required verifier that does not pass fails its iteration, which stops the rest and ends the turn as tests-failed.",
+              "Items": "{% $collect.verify.verifiers %}",
+              "ItemSelector": { "verifier": "{% $states.context.Map.Item.Value %}", "index": "{% $states.context.Map.Item.Index %}" },
+              "MaxConcurrency": 1,
+              "ItemProcessor": {
+                "ProcessorConfig": { "Mode": "INLINE" },
+                "StartAt": "Verifier",
+                "States": {
+                  "Verifier": {
+                    "Type": "Pass",
+                    "Assign": { "verifier": "{% $states.input.verifier %}", "verifierIndex": "{% $states.input.index %}", "verifierStart": "{% $states.context.State.EnteredTime %}", "verifierError": null },
+                    "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verifier": "{% $states.input.verifier.name %}" },
+                    "Next": "PrepareVerify"
+                  },
+                  "PrepareVerify": {
+                    "Type": "Task",
+                    "Comment": "Seed a fresh verifier session with the tested commit, from a bundle. A failure is the verifier's error, judged by CollectVerifier.",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Arguments": {
+                      "FunctionName": "${PrepareVerifyFunctionAlias}",
+                      "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verifier": "{% $verifier %}", "index": "{% $verifierIndex %}", "progress": { "stage": "Verify", "round": "{% $buildRound %}" } }
+                    },
+                    "Assign": { "verifierSession": "{% $states.result.Payload.sessionId %}" },
+                    "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "sessionId": "{% $states.result.Payload.sessionId %}" },
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                        "IntervalSeconds": 2,
+                        "MaxAttempts": 3,
+                        "BackoffRate": 2
+                      }
+                    ],
+                    "Catch": [
+                      { "ErrorEquals": ["States.ALL"], "Assign": { "verifierError": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "CollectVerifier" }
+                    ],
+                    "Next": "RunVerifier"
+                  },
+                  "RunVerifier": {
+                    "Type": "Task",
+                    "Comment": "The invoker runs the declared command in the verifier session through the command API, as the unprivileged user, and stores its result and the end of its output. Bounded by the verifier's own timeout and a margin for the task to start.",
+                    "Resource": "arn:aws:states:::ecs:runTask.sync",
+                    "Arguments": {
+                      "Cluster": "${ClusterArn}",
+                      "TaskDefinition": "${TaskDefinitionArn}",
+                      "LaunchType": "FARGATE",
+                      "PropagateTags": "TASK_DEFINITION",
+                      "NetworkConfiguration": {
+                        "AwsvpcConfiguration": {
+                          "Subnets": ["${SubnetA}", "${SubnetB}"],
+                          "SecurityGroups": ["${SecurityGroup}"],
+                          "AssignPublicIp": "ENABLED"
+                        }
+                      },
+                      "Overrides": {
+                        "ContainerOverrides": [
+                          {
+                            "Name": "invoker",
+                            "Environment": [
+                              { "Name": "MODE", "Value": "verify" },
+                              { "Name": "STAGE", "Value": "Verify" },
+                              { "Name": "RUNTIME_ARN", "Value": "${VerifierRuntimeArn}" },
+                              { "Name": "RUNTIME_QUALIFIER", "Value": "live" },
+                              { "Name": "WORK_ITEM_ID", "Value": "{% $ctx.workItem.id %}" },
+                              { "Name": "SESSION_ID", "Value": "{% $verifierSession %}" },
+                              { "Name": "ARTEFACT_PREFIX", "Value": "{% $ctx.artefactPrefix %}" },
+                              { "Name": "VERIFY_SHA", "Value": "{% $collect.headSha %}" },
+                              { "Name": "VERIFIER", "Value": "{% $string($verifier) %}" }
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    "TimeoutSeconds": "{% $verifier.timeoutSeconds + 600 %}",
+                    "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "taskArn": "{% $states.result.TaskArn %}" },
+                    "Catch": [
+                      { "ErrorEquals": ["States.ALL"], "Assign": { "verifierError": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "CollectVerifier" }
+                    ],
+                    "Next": "CollectVerifier"
+                  },
+                  "CollectVerifier": {
+                    "Type": "Task",
+                    "Comment": "Judge the verifier from its stored result, recording one when there is none. A required verifier that did not pass throws VerifierFailed, which ends the Map.",
+                    "Resource": "arn:aws:states:::lambda:invoke",
+                    "Arguments": {
+                      "FunctionName": "${CollectVerifierFunctionAlias}",
+                      "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verifier": "{% $verifier %}", "index": "{% $verifierIndex %}", "error": "{% $verifierError %}", "startedAt": "{% $verifierStart %}", "progress": { "stage": "Verify", "round": "{% $buildRound %}" } }
+                    },
+                    "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verifier": "{% $states.result.Payload %}" },
+                    "Retry": [
+                      {
+                        "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                        "IntervalSeconds": 2,
+                        "MaxAttempts": 3,
+                        "BackoffRate": 2
+                      }
+                    ],
+                    "End": true
+                  }
+                }
               },
-              "TimeoutSeconds": ${TestTimeoutSeconds},
-              "Assign": { "test": "{% $states.result %}" },
-              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "test": "{% $states.result %}" },
+              "Assign": { "verify": "{% { 'verifiers': $states.result.verifier[] } %}" },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "verify": "{% { 'verifiers': $states.result.verifier[] } %}" },
               "Catch": [
-                { "ErrorEquals": ["TestsFailed"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportTestsFailed" },
+                { "ErrorEquals": ["VerifierFailed"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportTestsFailed" },
                 { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "PrepareReview"
             },
             "PrepareReview": {
               "Type": "Task",
-              "Comment": "Set up a fresh reviewer session at the tested commit. The review is advisory: if any review step fails, the pull request still opens, saying the review did not complete.",
+              "Comment": "Set up a fresh reviewer session at the verified commit. The review is advisory: if any review step fails, the pull request still opens, saying the review did not complete.",
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${PrepareReviewFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verify": "{% $verify %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Assign": { "reviewPrep": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "sensitive": "{% $states.result.Payload.sensitivePathsJson %}" },
@@ -1812,7 +1933,7 @@ Resources:
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": {
                 "FunctionName": "${OpenPullRequestFunctionAlias}",
-                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "test": "{% $test %}", "plan": "{% $plan %}", "review": "{% $review %}", "prFacts": "{% $exists($reviewPrep.prFacts) ? $reviewPrep.prFacts : null %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
+                "Payload": { "ctx": "{% $ctx %}", "collect": "{% $collect %}", "verify": "{% $verify %}", "plan": "{% $plan %}", "review": "{% $review %}", "prFacts": "{% $exists($reviewPrep.prFacts) ? $reviewPrep.prFacts : null %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
               },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "prNumber": "{% $states.result.Payload.prNumber %}", "prUrl": "{% $states.result.Payload.prUrl %}" },
               "Catch": [
@@ -1842,7 +1963,7 @@ Resources:
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "tests-failed" },
               "Next": "TestsFailed"
             },
-            "TestsFailed": { "Type": "Fail", "Error": "TestsFailed", "Cause": "The change did not pass the repository's checks." },
+            "TestsFailed": { "Type": "Fail", "Error": "TestsFailed", "Cause": "A required verifier did not pass on the change." },
             "ReportInvalidPlan": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
@@ -2302,9 +2423,6 @@ Outputs:
     Value: !Ref WorkStateMachineLiveAlias
     Export:
       Name: Factorial-WorkStateMachineLiveAliasArn
-  TestCallbackRoleArn:
-    Description: Store as the AWS_TEST_CALLBACK_ROLE_ARN repository secret.
-    Value: !GetAtt TestCallbackRole.Arn
   WorkItemsTableName:
     Value: !Ref WorkItemsTable
     Export:

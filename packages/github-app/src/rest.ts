@@ -108,15 +108,6 @@ export class GitHubClient {
     return (await response.json()) as T;
   }
 
-  /** Start a workflow_dispatch run. GitHub returns no run id; the run reports back itself. */
-  async dispatchWorkflow(repo: Repo, workflowFile: string, ref: string, inputs: Record<string, string>): Promise<void> {
-    await this.#request<void>(
-      'POST',
-      `/repos/${repo.owner}/${repo.name}/actions/workflows/${encodeURIComponent(workflowFile)}/dispatches`,
-      { ref, inputs },
-    );
-  }
-
   async createPullRequest(
     repo: Repo,
     params: { title: string; body: string; head: string; base: string },
@@ -265,18 +256,24 @@ export class GitHubClient {
   }
 
   /**
-   * Whether a file exists at `path` on `ref`, through the contents API (needs
-   * `contents: read`). A missing file or ref is false; any other failure throws.
+   * The text of the file at `path` on `ref`, through the contents API (needs
+   * `contents: read`), or undefined when the file or the ref is not there.
+   * A file over `maxBytes` (the API serves at most 1 MB this way), or a path
+   * that is not a file, throws; so does any other failure.
    */
-  async fileExists(repo: Repo, path: string, ref: string): Promise<boolean> {
+  async fileText(repo: Repo, path: string, ref: string, maxBytes: number): Promise<string | undefined> {
     const encoded = path.split('/').map(encodeURIComponent).join('/');
+    let file: { type?: string; size?: number; encoding?: string; content?: string };
     try {
-      await this.#request<unknown>('GET', `/repos/${repo.owner}/${repo.name}/contents/${encoded}?ref=${encodeURIComponent(ref)}`);
-      return true;
+      file = await this.#request<typeof file>('GET', `/repos/${repo.owner}/${repo.name}/contents/${encoded}?ref=${encodeURIComponent(ref)}`);
     } catch (error) {
-      if (error instanceof GitHubApiError && error.status === 404) return false;
+      if (error instanceof GitHubApiError && error.status === 404) return undefined;
       throw error;
     }
+    if (file.type !== 'file') throw new Error(`${path} on ${ref} is not a file`);
+    if (typeof file.size !== 'number' || file.size > maxBytes) throw new Error(`${path} on ${ref} is over ${maxBytes} bytes`);
+    if (file.encoding !== 'base64' || typeof file.content !== 'string') throw new Error(`${path} on ${ref} came back without its content`);
+    return Buffer.from(file.content, 'base64').toString('utf8');
   }
 
   async getDefaultBranch(repo: Repo): Promise<string> {

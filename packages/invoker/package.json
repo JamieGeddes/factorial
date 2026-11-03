@@ -2,7 +2,7 @@
   "name": "@factorial/invoker",
   "version": "0.1.0",
   "private": true,
-  "description": "Fargate task that runs one agent invocation to completion",
+  "description": "Fargate task that runs one agent invocation, or one verifier, to completion",
   "type": "module",
   "scripts": {
     "build": "node --disable-warning=ExperimentalWarning build.ts",
@@ -20,6 +20,7 @@
     "@factorial/progress": "^0.1.0",
     "@factorial/roles": "^0.1.0",
     "@factorial/run": "^0.1.0",
+    "@factorial/verifiers": "^0.1.0",
     "@factorial/workitem": "^0.1.0"
   }
 }

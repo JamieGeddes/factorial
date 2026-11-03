@@ -10,7 +10,7 @@ const errorOf = (value: unknown): string | undefined => {
 };
 
 const runDetails = { source: { type: 't', id: '1', url: 'https://x' }, requestedBy: 'a', branch: 'b', factorialVersion: 'v', sessionId: 's', artefactPrefix: 'p' };
-const reply = { cause: 'review', requestedBy: 'a', headSha: 'h', test: {}, points: [{ author: 'a' }], summaryText: '', runDetails };
+const reply = { cause: 'review', requestedBy: 'a', headSha: 'h', verify: { verifiers: [{ name: 'checks', required: true, outcome: 'passed', sha: 'h', durationSeconds: 1 }] }, points: [{ author: 'a' }], summaryText: '', runDetails };
 
 describe('parseReportFile', () => {
   it('accepts each delivery kind, and a report from before deliveries', () => {
@@ -39,8 +39,10 @@ describe('parseReportFile', () => {
     assert.equal(errorOf(report({ kind: 'report', facts: { status: 'failed', rework: false, planProblems: [1] } })), 'facts.planProblems is not a list of strings');
     assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, cause: 'other' }, reviewers: [] })), 'reply.cause is not a rework cause');
     assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, points: [{}] }, reviewers: [] })), 'reply.points is malformed');
-    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, test: { skipped: 1 } }, reviewers: [] })), 'reply.test.skipped is not a string');
-    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, test: { skipped: 'no test workflow' } }, reviewers: [] })), undefined);
+    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, verify: { skipped: 1 } }, reviewers: [] })), 'reply.verify.skipped is not a string');
+    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, verify: { skipped: 'no verifiers' } }, reviewers: [] })), undefined);
+    assert.equal(errorOf(report({ kind: 'rework-reply', reply: { ...reply, verify: { verifiers: [{ name: 'checks' }] } }, reviewers: [] })), 'reply.verify.verifiers is malformed');
+    assert.equal(errorOf(report({ kind: 'report', facts: { status: 'tests-failed', rework: false, failedVerifier: { name: 1 } } })), 'facts.failedVerifier is malformed');
     assert.equal(errorOf(report({ kind: 'rework-reply', reply, reviewers: 'a' })), 'reviewers is not a list of logins');
     assert.equal(errorOf(report({ kind: 'refusal', reply: 1 })), 'reply is not a string');
   });

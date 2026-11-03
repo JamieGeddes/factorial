@@ -14,8 +14,9 @@ test('a running item in Build or Review reads building or reviewing, with the ro
   assert.deepEqual(statusPill(row({ stages: open('Review') })), { label: 'reviewing', tone: 'running' });
 });
 
-test('a running item in Test reads testing, styled as waiting', () => {
-  assert.deepEqual(statusPill(row({ stages: open('Test') })), { label: 'testing', tone: 'waiting' });
+test('a running item in Verify reads verifying, styled as waiting, as does one in Test from before Verify', () => {
+  assert.deepEqual(statusPill(row({ stages: open('Verify') })), { label: 'verifying', tone: 'waiting' });
+  assert.deepEqual(statusPill(row({ stages: open('Test') })), { label: 'verifying', tone: 'waiting' });
 });
 
 test('a running item in any other stage reads the stage name', () => {

@@ -262,7 +262,7 @@ const reply: ReworkReplyFacts = {
   cause: 'review',
   requestedBy: 'alice',
   headSha: '9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f',
-  test: { runUrl: 'https://x/run/1', outcome: 'success' },
+  verify: { verifiers: [{ name: 'checks', required: true, outcome: 'passed', sha: '9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f', durationSeconds: 120 }] },
   points: [{ author: 'alice', path: 'src/a.ts', line: 3 }, { author: 'bob' }],
   summaryText: '## Summary\nRenamed it.\n\n## Rework points\n- 1: Renamed it. @everyone\n- 2: Added a test.\n',
   runDetails: {

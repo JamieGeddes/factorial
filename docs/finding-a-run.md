@@ -27,7 +27,7 @@ fields @timestamp, execution_arn
 
 The execution name (`<uuid>_<uuid>`) is EventBridge's, so searching the **Executions** tab for the id finds nothing.
 
-Every state's output carries `workItemId` and `attempt`. **Build** and **Review** output `taskArn`; its last segment is the invoker task id for that run. Runs before 2026-10-25's phase 3.1 also had **Plan** (twice when the first plan was rejected, shown by `planAttempt`) and **CollectPlan**.
+Every state's output carries `workItemId` and `attempt`. **Build**, **Review** and each verifier's **RunVerifier** (inside the **Verify** Map, one iteration per verifier) output `taskArn`; its last segment is the invoker task id for that run. Runs before 2026-10-25's phase 3.1 also had **Plan** (twice when the first plan was rejected, shown by `planAttempt`) and **CollectPlan**.
 
 The execution log, with full state inputs and outputs, is the log group `/aws/vendedlogs/states/factorial-work`.
 
@@ -39,7 +39,7 @@ The execution log, with full state inputs and outputs, is the log group `/aws/ve
 - `/aws/lambda/factorial-intake`
 - `/aws/lambda/factorial-prepare`
 - `/aws/lambda/factorial-collect` (the push is Collect's own: `branch pushed from clean room`, or `work in progress saved from clean room` when salvaging, with the pushed `headSha` and the agent's `agentHeadSha`; runs before #261 pushed from a second builder session, `<id>-push`)
-- `/aws/lambda/factorial-dispatch-tests`
+- `/aws/lambda/factorial-prepare-verify` and `/aws/lambda/factorial-collect-verifier` (`/aws/lambda/factorial-dispatch-tests` before #167)
 - `/aws/lambda/factorial-prepare-review`
 - `/aws/lambda/factorial-collect-review`
 - `/aws/lambda/factorial-open-pr`
@@ -58,7 +58,7 @@ fields @timestamp, stage, attempt, level, message, @log
 | limit 10000
 ```
 
-Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`.
+Add `| filter level = "error"` to see only failures. The invoker's own stream is `invoker/invoker/<task id>` in `/factorial/invoker`. A verifier's lines (`MODE=verify`) carry the stage `verify/<name>`: `running verifier` (session, commit, timeout), `verifier finished` (outcome, exit code, duration, output bytes) or `verifier could not be run`.
 
 Before a work item exists, the GitHub adapter's group `/aws/lambda/factorial-github-issues-adapter` has one `delivery` line per webhook delivery (#59): `deliveryId` (GitHub's `X-GitHub-Delivery`), `event`, `outcome` (`work-item` with its `workItemId`, `closed`, `ignored`, `rejected` or `failed`) and, unless it placed an event, `reason`. `| filter message = "delivery" and deliveryId = "<id>"` finds what one delivery did; the command centre's Health view counts them per hour.
 
@@ -70,7 +70,7 @@ A delivery that failed (the reporter erred after its retries, or EventBridge cou
 
 **S3** → **Buckets** → `factorial-work-artefacts-<account id>` → open the folder `<id>/` → `<attempt>/` (the ledger's `artefactPrefix`).
 
-It holds `workitem.json`, `intake/intake.json` (the thread and route Intake chose, and why), `prepare/`, `plan/` (the builder's plan as markdown and JSON and its validation result; before phase 3.1 also the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `test/`, `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/`, `report.json` (the outcome's reason and what the reporter's comment was built from) and `outcome/outcome.json` (the turn's `Outcome`, `contracts/outcome/v1/`, also on the ledger row as `result`). A resumed item's artefacts are under its own id, with the next attempt number. After #167, `test/` becomes `verify/<name>/result.json` with that verifier's logs beside it, and the `factorial-dispatch-tests` log group above goes with the dispatched workflow.
+It holds `workitem.json`, `intake/intake.json` (the thread and route Intake chose, and why), `prepare/`, `plan/` (the builder's plan as markdown and JSON and its validation result; before phase 3.1 also the planner's transcript and usage), `build/` (transcript, usage, the agent's notes and logs, the git bundle; a round after the first under `build/round-<n>/`), `verify/<name>/` (each verifier's `result.json` and `output.log`; `test/` before #167), `review/` (what the reviewer was given, its transcript and usage, and `review.json` or `error.json`), `pr/`, `report.json` (the outcome's reason and what the reporter's comment was built from) and `outcome/outcome.json` (the turn's `Outcome`, `contracts/outcome/v1/`, also on the ledger row as `result`). A resumed item's artefacts are under its own id, with the next attempt number.
 
 ## 5. The AgentCore trace
 

@@ -1,6 +1,6 @@
 /**
- * Helpers for the checks on templates/orchestration.yml in the *-template
- * tests: its resources, and EventBridge pattern matching for the operators
+ * Helpers for the checks on templates/orchestration.yml (and agent.yml) in
+ * the *-template tests: its resources, and EventBridge pattern matching for the operators
  * its rules use.
  */
 import assert from 'node:assert/strict';
@@ -10,13 +10,13 @@ import { parse } from 'yaml';
 
 export type Json = Record<string, unknown>;
 
-/** Resources of the template; CloudFormation short-form tags parse to `{ Tag: value }`. */
-export function resources(): Record<string, Json> {
+/** Resources of a template (orchestration.yml unless named); CloudFormation short-form tags parse to `{ Tag: value }`. */
+export function resources(name = 'orchestration'): Record<string, Json> {
   const tags = ['Ref', 'GetAtt', 'Sub', 'ImportValue', 'Join', 'Select', 'If', 'Equals', 'Not', 'And', 'Or', 'FindInMap', 'Split', 'GetAZs', 'Base64', 'Condition'].map((name) => ({
     tag: `!${name}`,
     resolve: (value: unknown) => ({ [name === 'Ref' || name === 'Condition' ? name : `Fn::${name}`]: value }),
   }));
-  const template = parse(readFileSync(new URL('../../../templates/orchestration.yml', import.meta.url), 'utf8'), { customTags: tags }) as {
+  const template = parse(readFileSync(new URL(`../../../templates/${name}.yml`, import.meta.url), 'utf8'), { customTags: tags }) as {
     Resources: Record<string, Json>;
   };
   return template.Resources;

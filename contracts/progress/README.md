@@ -22,7 +22,7 @@ At least once. The ledger write is conditional, so a retried task records nothin
 | `threadKey` | The thread, once Intake has found it. |
 | `source` | The WorkItem's `type` and `url`, so a subscriber can act per trigger type. |
 | `repository` | The target repository. |
-| `stage` | The state machine's state name (`Intake`, `Build`, `Test`, `ReportFailure`, ...), `WorkItem` for the item's end, or `PullRequest` for what became of the pull request it opened. |
+| `stage` | The state machine's state name (`Intake`, `Build`, `Verify`, `ReportFailure`, ...; `Test` before #167), `WorkItem` for the item's end, or `PullRequest` for what became of the pull request it opened. |
 | `round` | The build round, for `Build`, `SaveWork` and `ContinueBuild` after the first round. |
 | `transition` | `started`, `succeeded` or `failed` for a stage; `ended` for the work item; `merged` or `closed` (without merging) for the pull request. |
 | `at` | When the transition was recorded on the ledger. |

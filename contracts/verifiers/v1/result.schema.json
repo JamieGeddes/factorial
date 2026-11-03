@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:factorial:contracts:verifiers:v1:result",
+  "title": "VerifierResult",
+  "description": "How one verifier went on one commit, stored as verify/<name>/result.json under the attempt's artefact prefix. Written by the invoker that ran the command, or by CollectVerifier when no result was written (the task failed or was stopped). The same shape for every kind of verifier. Internal to Factorial, not part of the WorkItem API.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "name", "kind", "required", "sha", "outcome", "startedAt", "finishedAt", "durationSeconds"],
+  "properties": {
+    "schemaVersion": {
+      "description": "Version of this contract. Incremented only for breaking changes.",
+      "const": 1
+    },
+    "name": {
+      "description": "The verifier's name from .factorial/verifiers.json.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,39}$"
+    },
+    "kind": {
+      "description": "The verifier's kind.",
+      "enum": ["command"]
+    },
+    "required": {
+      "description": "Whether the change needed this verifier to pass, as declared.",
+      "type": "boolean"
+    },
+    "sha": {
+      "description": "The commit the verifier ran on: the branch head Collect pushed.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "outcome": {
+      "description": "passed: exit status 0. failed: any other status from the command. timed-out: stopped at its timeoutSeconds, or the stage's own timeout. error: the command could not be run or judged (not found, not executable, the session or the task failed); never a pass.",
+      "enum": ["passed", "failed", "timed-out", "error"]
+    },
+    "exitCode": {
+      "description": "The command's exit status, when it ended with one.",
+      "type": "integer"
+    },
+    "detail": {
+      "description": "Why the outcome is error or timed-out, in one line, when known.",
+      "type": "string",
+      "maxLength": 500
+    },
+    "startedAt": { "type": "string", "format": "date-time" },
+    "finishedAt": { "type": "string", "format": "date-time" },
+    "durationSeconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "log": {
+      "description": "Where the command's output is: the last part of it, redacted, as verify/<name>/output.log.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "bytes", "truncated"],
+      "properties": {
+        "key": { "description": "The artefact key.", "type": "string", "minLength": 1, "maxLength": 300 },
+        "bytes": { "description": "How many bytes the command wrote in all.", "type": "integer", "minimum": 0 },
+        "truncated": { "description": "Whether the stored log keeps only the end of the output.", "type": "boolean" }
+      }
+    }
+  }
+}

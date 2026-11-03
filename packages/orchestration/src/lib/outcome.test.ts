@@ -62,8 +62,11 @@ describe('buildOutcome', () => {
   });
 
   it('refuses an outcome that breaks the contract', () => {
-    assert.throws(() => buildOutcome(facts({ testedSha: undefined })), InvalidOutcomeError);
     assert.throws(() => buildOutcome(facts({ result: 'refused' })), InvalidOutcomeError);
+  });
+
+  it('builds an opened pull request with no tested commit, for a target that declares no verifiers', () => {
+    assert.equal('testedSha' in buildOutcome(facts({ testedSha: undefined })), false);
   });
 });
 

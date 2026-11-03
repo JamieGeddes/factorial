@@ -6,7 +6,7 @@ import { parseStageKey } from './stage-key.ts';
 import type { LedgerRow, StageEntry } from './records.ts';
 
 /** The stage graph, in order. */
-export const STAGES = ['Intake', 'Prepare', 'Build', 'Collect', 'Test', 'PrepareReview', 'Review', 'CollectReview', 'OpenPullRequest'] as const;
+export const STAGES = ['Intake', 'Prepare', 'Build', 'Collect', 'Verify', 'PrepareReview', 'Review', 'CollectReview', 'OpenPullRequest'] as const;
 export type GraphStage = (typeof STAGES)[number];
 
 const LABELS: Record<string, string> = { PrepareReview: 'Prepare review', CollectReview: 'Collect review', OpenPullRequest: 'Open PR' };
@@ -15,8 +15,12 @@ export function stageLabel(stage: string): string {
   return LABELS[stage] ?? stage;
 }
 
-/** States that are part of a graph stage: a build that saves its work or continues in a fresh session is still building. */
-const ALIASES: Record<string, GraphStage> = { SaveWork: 'Build', ContinueBuild: 'Build' };
+/**
+ * States that are part of a graph stage: a build that saves its work or
+ * continues in a fresh session is still building. `Test` is the stage Verify
+ * replaced (#167), for rows recorded before it.
+ */
+const ALIASES: Record<string, GraphStage> = { SaveWork: 'Build', ContinueBuild: 'Build', Test: 'Verify' };
 
 /** The graph stage a state machine state belongs to, or undefined for states the graph does not draw. */
 export function graphStage(state: string | undefined): GraphStage | undefined {
@@ -24,6 +28,9 @@ export function graphStage(state: string | undefined): GraphStage | undefined {
   if ((STAGES as readonly string[]).includes(state)) return state as GraphStage;
   return ALIASES[state];
 }
+
+/** Whether a state is the Verify stage, where the target's checks run and no agent does. */
+export const isVerifyStage = (state: string | undefined): boolean => graphStage(state) === 'Verify';
 
 /** The run folder (`build`, `review`) of an agent stage, or undefined. */
 export const RUN_FOLDERS: Record<string, string> = { Build: 'build', Review: 'review' };
