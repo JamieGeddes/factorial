@@ -52,7 +52,7 @@ describe('admitTurn: one turn in flight', () => {
   });
 
   it('admits when the holder has finished, whatever way it ended', () => {
-    for (const status of ['pr-updated', 'pr-opened', 'tests-failed', 'failed', 'no-changes', 'invalid-plan']) {
+    for (const status of ['pr-updated', 'pr-opened', 'tests-failed', 'failed', 'no-changes', 'invalid-plan', 'workflow-change-refused']) {
       assert.equal(admitTurn(review, held('a', 30), status, NOW).ok, true, status);
     }
   });

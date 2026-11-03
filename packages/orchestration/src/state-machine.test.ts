@@ -179,3 +179,21 @@ test('a propose turn starts at Prepare like a change, and a proposal ends at Rep
   assert.equal(report?.Next, 'Proposed');
   assert.equal(machine.Proposed?.Type, 'Succeed');
 });
+
+test('a workflow change the target has not opted in to ends as workflow-change-refused, from Collect and from SaveWork', () => {
+  for (const name of ['Collect', 'SaveWork']) {
+    const catches = machine[name]?.Catch ?? [];
+    const refused = catches.findIndex((c) => c.ErrorEquals.includes('WorkflowChangeRefused'));
+    assert.ok(refused !== -1, `${name} does not catch WorkflowChangeRefused`);
+    assert.ok(refused < catches.findIndex((c) => c.ErrorEquals.includes('States.ALL')), `${name} catches States.ALL first`);
+    const catcher = catches[refused] as { Next?: string; Assign?: Record<string, unknown> };
+    assert.equal(catcher.Next, 'ReportWorkflowChangeRefused');
+    assert.ok(catcher.Assign && 'failure' in catcher.Assign, `${name} does not keep the failure for the report`);
+  }
+  const report = machine.ReportWorkflowChangeRefused;
+  const payload = report?.Arguments?.Payload as Record<string, unknown> | undefined;
+  assert.equal(payload?.status, 'workflow-change-refused');
+  assert.equal(payload?.error, '{% $failure %}');
+  assert.equal(report?.Next, 'WorkflowChangeRefused');
+  assert.equal(machine.WorkflowChangeRefused?.Type, 'Fail');
+});

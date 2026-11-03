@@ -37,7 +37,7 @@ test('pr-opened reads merged or closed once the thread records it', () => {
 });
 
 test('the other results read as named', () => {
-  for (const result of ['pr-updated', 'no-changes', 'tests-failed', 'invalid-plan', 'failed']) assert.equal(statusPill(row({ result })).label, result);
+  for (const result of ['pr-updated', 'no-changes', 'tests-failed', 'invalid-plan', 'workflow-change-refused', 'failed']) assert.equal(statusPill(row({ result })).label, result);
   assert.equal(statusPill(row({ result: 'tests-failed' })).tone, 'failed');
 });
 

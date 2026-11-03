@@ -10,6 +10,8 @@ import { reportMessage as render, savedWorkNote as renderNote } from '../reporte
 
 import type { ReportStatus } from '../lib/report-file.ts';
 
+import { WorkflowChangeRefusedError } from '../lib/workflow-changes.ts';
+
 import { invalidPlanProblems, outcomeFacts, reportArtefact, reportFacts, type ReportInput } from './report.ts';
 
 const repository = { owner: 'JamieGeddes', name: 'factorial' };
@@ -198,6 +200,44 @@ describe('invalid-plan report', () => {
     const record = reportArtefact({ status: 'invalid-plan' });
     assert.equal(record.outcome, 'invalid-plan');
     assert.equal(record.reason, 'The builder did not produce a valid plan.');
+  });
+});
+
+describe('workflow-change-refused report', () => {
+  const refusal = (paths: string[]): ReportInput => ({
+    status: 'workflow-change-refused',
+    error: { Error: 'WorkflowChangeRefused', Cause: JSON.stringify({ errorType: 'WorkflowChangeRefused', errorMessage: new WorkflowChangeRefusedError(paths).message }) },
+  });
+
+  it('names the files, says nothing was pushed and how to opt in', () => {
+    const message = reportMessage({ ...refusal(['.github/workflows/ci.yml', '.github/actions/x/action.yml']), status: 'workflow-change-refused' });
+    assert.match(message, /nothing was pushed \(no pull request was opened\)/);
+    assert.match(message, /- `\.github\/workflows\/ci\.yml`/);
+    assert.match(message, /- `\.github\/actions\/x\/action\.yml`/);
+    assert.match(message, /`\.factorial\/workflow-changes\.json`/);
+    assert.match(message, /base branch/);
+    assert.match(message, /secrets/);
+  });
+
+  it('says the pull request was not updated on a rework', () => {
+    const input = { ...refusal(['.github/workflows/ci.yml']), ctx: { ...ctx, rework: { pullRequest: { number: 26, url: 'https://x' }, cause: 'review' as const, previousWorkItemId: 'p', baseBranch: 'main' } } };
+    assert.match(reportMessage({ ...input, status: 'workflow-change-refused' }), /the pull request was not updated/);
+  });
+
+  it('shows at most ten paths and counts the rest, as redacted inline code', () => {
+    const paths = Array.from({ length: 23 }, (_, i) => `.github/workflows/w${i}.yml`);
+    paths[0] = '.github/workflows/`@x ghs_abcdefghijklmnopqrstuvwxyz0123456789.yml';
+    const facts = reportFacts({ ...refusal(paths), status: 'workflow-change-refused' });
+    assert.equal(facts.workflowPaths?.length, 10);
+    assert.equal(facts.workflowPathsMore, 13);
+    assert.doesNotMatch(JSON.stringify(facts), /ghs_abcdefghijklmnopqrstuvwxyz0123456789/);
+    assert.match(render(facts, repository), /- and 13 more/);
+  });
+
+  it('records the outcome in report.json', () => {
+    const record = reportArtefact({ status: 'workflow-change-refused' });
+    assert.equal(record.outcome, 'workflow-change-refused');
+    assert.match(record.reason, /has not opted in/);
   });
 });
 

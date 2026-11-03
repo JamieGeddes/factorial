@@ -78,6 +78,8 @@ describe('touchesWorkflows', () => {
     assert.equal(touchesWorkflows(['.github/workflows/ci.yml', 'README.md']), true);
     assert.equal(touchesWorkflows(['.github/CODEOWNERS', 'docs/workflows.md', 'packages/x/.github/workflows/y.yml']), false);
     assert.equal(touchesWorkflows([]), false);
+    assert.equal(touchesWorkflows(['".github/workflows/a\\tb.yml"']), true);
+    assert.equal(touchesWorkflows(['.github/actions/x/action.yml']), false);
   });
 });
 
@@ -89,6 +91,11 @@ describe('agent-session scripts carry no credentials', () => {
     assert.ok(script.indexOf('add -A') < script.indexOf('git rev-list'));
     assert.doesNotMatch(script, /AUTHORIZATION|x-access-token|ghs_/);
     assert.ok(script.includes(`commit --quiet -m '${LEFTOVER_COMMIT_MESSAGE}'`));
+  });
+
+  it('lists changed paths without rename detection or quoting of non-ASCII names, so a rename cannot hide a guarded path', () => {
+    const script = inspectScript(base);
+    assert.ok(script.includes(`git -c core.quotePath=false diff --no-renames --name-only '${base}' HEAD`));
   });
 
   it('labels leftovers as saved work in progress after a failed build', () => {
@@ -189,6 +196,8 @@ describe('collect pushes from its own clean room and stops the builder session',
   let commits: number;
   /** What the plan read answers: no plan files unless a test supplies valid ones. */
   let planReply: string;
+  /** The changed paths the inspection reports, one per line. */
+  let changedFiles: string;
 
   const reply = (stdout: string, exitCode = 0) => ({ stream: [{ chunk: { contentDelta: { stdout } } }, { chunk: { contentStop: { exitCode } } }] });
 
@@ -200,6 +209,7 @@ describe('collect pushes from its own clean room and stops the builder session',
     failOn = undefined;
     failStop = false;
     commits = 2;
+    changedFiles = 'a.txt';
     planReply = 'missing:\n===FACTORIAL-PLAN===\nmissing:';
     mock.method(S3Client.prototype, 'send', async () => ({}));
     mock.method(DynamoDBDocumentClient.prototype, 'send', async () => ({}));
@@ -212,7 +222,7 @@ describe('collect pushes from its own clean room and stops the builder session',
       assert.ok(command instanceof InvokeAgentRuntimeCommandCommand);
       const script = command.input.body?.command ?? '';
       if (failOn && script.includes(failOn)) throw new Error(`${failOn} failed`);
-      if (script.includes('status --porcelain')) return reply(`${commits}\n${SECTION}${sha}\n${SECTION}a.txt\n${SECTION}${commits}\n${SECTION}Did it.`);
+      if (script.includes('status --porcelain')) return reply(`${commits}\n${SECTION}${sha}\n${SECTION}${changedFiles}\n${SECTION}${commits}\n${SECTION}Did it.`);
       if (script.includes('bundle create')) {
         events.push('bundle');
         return reply('QUJD');
@@ -249,6 +259,90 @@ describe('collect pushes from its own clean room and stops the builder session',
     assert.equal(push?.existingBranch, false);
     assert.equal(push?.token, TOKEN);
     assert.deepEqual(Buffer.from(push?.bundle ?? []), Buffer.from('ABC'));
+  });
+
+  describe('a change under .github/workflows/ or .github/actions/ (#296)', () => {
+    const SETTINGS_ALLOW = '{"schemaVersion":1,"allowWorkflowChanges":true}';
+    let reads: Array<{ path: string; ref: string }>;
+    let tokenScopes: unknown[];
+    const guardDeps = (settings: string | undefined) => ({
+      ...deps,
+      repositoryToken: async (_repo: unknown, scope: unknown) => (tokenScopes.push(scope), TOKEN),
+      readFile: async (_repo: unknown, path: string, ref: string) => {
+        if (path !== '.factorial/workflow-changes.json') return undefined;
+        reads.push({ path, ref });
+        return settings;
+      },
+    });
+    beforeEach(async () => {
+      reads = [];
+      tokenScopes = [];
+      const json = await readFile(new URL('../../../../contracts/plan/v1/examples/single-change.json', import.meta.url), 'utf8');
+      const encoded = (text: string) => `ok:${Buffer.byteLength(text)}:${Buffer.from(text).toString('base64')}`;
+      planReply = `${encoded('# Plan\n')}\n===FACTORIAL-PLAN===\n${encoded(json)}`;
+    });
+
+    for (const [label, files] of [
+      ['a workflow', '.github/workflows/ci.yml'],
+      ['an action', '.github/actions/setup/action.yml'],
+      ['a quoted name', '".github/workflows/odd\\tname.yml"'],
+    ] as const) {
+      for (const [why, settings] of [
+        ['no settings file', undefined],
+        ['settings that say false', '{"schemaVersion":1,"allowWorkflowChanges":false}'],
+        ['settings that are not JSON', '{'],
+      ] as const) {
+        it(`refuses ${label} with ${why}: nothing bundled, stored, minted or pushed, and the session stopped`, async () => {
+          changedFiles = `README.md\n${files}`;
+          await assert.rejects(collect({ ...ctx }, log, guardDeps(settings)), (error: Error) => {
+            assert.equal(error.name, 'WorkflowChangeRefused');
+            assert.ok(error.message.includes(`- ${files}`));
+            assert.ok(!error.message.includes('README.md'));
+            return true;
+          });
+          assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+          assert.equal(pushes.length, 0);
+          assert.equal(tokenScopes.length, 0);
+          assert.deepEqual(reads, [{ path: '.factorial/workflow-changes.json', ref: 'main' }]);
+        });
+      }
+    }
+
+    it('refuses a salvage too', async () => {
+      changedFiles = '.github/workflows/ci.yml';
+      await assert.rejects(collect({ ...ctx, salvage: true }, log, guardDeps(undefined)), /has not opted in/);
+      assert.equal(pushes.length, 0);
+      assert.ok(!events.includes('bundle'));
+    });
+
+    it('pushes a workflow change, with the workflows permission, when the base branch opts in', async () => {
+      changedFiles = '.github/workflows/ci.yml';
+      const result = await collect({ ...ctx }, log, guardDeps(SETTINGS_ALLOW));
+      assert.equal(result.pushed, true);
+      assert.deepEqual(tokenScopes, [{ contents: 'write', workflows: 'write' }]);
+    });
+
+    it('pushes an action change without the workflows permission when the base branch opts in', async () => {
+      changedFiles = '.github/actions/setup/action.yml';
+      await collect({ ...ctx }, log, guardDeps(SETTINGS_ALLOW));
+      assert.deepEqual(tokenScopes, [{ contents: 'write' }]);
+    });
+
+    it('does not read the settings when nothing guarded changed', async () => {
+      changedFiles = 'README.md\nsrc/.github/workflows/x.yml\n.github/CODEOWNERS';
+      await collect({ ...ctx }, log, guardDeps(undefined));
+      assert.deepEqual(reads, []);
+      assert.equal(pushes.length, 1);
+    });
+
+    it('never pushes when reading the settings fails', async () => {
+      changedFiles = '.github/workflows/ci.yml';
+      await assert.rejects(
+        collect({ ...ctx }, log, { ...deps, readFile: async () => { throw new Error('GitHub unavailable'); } }),
+        /GitHub unavailable/,
+      );
+      assert.equal(pushes.length, 0);
+    });
   });
 
   it('pushes a rework onto the existing branch from the head its session started at', async () => {

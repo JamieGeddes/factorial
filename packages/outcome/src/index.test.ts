@@ -21,7 +21,7 @@ describe('the outcome contract', () => {
 
   it('accepts each result that needs nothing more than the pointers', () => {
     const base = example('failed-saved-work.json');
-    for (const result of ['no-changes', 'tests-failed', 'invalid-plan', 'failed'] as const) {
+    for (const result of ['no-changes', 'tests-failed', 'invalid-plan', 'workflow-change-refused', 'failed'] as const) {
       const { savedWork: _saved, ...rest } = base;
       assert.deepEqual(errorsOf({ ...rest, result }), [], result);
     }
