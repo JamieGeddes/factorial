@@ -8,8 +8,10 @@ import type { ProposalFacts, ReportFacts } from '../../lib/report-file.ts';
 
 /** How much of what the agent said a no-changes comment shows. */
 export const AGENT_SAID_CHARS = 4000;
-/** How much of a proposed plan its comment shows: well inside GitHub's 65,536-character comment. */
-export const PROPOSED_PLAN_CHARS = 50_000;
+/** The most a proposal's comment may take: inside GitHub's 65,536-character comment. */
+export const PROPOSAL_COMMENT_CHARS = 60_000;
+/** Below this much room, plan.md is left out of the comment rather than shown as a stub. */
+const MIN_PLAN_NOTES_CHARS = 500;
 
 /** The work item's commits over every round, when known: a round's own count says nothing about what the branch holds. */
 function commitsNote(commits: number | undefined): string {
@@ -65,19 +67,27 @@ export function reportMessage(facts: ReportFacts, repository: { owner: string; n
 }
 
 /**
- * The comment that proposes a plan (#169): what to do next, then the plan.
- * The plan is agent text: capped, headings and tags neutralised, no mentions.
+ * The comment that proposes a plan (#169): what to do next, then the steps
+ * an approved build follows, whole (plan.json, rendered by Report), then
+ * the planner's plan.md, collapsed and capped, as context only. plan.md is
+ * agent text: headings and tags neutralised, no mentions.
  */
 export function proposalMessage(proposal: ProposalFacts): string {
-  return [
+  const head = [
     `Factorial proposes the plan below and has changed nothing. Session \`${proposal.sessionId}\`.`,
     '',
-    `To have it built as written, add the label that starts work to this issue: the change is built on \`${proposal.branch}\` from this plan, without planning again. For a different plan, edit the issue and add the plan label again.`,
+    `To have it built, add the label that starts work to this issue: the change is built on \`${proposal.branch}\` from exactly these steps, without planning again. For a different plan, edit the issue and add the plan label again.`,
     '',
-    '**Proposed plan:**',
+    '**The steps an approved build follows** (plan.json):',
     '',
-    agentBlock(proposal.plan.trim(), PROPOSED_PLAN_CHARS),
+    proposal.steps,
   ].join('\n');
+  const room = PROPOSAL_COMMENT_CHARS - head.length - 200;
+  const notes =
+    room >= MIN_PLAN_NOTES_CHARS && proposal.plan.trim()
+      ? ['', '<details>', "<summary>The planner's notes (plan.md): context only; the build follows the steps above</summary>", '', agentBlock(proposal.plan.trim(), room), '', '</details>']
+      : ['', "_The planner's notes (plan.md) are too long to show here; the build follows the steps above._"];
+  return [head, ...notes].join('\n');
 }
 
 /** The comment on the issue once its pull request is open. */

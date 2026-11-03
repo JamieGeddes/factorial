@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
@@ -281,14 +282,36 @@ describe('the outcome Report emits', () => {
     assert.equal(facts.pullRequest, undefined);
   });
 
-  it('stores a proposal\'s plan for the reporter, and refuses to store one without it', () => {
+  describe('a proposal', () => {
     const input = { status: 'proposed' as const, ctx: { ...ctx, route: 'propose' as const } };
-    assert.deepEqual(reportArtefact(input, ctx.workItem.id, '# Plan\n').delivery, {
-      kind: 'proposal',
-      proposal: { plan: '# Plan\n', branch: ctx.branch, sessionId: ctx.sessionId },
+    const step = (id: string, description: string) => ({ id, description, files: ['src/a.ts'], verification: 'npm test passes' });
+    const planJson = (steps: ReturnType<typeof step>[]) =>
+      JSON.stringify({ schemaVersion: 1, summary: 'Rename the helper.', steps, tests: { run: ['npm test'], add: [] }, risks: [], openQuestions: [] });
+
+    it('shows the approver plan.json\'s steps, whatever plan.md says, and binds the approval to plan.json\'s hash', () => {
+      const json = planJson([step('rename', 'Rename the helper and ping @someone.')]);
+      const record = reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n\nSomething harmless.\n' });
+      assert.equal(record.outcome, 'proposed');
+      assert.equal(record.delivery?.kind, 'proposal');
+      if (record.delivery?.kind !== 'proposal') return;
+      const { proposal } = record.delivery;
+      assert.match(proposal.steps, /1\. `rename`: Rename the helper and ping @\u200bsomeone\./);
+      assert.match(proposal.steps, /Files: `src\/a\.ts`/);
+      assert.match(proposal.steps, /Commands run once the change is made: `npm test`/);
+      assert.equal(proposal.planSha256, createHash('sha256').update(json).digest('hex'));
+      assert.equal(proposal.plan, '# Plan\n\nSomething harmless.\n');
+      assert.equal(proposal.branch, ctx.branch);
     });
-    assert.equal(reportArtefact(input, ctx.workItem.id, '# Plan\n').outcome, 'proposed');
-    assert.throws(() => reportArtefact(input, ctx.workItem.id), /with its plan/);
+
+    it('is not proposed when its steps cannot be shown whole', () => {
+      const json = planJson(Array.from({ length: 15 }, (_, i) => step(`step-${i}`, 'x '.repeat(1990))));
+      assert.throws(() => reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n' }), (error: Error) => error.name === 'ProposalTooLarge');
+    });
+
+    it('is refused without its plan, or with an invalid one', () => {
+      assert.throws(() => reportArtefact(input, ctx.workItem.id), /with its plan/);
+      assert.throws(() => reportArtefact(input, ctx.workItem.id, { json: '{}', markdown: '# Plan\n' }), /not a valid plan/);
+    });
   });
 
   it('stores the facts the reporter words, never the cause', () => {

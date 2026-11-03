@@ -86,6 +86,8 @@ export interface AttemptRecord {
   route?: string;
   threadKey?: string;
   branch?: string;
+  /** On a proposal: the SHA-256 of the plan.json its comment showed, which an approval must match (#169). */
+  planSha256?: string;
 }
 
 /** The attempt number, artefact prefix, whether work was saved, and Intake's route and thread, on a ledger row, if the row exists. */
@@ -94,7 +96,7 @@ export async function attemptRecord(workItemId: string): Promise<AttemptRecord |
     new GetCommand({
       TableName: requireEnv('TABLE_NAME'),
       Key: { workItemId },
-      ProjectionExpression: '#attempt, #prefix, savedWork, #route, threadKey, branch',
+      ProjectionExpression: '#attempt, #prefix, savedWork, #route, threadKey, branch, planSha256',
       ExpressionAttributeNames: { '#attempt': 'attempt', '#prefix': 'artefactPrefix', '#route': 'route' },
     }),
   );

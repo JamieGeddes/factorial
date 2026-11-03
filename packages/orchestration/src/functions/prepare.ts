@@ -37,6 +37,7 @@ import { repositoryClient } from '../lib/github.ts';
 import { seedRepository, type SeedRepositoryDeps } from '../lib/repo-seed.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
+import { planSha256 } from '../lib/proposal-view.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import { notesProvider, planProvider, requestProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
 import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
@@ -147,22 +148,30 @@ export async function seedSession(
  */
 export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider, planProvider, routeProvider];
 
-/** The approved proposal's plan cannot be read back valid: the approval cannot be built as approved. */
-export class ApprovedPlanUnreadableError extends Error {
+/** The approved proposal's plan cannot be read back as the plan its comment showed: the approval is not built. */
+export class ApprovedPlanMismatchError extends Error {
   constructor(proposal: Proposal) {
-    super(`the plan proposed by work item ${proposal.workItemId} is not in the artefact store as a valid plan`);
-    this.name = 'ApprovedPlanUnreadable';
+    super(`the plan proposed by work item ${proposal.workItemId} is not in the artefact store as the valid plan its comment showed`);
+    this.name = 'ApprovedPlanMismatch';
   }
 }
 
-/** The plan a proposal stored, validated again: Collect stored it valid, but nothing read since is trusted. */
+/**
+ * The plan a proposal stored, checked against what was approved: the
+ * plan.json whose steps its comment showed, by hash, and valid. Anything
+ * else is refused rather than built.
+ */
+export function checkApprovedPlan(proposal: Proposal, json: string | undefined, markdown: string | undefined): { json: string; markdown: string } {
+  if (json === undefined || markdown === undefined || planSha256(json) !== proposal.planSha256 || !parsePlanJson(json).ok) throw new ApprovedPlanMismatchError(proposal);
+  return { json, markdown };
+}
+
 async function approvedPlan(proposal: Proposal): Promise<{ json: string; markdown: string }> {
   const [json, markdown] = await Promise.all([
     getTextArtefact(proposal.artefactPrefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES),
     getTextArtefact(proposal.artefactPrefix, 'plan/plan.md', MAX_PLAN_ARTEFACT_BYTES),
   ]);
-  if (json === undefined || markdown === undefined || !parsePlanJson(json.text).ok) throw new ApprovedPlanUnreadableError(proposal);
-  return { json: json.text, markdown: markdown.text };
+  return checkApprovedPlan(proposal, json?.truncated ? undefined : json?.text, markdown?.text);
 }
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });

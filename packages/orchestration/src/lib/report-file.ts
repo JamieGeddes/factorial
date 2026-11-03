@@ -48,7 +48,11 @@ export interface ReportFacts {
 
 /** What a proposed plan's comment is built from (#169). */
 export interface ProposalFacts {
-  /** The plan's plan.md as Collect stored it, redacted: agent text, capped again when rendered. */
+  /** plan.json's steps as the build will follow them, rendered whole by Report (`lib/proposal-view.ts`): what the approver approves. */
+  steps: string;
+  /** The SHA-256 of the plan.json the steps were rendered from, which an approval must match. */
+  planSha256: string;
+  /** The plan's plan.md as Collect stored it, redacted: the planner's prose, context only, capped when rendered. */
   plan: string;
   /** The thread's branch, which an approval builds on; nothing is pushed to it yet. */
   branch: string;
@@ -150,7 +154,7 @@ function deliveryProblem(delivery: unknown): string | undefined {
     case 'proposal': {
       const proposal = delivery.proposal;
       if (!isObject(proposal)) return 'proposal is not an object';
-      for (const key of ['plan', 'branch', 'sessionId'] as const) {
+      for (const key of ['steps', 'planSha256', 'plan', 'branch', 'sessionId'] as const) {
         if (!isString(proposal[key])) return `proposal.${key} is not a string`;
       }
       return undefined;

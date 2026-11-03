@@ -76,7 +76,7 @@ describe('intakeRecord', () => {
     const proposed = intakeRecord(ID, { route: 'propose', turn: 'new', reason: 'A request for a plan to approve.', thread });
     assert.equal(proposed.route, 'propose');
     assert.equal(proposed.approves, undefined);
-    const approval = intakeRecord(ID, { route: 'change', turn: 'approve', reason: 'Approves.', thread, approves: { workItemId: OPENER, artefactPrefix: `${OPENER}/1/` } });
+    const approval = intakeRecord(ID, { route: 'change', turn: 'approve', reason: 'Approves.', thread, approves: { workItemId: OPENER, artefactPrefix: `${OPENER}/1/`, planSha256: 'a'.repeat(64) } });
     assert.equal(approval.turn, 'approve');
     assert.equal(approval.approves, OPENER);
   });

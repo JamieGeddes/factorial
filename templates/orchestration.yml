@@ -1121,11 +1121,13 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-            # A proposal's plan.md, which its report.json carries for the reporter to post (#169).
+            # A proposal's plan (#169): plan.json's steps and plan.md go into its report.json for the reporter to post, and plan.json's hash binds the approval.
             - Sid: ReadProposedPlan
               Effect: Allow
               Action: s3:GetObject
-              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
+              Resource:
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
         - !Ref OutcomeEventsPolicy

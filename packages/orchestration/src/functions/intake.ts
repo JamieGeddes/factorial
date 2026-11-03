@@ -187,8 +187,8 @@ async function approvable(workItem: WorkItem, log: Logger): Promise<{ thread: Th
     const latest = proposalToApprove(await turnsOf(thread.threadKey), workItem.id);
     if (!latest) return undefined;
     const record = await attemptRecord(latest.workItemId);
-    if (record?.route !== 'propose' || record.artefactPrefix === undefined) return undefined;
-    return { thread, proposal: { workItemId: latest.workItemId, artefactPrefix: record.artefactPrefix } };
+    if (record?.route !== 'propose' || record.artefactPrefix === undefined || !/^[0-9a-f]{64}$/.test(record.planSha256 ?? '')) return undefined;
+    return { thread, proposal: { workItemId: latest.workItemId, artefactPrefix: record.artefactPrefix, planSha256: record.planSha256 as string } };
   } catch (error) {
     log.info('not approving a proposal', { error });
     return undefined;

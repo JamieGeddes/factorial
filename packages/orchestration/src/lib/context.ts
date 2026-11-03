@@ -21,6 +21,8 @@ export interface Proposal {
   workItemId: string;
   /** `<workItemId>/<attempt>/`: the plan is under `plan/` there. */
   artefactPrefix: string;
+  /** The SHA-256 of the plan.json the proposal's comment showed: the approval builds that plan or nothing. */
+  planSha256: string;
 }
 
 /** What the state machine carries from Prepare to every later step. */
