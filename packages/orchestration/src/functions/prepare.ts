@@ -41,6 +41,7 @@ import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider
 import { approvedPlanMarkdown, canonicalPlanJson, hasHiddenCharacters, planSha256, planText } from '../lib/proposal-view.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import { MAX_REVISION_BYTES, notesProvider, planProvider, requestProvider, revisionProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
+import { loadIssueRequest } from '../lib/issue-request.ts';
 import { continuedIssue, issueCommand } from '../lib/turn.ts';
 import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
@@ -77,21 +78,16 @@ export interface SessionParams {
 /** What a stage supplies to its providers beyond the item and the checkout. */
 export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive' | 'route' | 'approves' | 'revision'>>;
 
-/** The most of an issue's description a session is given: the WorkItem's own cap on `body`. */
-const MAX_ISSUE_BODY = 65_536;
-
 /**
  * The request for a turn asked for in an issue's conversation (#169): the
- * issue, read now with a read-only token and redacted. Every session seeded
- * for the item reads it, so the builder, a later round and the reviewer all
- * work from the issue, not from the comment that asked.
+ * snapshot of the issue Intake stored when it admitted the turn
+ * (`lib/issue-request.ts`), never the issue as it is now. Every session
+ * seeded for the item reads it, so the builder, a later round and the
+ * reviewer all work from the same request, and not from the comment that
+ * asked.
  */
-async function issueRequest(workItem: WorkItem, client: () => Promise<GitHubClient>): Promise<SeedContext['request']> {
-  const issue = continuedIssue(workItem);
-  if (!issue) return undefined;
-  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
-  const state = await (await client()).getIssue(repo, issue.number);
-  return { title: redactSecrets(state.title).slice(0, 256), body: redactSecrets(state.body).slice(0, MAX_ISSUE_BODY), url: issue.url };
+async function requestFor(workItem: WorkItem, artefactPrefix: string): Promise<SeedContext['request']> {
+  return continuedIssue(workItem) ? loadIssueRequest(artefactPrefix) : undefined;
 }
 
 export interface SeededCheckout {
@@ -135,8 +131,8 @@ export async function placeSeed(seeded: SeededCheckout, params: SessionParams, p
   const { workItem, resumedFrom, rework } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   let client: Promise<GitHubClient> | undefined;
-  const github = () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read', issues: 'read' }));
-  const request = await issueRequest(workItem, github);
+  const github = () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' }));
+  const request = await requestFor(workItem, params.artefactPrefix);
   const seed = await assembleSeed(providers, {
     role: params.role,
     workItem,

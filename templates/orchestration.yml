@@ -1026,10 +1026,13 @@ Resources:
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
             # An approval's session is seeded with the plan.json its proposal showed (#169); plan.md is rendered from it.
+            # A turn asked for in an issue's conversation is seeded with the issue as Intake stored it.
             - Sid: ReadPlanArtefacts
               Effect: Allow
               Action: s3:GetObject
-              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
+              Resource:
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
+                - !Sub ${WorkArtefactsBucket.Arn}/*/intake/request.json
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
@@ -1109,6 +1112,8 @@ Resources:
               Resource:
                 - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
                 - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
+                # The issue as Intake stored it, for a turn asked for in its conversation (#169).
+                - !Sub ${WorkArtefactsBucket.Arn}/*/intake/request.json
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
@@ -1151,6 +1156,8 @@ Resources:
                 - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
                 - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
                 - !Sub ${WorkArtefactsBucket.Arn}/*/build/notes.md
+                # The issue as Intake stored it, for a turn asked for in its conversation (#169).
+                - !Sub ${WorkArtefactsBucket.Arn}/*/intake/request.json
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
