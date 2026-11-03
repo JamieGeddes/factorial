@@ -20,7 +20,7 @@ export const REPORT_ARTEFACT = 'report.json';
 /** Far above any real report: the cap guards the reader, not the writer. */
 export const MAX_REPORT_BYTES = 512 * 1024;
 
-export type ReportStatus = 'no-changes' | 'tests-failed' | 'failed' | 'invalid-plan';
+export type ReportStatus = 'no-changes' | 'tests-failed' | 'failed' | 'invalid-plan' | 'workflow-change-refused';
 
 /** What a turn that opened or updated no pull request says. */
 export interface ReportFacts {
@@ -37,6 +37,10 @@ export interface ReportFacts {
   sessionId?: string;
   /** invalid-plan: the validator's problems, each already a redacted code span. */
   planProblems?: string[];
+  /** workflow-change-refused: the refused paths under .github/workflows/ or .github/actions/, each already a redacted code span. */
+  workflowPaths?: string[];
+  /** workflow-change-refused: refused paths beyond those listed. */
+  workflowPathsMore?: number;
   /** failed: the builder reached its iteration or time limit. */
   incomplete?: boolean;
   /** failed: the round that failed, when the build ran in rounds. */
@@ -115,12 +119,14 @@ const isCount = (value: unknown): boolean => typeof value === 'number' && Number
 
 function reportFactsProblem(facts: unknown): string | undefined {
   if (!isObject(facts)) return 'facts is not an object';
-  if (!['no-changes', 'tests-failed', 'failed', 'invalid-plan'].includes(facts.status as string)) return 'facts.status is not a report status';
+  if (!['no-changes', 'tests-failed', 'failed', 'invalid-plan', 'workflow-change-refused'].includes(facts.status as string)) return 'facts.status is not a report status';
   if (typeof facts.rework !== 'boolean') return 'facts.rework is not a boolean';
   for (const key of ['agentSaid', 'branch', 'sessionId', 'errorName'] as const) {
     if (!optional(facts[key], isString)) return `facts.${key} is not a string`;
   }
   if (!optional(facts.planProblems, isStringArray)) return 'facts.planProblems is not a list of strings';
+  if (!optional(facts.workflowPaths, isStringArray)) return 'facts.workflowPaths is not a list of strings';
+  if (!optional(facts.workflowPathsMore, isCount)) return 'facts.workflowPathsMore is not a count';
   if (!optional(facts.verifyProblems, isStringArray)) return 'facts.verifyProblems is not a list of strings';
   if (!optional(facts.failedVerifier, (v) => isObject(v) && isString(v.name) && isString(v.outcome))) return 'facts.failedVerifier is malformed';
   if (!optional(facts.incomplete, (v) => typeof v === 'boolean')) return 'facts.incomplete is not a boolean';

@@ -109,12 +109,14 @@ test('the filters', () => {
   const waiting = summarise(base({ stages: { Test: { startedAt: '2026-11-01T10:01:00Z' } } }), undefined, NOW);
   const done = summarise(base({ result: 'no-changes' }), undefined, NOW);
   const failed = summarise(base({ result: 'invalid-plan' }), undefined, NOW);
+  const refusedWorkflow = summarise(base({ result: 'workflow-change-refused' }), undefined, NOW);
   const refused = summarise(base({ result: 'refused' }), undefined, NOW);
   assert.equal(matchesFilter(running, 'running'), true);
   assert.equal(matchesFilter(waiting, 'running'), false);
   assert.equal(matchesFilter(waiting, 'waiting'), true);
   assert.equal(matchesFilter(done, 'finished'), true);
   assert.equal(matchesFilter(failed, 'attention'), true);
+  assert.equal(matchesFilter(refusedWorkflow, 'attention'), true);
   assert.equal(matchesFilter(stale, 'attention'), true);
   assert.equal(matchesFilter(running, 'attention'), false);
   assert.equal(matchesFilter(refused, 'refused'), true);

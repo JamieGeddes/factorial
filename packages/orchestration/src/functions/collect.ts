@@ -10,6 +10,11 @@
  * valid plan pushes nothing and ends as InvalidPlan; a failed build's work
  * is saved whatever the plan, and a valid plan is kept for the next round.
  *
+ * A change under `.github/workflows/` or `.github/actions/` is pushed only
+ * when the base branch's `.factorial/workflow-changes.json` opts in (#296);
+ * otherwise, salvage included, nothing is pushed and the turn ends as
+ * WorkflowChangeRefused.
+ *
  * On the propose route (#169) Collect pushes nothing, ever: a valid plan
  * with no change to the repository is `proposed`, a builder that changed
  * anything fails the turn (ProposalChanged), and a failed build saves
@@ -45,6 +50,7 @@ import { exportSessionFiles } from '../lib/session-files.ts';
 import { HARDENED_GIT_ENV, assertCommitSha, shellQuote } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
 import { verifyPlan, type ReadFile, type VerifyPlan } from '../lib/verify.ts';
+import { WorkflowChangeRefusedError, workflowChangeAllowed, workflowPaths } from '../lib/workflow-changes.ts';
 
 export interface CollectResult {
   pushed: boolean;
@@ -95,7 +101,7 @@ export function inspectScript(baseCommit: string, leftoverMessage: string = LEFT
     `printf '%s' ${shellQuote(SECTION)}`,
     'git rev-parse HEAD',
     `printf '%s' ${shellQuote(SECTION)}`,
-    `git diff --name-only ${base} HEAD`,
+    `git -c core.quotePath=false diff --no-renames --name-only ${base} HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
     `git rev-list --count ${itemBase}..HEAD`,
     `printf '%s' ${shellQuote(SECTION)}`,
@@ -130,7 +136,7 @@ export function parseInspection(stdout: string): Inspection {
 
 /** GitHub refuses pushes that touch Actions workflows unless the token carries the workflows permission. */
 export function touchesWorkflows(changedPaths: string[]): boolean {
-  return changedPaths.some((path) => path.startsWith('.github/workflows/'));
+  return workflowPaths(changedPaths).some((path) => (path.startsWith('"') ? path.slice(1) : path).startsWith('.github/workflows/'));
 }
 
 /** Export the new commits from the agent's session as a base64 bundle on stdout. */
@@ -357,6 +363,20 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
     log.info('agent made no commits', { incomplete });
     await stopSessionQuietly(agentSession, log);
     return { pushed: false, commitCount, itemCommitCount, headSha, summary, incomplete, ...digest };
+  }
+
+  // Default deny (#296): CI runs an edited workflow with the repository's
+  // secrets, so nothing is bundled, stored or pushed (salvage included)
+  // unless the base branch opts in.
+  const guarded = workflowPaths(changedPaths);
+  if (guarded.length > 0) {
+    const settings = await workflowChangeAllowed(repoOf(ctx), ctx.baseBranch, deps.readFile ?? fileOnBranch);
+    if (!settings.allowed) {
+      log.error('workflow change refused', { salvage, paths: guarded.slice(0, 20), problem: settings.problem });
+      await stopSessionQuietly(agentSession, log);
+      throw new WorkflowChangeRefusedError(guarded);
+    }
+    log.info('workflow change allowed by the base branch', { paths: guarded.length });
   }
 
   const exported = await mustRun(agentSession, asAgent(bundleScript(start.commit, headSha)), 300);

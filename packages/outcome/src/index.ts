@@ -22,7 +22,7 @@ export const OUTCOME_SCHEMA_VERSION = 1 as const;
 export const OUTCOME_EVENT_SOURCE = 'factorial.outcome' as const;
 export const OUTCOME_DETAIL_TYPE = 'Outcome' as const;
 
-export const OUTCOME_RESULTS = ['pr-opened', 'pr-updated', 'proposed', 'no-changes', 'tests-failed', 'invalid-plan', 'failed', 'refused'] as const;
+export const OUTCOME_RESULTS = ['pr-opened', 'pr-updated', 'proposed', 'no-changes', 'tests-failed', 'invalid-plan', 'workflow-change-refused', 'failed', 'refused'] as const;
 export type OutcomeResult = (typeof OUTCOME_RESULTS)[number];
 
 export const REFUSAL_REASONS = ['not-eligible', 'busy', 'rework-limit', 'covered-by-review'] as const;

@@ -345,6 +345,21 @@ describe('delivering an outcome', () => {
     assert.match(comment ?? '', /\(3 commits\) was saved to \[`factorial\/x`\]\(https:\/\/github\.com\/JamieGeddes\/factorial\/tree\/factorial\/x\)/);
   });
 
+  it('reports a refused workflow change on the issue, naming the files', async () => {
+    const h = harness();
+    const outcome = { ...example('failed-saved-work.json'), result: 'workflow-change-refused' as const };
+    delete (outcome as { savedWork?: unknown }).savedWork;
+    h.reports.set(
+      outcome.artefactPrefix,
+      reportFile({ kind: 'report', facts: { status: 'workflow-change-refused', rework: false, sessionId: 's1', workflowPaths: ['`.github/workflows/ci.yml`'], workflowPathsMore: 2 } }),
+    );
+    await handleEvent(outcomeEvent(outcome), h.deps);
+    const [comment] = comments(h);
+    assert.match(comment ?? '', /^comment JamieGeddes\/factorial#165 Factorial's change edits GitHub Actions workflows or actions/);
+    assert.match(comment ?? '', /- `\.github\/workflows\/ci\.yml`\n- and 2 more/);
+    assert.match(comment ?? '', /\.factorial\/workflow-changes\.json/);
+  });
+
   const proposal = (plan: string, steps = '```text\nStep 1: rename\n  Rename the helper.\n```') => ({ steps, planSha256: 'a'.repeat(64), plan, branch: 'factorial/x', sessionId: 's1' });
 
   it('posts the plan an approved build follows whole, and plan.md collapsed as context, mentioning no one', async () => {

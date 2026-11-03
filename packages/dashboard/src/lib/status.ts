@@ -94,6 +94,7 @@ export function statusPill(row: LedgerRow, thread?: ThreadRow, resultSince = RES
       return { label: 'no-changes', tone: 'refused' };
     case 'tests-failed':
     case 'invalid-plan':
+    case 'workflow-change-refused':
       return { label: result, tone: 'failed' };
     case 'failed':
       return row.savedWork && row.branch ? { label: 'incomplete', tone: 'failed', note: `Saved to ${row.branch}` } : { label: 'failed', tone: 'failed' };

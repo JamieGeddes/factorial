@@ -20,6 +20,10 @@
     {
       "path": "scripts/classify-changes.ts",
       "reason": "changes which paths skip CI and the deploy"
+    },
+    {
+      "path": ".factorial/workflow-changes.json",
+      "reason": "changes whether Factorial may push edits to GitHub Actions workflows, which CI runs with the repository's secrets"
     }
   ]
 }

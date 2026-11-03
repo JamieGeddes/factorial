@@ -199,7 +199,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
 }
 
 const FINISHED = new Set(['pr-opened', 'pr-updated', 'proposed', 'no-changes']);
-const ATTENTION = new Set(['failed', 'tests-failed', 'invalid-plan']);
+const ATTENTION = new Set(['failed', 'tests-failed', 'invalid-plan', 'workflow-change-refused']);
 
 export function matchesFilter(item: WorkItemSummary, filter: Filter): boolean {
   switch (filter) {

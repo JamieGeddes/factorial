@@ -127,7 +127,7 @@ export function deployNotice(d: DeployNotice): Notice | undefined {
 }
 
 const HOUR = 3_600_000;
-const FAILED = new Set(['failed', 'tests-failed', 'invalid-plan']);
+const FAILED = new Set(['failed', 'tests-failed', 'invalid-plan', 'workflow-change-refused']);
 const REWORK = /^github-(pull-request|workflow-run)/;
 
 /** Where a row's run opens: its latest agent run, or the item while it has none. */

@@ -349,13 +349,15 @@ export function metrics(input: MetricsInput): Metrics {
         return { name: 'No changes', tone: 'neutral' };
       case 'invalid-plan':
         return { name: 'Invalid plan', tone: 'failed' };
+      case 'workflow-change-refused':
+        return { name: 'Workflow change refused', tone: 'failed' };
       case 'refused':
         return { name: 'Refused', tone: 'refused' };
       default:
         return { name: cap(oneLine(text(i.result)) || 'Unknown'), tone: 'failed' };
     }
   };
-  const ORDER = ['PR opened', 'PR updated', 'Plan proposed', 'Tests failed', 'Incomplete', 'Failed', 'No changes', 'Invalid plan', 'Refused'];
+  const ORDER = ['PR opened', 'PR updated', 'Plan proposed', 'Tests failed', 'Incomplete', 'Failed', 'No changes', 'Invalid plan', 'Workflow change refused', 'Refused'];
   const counts = new Map<string, { v: number; tone: Metrics['outcomes'][number]['tone'] }>();
   for (const i of finished) {
     const o = outcome(i);

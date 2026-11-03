@@ -5,6 +5,7 @@
  */
 import { agentBlock } from '../../functions/pr-body.ts';
 import type { ProposalFacts, ReportFacts } from '../../lib/report-file.ts';
+import { WORKFLOW_SETTINGS_FILE } from '../../lib/workflow-changes.ts';
 
 /** How a failed verifier's outcome reads in a sentence. */
 const VERIFIER_OUTCOME_TEXT: Readonly<Record<string, string>> = { failed: 'failed', 'timed-out': 'timed out', error: 'could not be run' };
@@ -56,6 +57,16 @@ export function reportMessage(facts: ReportFacts, repository: { owner: string; n
       return [
         `Factorial's builder did not produce a valid plan, so nothing was pushed. Session \`${session}\`.`,
         ...(problems.length > 0 ? ['', '**Problems with the last plan:**', '', ...problems.map((p) => `- ${p}`)] : []),
+      ].join('\n');
+    }
+    case 'workflow-change-refused': {
+      const paths = facts.workflowPaths ?? [];
+      const more = facts.workflowPathsMore ?? 0;
+      return [
+        `Factorial's change edits GitHub Actions workflows or actions, which this repository has not allowed Factorial to change, so nothing was pushed (${notOpened}). Session \`${session}\`.`,
+        ...(paths.length > 0 ? ['', '**Files:**', '', ...paths.map((p) => `- ${p}`), ...(more > 0 ? [`- and ${more} more`] : [])] : []),
+        '',
+        `To allow it, add \`${WORKFLOW_SETTINGS_FILE}\` with \`{ "schemaVersion": 1, "allowWorkflowChanges": true }\` on the base branch (it is read from the base branch, never from the branch under review), then ask again. CI runs a changed workflow on the pull request with the repository's secrets, so allow this only if that is acceptable.`,
       ].join('\n');
     }
     case 'failed':
