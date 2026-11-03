@@ -46,6 +46,8 @@ export const TRIGGER_TYPES = {
   githubPullRequestReviewComment: 'github-pull-request-review-comment',
   /** A comment in a pull request's conversation. `source.id` is the comment id. */
   githubPullRequestComment: 'github-pull-request-comment',
+  /** A comment in an issue's conversation, with `inReplyTo` the issue (#169). `source.id` is the comment id, not the issue number. */
+  githubIssueComment: 'github-issue-comment',
   /** A workflow run that completed on a pull request's head. `source.id` is the run id. */
   githubWorkflowRun: 'github-workflow-run',
 } as const;
@@ -114,13 +116,19 @@ export type WorkItemContext = ReworkContext;
 /**
  * What an item continues: the pull request a review, comment or failed run
  * belongs to. The pipeline resolves the thread from it and decides what the
- * item means. Discriminated on `kind`; only `pull-request` exists today.
+ * item means. Discriminated on `kind`: a pull request, or an issue (#169).
  */
-export interface WorkItemInReplyTo {
-  kind: 'pull-request';
-  /** The pull request's number in the item's `repository`. */
-  number: number;
-}
+export type WorkItemInReplyTo =
+  | {
+      kind: 'pull-request';
+      /** The pull request's number in the item's `repository`. */
+      number: number;
+    }
+  | {
+      kind: 'issue';
+      /** The issue's number in the item's `repository`. */
+      number: number;
+    };
 
 /** The set of WorkItems one trigger produced. */
 export interface WorkItemGroup {

@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 2,
+  "id": "6d2f8a1c-4b3e-4f5a-9c7d-8e9f0a1b2c3d",
+  "source": {
+    "type": "github-issue-comment",
+    "id": "4123456789",
+    "url": "https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789"
+  },
+  "repository": {
+    "provider": "github",
+    "owner": "JamieGeddes",
+    "name": "factorial"
+  },
+  "inReplyTo": {
+    "kind": "issue",
+    "number": 169
+  },
+  "title": "Comment on #169: Propose and Clarify routes",
+  "body": "plan this",
+  "requestedBy": "JamieGeddes",
+  "createdAt": "2026-11-03T15:00:00Z"
+}

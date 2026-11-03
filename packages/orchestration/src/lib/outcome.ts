@@ -67,7 +67,8 @@ export function buildOutcome(facts: OutcomeFacts): Outcome {
     ...(facts.threadKey ? { threadKey: facts.threadKey } : {}),
     ...(facts.route ? { route: facts.route } : {}),
     source: { type: workItem.source.type, id: workItem.source.id, url: workItem.source.url },
-    ...(workItem.inReplyTo ? { inReplyTo: { kind: workItem.inReplyTo.kind, number: workItem.inReplyTo.number } } : {}),
+    // Only a pull request until the Outcome contract gains the issue kind with its consumers (#169): nothing emits it before then.
+    ...(workItem.inReplyTo?.kind === 'pull-request' ? { inReplyTo: { kind: workItem.inReplyTo.kind, number: workItem.inReplyTo.number } } : {}),
     repository: { provider: workItem.repository.provider, owner: workItem.repository.owner, name: workItem.repository.name },
     result: facts.result,
     ...(facts.reason ? { reason: facts.reason } : {}),
