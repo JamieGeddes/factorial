@@ -78,15 +78,15 @@ export function proposalMessage(proposal: ProposalFacts): string {
     '',
     `To have it built, add the label that starts work to this issue: the change is built on \`${proposal.branch}\` from exactly these steps, without planning again. For a different plan, edit the issue and add the plan label again.`,
     '',
-    '**The steps an approved build follows** (plan.json):',
+    '**The plan an approved build follows** (plan.json, shown literally):',
     '',
     proposal.steps,
   ].join('\n');
   const room = PROPOSAL_COMMENT_CHARS - head.length - 200;
   const notes =
     room >= MIN_PLAN_NOTES_CHARS && proposal.plan.trim()
-      ? ['', '<details>', "<summary>The planner's notes (plan.md): context only; the build follows the steps above</summary>", '', agentBlock(proposal.plan.trim(), room), '', '</details>']
-      : ['', "_The planner's notes (plan.md) are too long to show here; the build follows the steps above._"];
+      ? ['', '<details>', "<summary>The planner's notes (plan.md): context only, not given to the build</summary>", '', agentBlock(proposal.plan.trim(), room), '', '</details>']
+      : ['', "_The planner's notes (plan.md) are too long to show here. They are context only and not given to the build, which follows the plan above._"];
   return [head, ...notes].join('\n');
 }
 

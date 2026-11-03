@@ -14,8 +14,9 @@
  *
  * A propose turn (#169) is seeded as a new request with /workspace/route.json
  * added, so the host plans and changes nothing. A turn that approves a
- * proposal is seeded with the proposal's stored plan, read back from the
- * artefact store and validated again, which the builder follows without
+ * proposal is seeded with the proposal's stored plan.json, read back from
+ * the artefact store and checked against the hash of the plan its comment
+ * showed, and a plan.md rendered from it; the builder follows it without
  * planning again, as a later round does.
  *
  * The session is brand new at this point, so no agent code can be running.
@@ -37,7 +38,7 @@ import { repositoryClient } from '../lib/github.ts';
 import { seedRepository, type SeedRepositoryDeps } from '../lib/repo-seed.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
-import { planSha256 } from '../lib/proposal-view.ts';
+import { approvedPlanMarkdown, planSha256 } from '../lib/proposal-view.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import { notesProvider, planProvider, requestProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
 import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
@@ -158,20 +159,21 @@ export class ApprovedPlanMismatchError extends Error {
 
 /**
  * The plan a proposal stored, checked against what was approved: the
- * plan.json whose steps its comment showed, by hash, and valid. Anything
- * else is refused rather than built.
+ * plan.json its comment showed, by hash, and valid. Anything else is
+ * refused rather than built. The planner's plan.md is not given to the
+ * build, since its comment may not have shown all of it: plan.md is the
+ * orchestrator's rendering of plan.json, the text the approver read.
  */
-export function checkApprovedPlan(proposal: Proposal, json: string | undefined, markdown: string | undefined): { json: string; markdown: string } {
-  if (json === undefined || markdown === undefined || planSha256(json) !== proposal.planSha256 || !parsePlanJson(json).ok) throw new ApprovedPlanMismatchError(proposal);
-  return { json, markdown };
+export function checkApprovedPlan(proposal: Proposal, json: string | undefined): { json: string; markdown: string } {
+  if (json === undefined || planSha256(json) !== proposal.planSha256) throw new ApprovedPlanMismatchError(proposal);
+  const parsed = parsePlanJson(json);
+  if (!parsed.ok) throw new ApprovedPlanMismatchError(proposal);
+  return { json, markdown: approvedPlanMarkdown(parsed.value, proposal.workItemId) };
 }
 
 async function approvedPlan(proposal: Proposal): Promise<{ json: string; markdown: string }> {
-  const [json, markdown] = await Promise.all([
-    getTextArtefact(proposal.artefactPrefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES),
-    getTextArtefact(proposal.artefactPrefix, 'plan/plan.md', MAX_PLAN_ARTEFACT_BYTES),
-  ]);
-  return checkApprovedPlan(proposal, json?.truncated ? undefined : json?.text, markdown?.text);
+  const json = await getTextArtefact(proposal.artefactPrefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES);
+  return checkApprovedPlan(proposal, json?.truncated ? undefined : json?.text);
 }
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });

@@ -895,13 +895,11 @@ Resources:
               Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
-            # An approval's session is seeded with the plan its proposal stored (#169).
+            # An approval's session is seeded with the plan.json its proposal showed (#169); plan.md is rendered from it.
             - Sid: ReadPlanArtefacts
               Effect: Allow
               Action: s3:GetObject
-              Resource:
-                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
-                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
+              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy

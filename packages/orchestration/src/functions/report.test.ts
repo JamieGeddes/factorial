@@ -295,9 +295,11 @@ describe('the outcome Report emits', () => {
       assert.equal(record.delivery?.kind, 'proposal');
       if (record.delivery?.kind !== 'proposal') return;
       const { proposal } = record.delivery;
-      assert.match(proposal.steps, /1\. `rename`: Rename the helper and ping @\u200bsomeone\./);
-      assert.match(proposal.steps, /Files: `src\/a\.ts`/);
-      assert.match(proposal.steps, /Commands run once the change is made: `npm test`/);
+      assert.match(proposal.steps, /^```text\n/);
+      assert.match(proposal.steps, /Step 1: rename\n  Rename the helper and ping @\u200bsomeone\./);
+      assert.match(proposal.steps, /  Files:\n    - src\/a\.ts/);
+      assert.match(proposal.steps, /Commands run once the change is made:\n  - npm test/);
+      assert.doesNotMatch(proposal.steps, /harmless/);
       assert.equal(proposal.planSha256, createHash('sha256').update(json).digest('hex'));
       assert.equal(proposal.plan, '# Plan\n\nSomething harmless.\n');
       assert.equal(proposal.branch, ctx.branch);

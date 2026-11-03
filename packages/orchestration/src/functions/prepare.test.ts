@@ -280,15 +280,17 @@ describe('checkApprovedPlan (#169)', () => {
   });
   const proposal = { workItemId: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d', artefactPrefix: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d/1/', planSha256: planSha256(json) };
 
-  it('seeds the plan whose steps the proposal showed', () => {
-    assert.deepEqual(checkApprovedPlan(proposal, json, '# Plan\n'), { json, markdown: '# Plan\n' });
+  it('seeds the plan.json the proposal showed, with a plan.md rendered from it rather than the planner\'s', () => {
+    const seeded = checkApprovedPlan(proposal, json);
+    assert.equal(seeded.json, json);
+    assert.match(seeded.markdown, /^# Approved plan\n/);
+    assert.match(seeded.markdown, /Step 1: rename\n  Rename it\./);
   });
 
   it('refuses any other plan.json, a missing file or an invalid plan', () => {
     const changed = json.replace('Rename it.', 'Delete everything.');
-    assert.throws(() => checkApprovedPlan(proposal, changed, '# Plan\n'), ApprovedPlanMismatchError);
-    assert.throws(() => checkApprovedPlan(proposal, undefined, '# Plan\n'), ApprovedPlanMismatchError);
-    assert.throws(() => checkApprovedPlan(proposal, json, undefined), ApprovedPlanMismatchError);
-    assert.throws(() => checkApprovedPlan({ ...proposal, planSha256: planSha256('{}') }, '{}', '# Plan\n'), ApprovedPlanMismatchError);
+    assert.throws(() => checkApprovedPlan(proposal, changed), ApprovedPlanMismatchError);
+    assert.throws(() => checkApprovedPlan(proposal, undefined), ApprovedPlanMismatchError);
+    assert.throws(() => checkApprovedPlan({ ...proposal, planSha256: planSha256('{}') }, '{}'), ApprovedPlanMismatchError);
   });
 });

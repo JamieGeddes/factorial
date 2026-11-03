@@ -345,17 +345,17 @@ describe('delivering an outcome', () => {
     assert.match(comment ?? '', /\(3 commits\) was saved to \[`factorial\/x`\]\(https:\/\/github\.com\/JamieGeddes\/factorial\/tree\/factorial\/x\)/);
   });
 
-  const proposal = (plan: string, steps = '1. `rename`: Rename the helper.') => ({ steps, planSha256: 'a'.repeat(64), plan, branch: 'factorial/x', sessionId: 's1' });
+  const proposal = (plan: string, steps = '```text\nStep 1: rename\n  Rename the helper.\n```') => ({ steps, planSha256: 'a'.repeat(64), plan, branch: 'factorial/x', sessionId: 's1' });
 
-  it('posts the steps an approved build follows whole, and plan.md collapsed as context, mentioning no one', async () => {
+  it('posts the plan an approved build follows whole, and plan.md collapsed as context, mentioning no one', async () => {
     const h = harness();
     const outcome = example('proposed.json');
     h.reports.set(outcome.artefactPrefix, reportFile({ kind: 'proposal', proposal: proposal('# Plan\n\nAsk @someone first.\n') }));
     await handleEvent(outcomeEvent(outcome), h.deps);
     const [comment] = comments(h);
     assert.match(comment ?? '', /^comment JamieGeddes\/factorial#169 Factorial proposes the plan below and has changed nothing/);
-    assert.match(comment ?? '', /\*\*The steps an approved build follows\*\* \(plan\.json\):\n\n1\. `rename`: Rename the helper\./);
-    assert.match(comment ?? '', /<summary>The planner's notes \(plan\.md\): context only/);
+    assert.match(comment ?? '', /\*\*The plan an approved build follows\*\* \(plan\.json, shown literally\):\n\n```text\nStep 1: rename\n  Rename the helper\.\n```/);
+    assert.match(comment ?? '', /<summary>The planner's notes \(plan\.md\): context only, not given to the build/);
     assert.match(comment ?? '', /@​someone/);
   });
 
