@@ -25,6 +25,25 @@ describe('builder prompt', () => {
     }
   });
 
+  it('says Collect saves uncommitted work, so a commit records a step whose verification passed (#283)', () => {
+    const step = builderPrompt.split('\n').find((line) => line.startsWith('5. '));
+    assert.ok(step);
+    assert.ok(step.includes('Collect saves whatever you left uncommitted'));
+    assert.ok(step.includes('not the only way to keep work'));
+    assert.ok(step.includes("whose verification (the plan step's `verification`) has passed, with no file changed since"));
+    assert.ok(!step.includes('uncommitted changes may be lost'));
+    assert.ok(!step.includes('Commit early and often'));
+  });
+
+  it('keeps the && rule and says a pipe hides a check, and a check after a commit does not cover it (#283)', () => {
+    const section = builderPrompt.slice(builderPrompt.indexOf('Keeping the session efficient'));
+    assert.ok(section.includes('chain with &&, never with ;, so a failing check stops the commit'));
+    assert.ok(section.includes("A pipe hides a check's exit code"));
+    assert.ok(section.includes('`quiet` already keeps output short, so `| tail` is not needed'));
+    assert.ok(section.includes('A check run after a commit'));
+    assert.ok(section.includes('does not cover it'));
+  });
+
   it('says packages come from the mirror and no other registry (#242)', () => {
     assert.ok(builderPrompt.includes('internal mirror'));
     assert.ok(builderPrompt.includes('Do not configure another registry'));
