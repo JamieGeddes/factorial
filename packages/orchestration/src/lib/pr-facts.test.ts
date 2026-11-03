@@ -93,6 +93,11 @@ describe('prFactsDigest', () => {
     assert.ok(JSON.stringify(digest).length <= 6100);
     assert.equal(digest.truncated, true);
   });
+
+  it('keeps the verifier input flag on a sensitive entry', () => {
+    const facts: PrFacts = { sensitive: [{ path: 'package.json', reason: 'r', verifierInput: true }], contracts: [], testFiles: [], dependencies: [], deploy: { configured: false, notes: [], humanSteps: [] } };
+    assert.deepEqual(prFactsDigest(facts).sensitive, [{ path: 'package.json', reason: 'r', verifierInput: true }]);
+  });
 });
 
 describe('depsScript', () => {

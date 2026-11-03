@@ -148,9 +148,51 @@ describe('sensitiveChanges', () => {
     assert.match(changes[7]!.reason, /permissions boundary/);
   });
 
-  it('flags only Actions, ownership and Factorial configuration by default, whatever the repository', () => {
+  it('flags only Actions, ownership, Factorial configuration and the files the verifiers run by default, whatever the repository', () => {
     assert.deepEqual(sensitiveChanges(['templates/foundation.yml', 'src/a.ts', 'src/my.gitattributes'], BUILT_IN_RULES), []);
     assert.deepEqual(sensitiveChanges(['.gitattributes'], BUILT_IN_RULES).map((c) => c.path), ['.gitattributes']);
+  });
+
+  it('flags package.json, lockfiles, and test and CI configuration at any depth, marked as verifier inputs', () => {
+    const paths = [
+      'package.json',
+      'packages/x/package.json',
+      'package-lock.json',
+      'packages/x/yarn.lock',
+      'pnpm-lock.yaml',
+      'Cargo.lock',
+      'go.sum',
+      'vitest.config.ts',
+      'apps/web/jest.config.js',
+      'pytest.ini',
+      'Makefile',
+      '.npmrc',
+      '.circleci/config.yml',
+      '.gitlab-ci.yml',
+    ];
+    const changes = sensitiveChanges(paths, BUILT_IN_RULES);
+    assert.deepEqual(changes.map((c) => c.path), paths);
+    for (const change of changes) {
+      assert.equal(change.verifierInput, true, change.path);
+      assert.match(change.reason, /verifiers/, change.path);
+    }
+  });
+
+  it('does not flag lookalikes, ordinary sources or tests', () => {
+    assert.deepEqual(sensitiveChanges(['src/package.json.bak', 'src/mypackage.json', 'src/a.ts', 'src/a.test.ts', 'docs/yarn.lock.md'], BUILT_IN_RULES), []);
+  });
+
+  it('leaves the other built-in entries as they were, without the verifier flag', () => {
+    assert.deepEqual(sensitiveChanges(['.github/workflows/ci.yml'], BUILT_IN_RULES), [
+      { path: '.github/workflows/ci.yml', reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' },
+    ]);
+    assert.ok(!('verifierInput' in sensitiveChanges(['.factorial/x.json'], BUILT_IN_RULES)[0]!));
+  });
+
+  it('keeps the built-in reason when a repository rule names the same file', () => {
+    const changes = sensitiveChanges(['package.json'], [...BUILT_IN_RULES, { name: 'package.json', reason: 'later' }]);
+    assert.match(changes[0]!.reason, /verifiers/);
+    assert.equal(changes[0]!.verifierInput, true);
   });
 
   it("gives the first matching rule's reason", () => {
@@ -165,6 +207,7 @@ describe('sensitiveChanges', () => {
   it('keeps at most 20', () => {
     const changedPaths = Array.from({ length: 30 }, (_, i) => `.github/workflows/w${i}.yml`);
     assert.equal(sensitiveChanges(changedPaths, BUILT_IN_RULES).length, 20);
+    assert.equal(sensitiveChanges(Array.from({ length: 30 }, (_, i) => `p${i}/package.json`), BUILT_IN_RULES).length, 20);
   });
 });
 

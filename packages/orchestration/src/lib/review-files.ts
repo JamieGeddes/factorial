@@ -82,11 +82,65 @@ export function parseReviewSeed(stdout: string): ReviewSeed {
   return { changedPaths, rulesText: Buffer.from(match[1]!, 'base64').toString('utf8') };
 }
 
+/** A rule by file name, matched at any depth, for each name. */
+const named = (names: readonly string[], reason: string): SensitivePathRule[] => names.map((name) => ({ name, reason }));
+
+const withExtensions = (base: string, extensions: readonly string[]): string[] => extensions.map((ext) => `${base}.${ext}`);
+
+/** Files the verifiers run or read; a change here is also listed in the pull request's Tests section. */
+export const VERIFIER_INPUT_RULES: readonly SensitivePathRule[] = [
+  ...named(['package.json'], 'changes package.json, whose scripts the verifiers run, so a change here can make a failing check pass'),
+  ...named(
+    [
+      'package-lock.json',
+      'npm-shrinkwrap.json',
+      'yarn.lock',
+      'pnpm-lock.yaml',
+      'bun.lock',
+      'bun.lockb',
+      'Cargo.lock',
+      'poetry.lock',
+      'uv.lock',
+      'Pipfile.lock',
+      'Gemfile.lock',
+      'composer.lock',
+      'go.sum',
+    ],
+    'changes a lockfile, which sets the dependencies the verifiers install and run',
+  ),
+  ...named(
+    [
+      ...withExtensions('vitest.config', ['ts', 'mts', 'cts', 'js', 'mjs', 'cjs']),
+      ...withExtensions('vitest.workspace', ['ts', 'js']),
+      ...withExtensions('jest.config', ['ts', 'js', 'mjs', 'cjs', 'json']),
+      ...withExtensions('playwright.config', ['ts', 'js']),
+      ...withExtensions('cypress.config', ['ts', 'js']),
+      ...withExtensions('.mocharc', ['json', 'js', 'cjs', 'yml', 'yaml']),
+      ...withExtensions('ava.config', ['js', 'cjs', 'mjs']),
+      'karma.conf.js',
+      'pytest.ini',
+      'tox.ini',
+      'conftest.py',
+      'noxfile.py',
+      'pyproject.toml',
+      'setup.cfg',
+      'Makefile',
+      '.npmrc',
+    ],
+    'changes test or build configuration, which the verifiers run, so a change here can make a failing check pass',
+  ),
+  { prefix: '.circleci/', reason: 'changes CI configuration, which the verifiers run, so a change here can make a failing check pass' },
+  { prefix: '.buildkite/', reason: 'changes CI configuration, which the verifiers run, so a change here can make a failing check pass' },
+  ...named(['.gitlab-ci.yml', '.travis.yml', 'azure-pipelines.yml', 'Jenkinsfile'], 'changes CI configuration, which the verifiers run, so a change here can make a failing check pass'),
+];
+
 /**
  * Rules that hold in any repository on GitHub: Actions run with the
  * repository's secrets and can deploy, CODEOWNERS decides who must approve,
  * .gitattributes changes how git and GitHub show a diff, and .factorial/
- * holds these rules themselves.
+ * holds these rules themselves. The verifier rules come last: the verifiers
+ * run the branch's own scripts, dependencies and test configuration, so
+ * changing them can make a failing check pass.
  */
 export const BUILT_IN_RULES: readonly SensitivePathRule[] = [
   { prefix: '.github/workflows/', reason: 'changes GitHub Actions, which run with the repository secrets and can deploy' },
@@ -96,6 +150,7 @@ export const BUILT_IN_RULES: readonly SensitivePathRule[] = [
   { path: 'docs/CODEOWNERS', reason: 'changes who must approve changes' },
   { name: '.gitattributes', reason: 'changes how git and GitHub treat files, which can hide changes from a diff' },
   { prefix: '.factorial/', reason: 'changes how Factorial treats this repository, including which changes are flagged for care' },
+  ...VERIFIER_INPUT_RULES,
 ];
 
 export interface SensitiveRules {
@@ -152,6 +207,8 @@ export function parseContentMatches(stdout: string, patterns: number): string[][
 export interface SensitiveChange {
   path: string;
   reason: string;
+  /** Set when the matched rule is one of VERIFIER_INPUT_RULES: the verifiers run this file. */
+  verifierInput?: true;
 }
 
 /**
@@ -172,7 +229,10 @@ export function sensitiveChanges(changedPaths: readonly string[], rules: readonl
   const changes: SensitiveChange[] = [];
   for (const path of changedPaths) {
     const index = matchers.findIndex((matches) => matches(path));
-    if (index >= 0) changes.push({ path, reason: rules[index]!.reason });
+    if (index >= 0) {
+      const rule = rules[index]!;
+      changes.push({ path, reason: rule.reason, ...(VERIFIER_INPUT_RULES.includes(rule) ? { verifierInput: true as const } : {}) });
+    }
   }
   return changes.slice(0, MAX_SENSITIVE);
 }
