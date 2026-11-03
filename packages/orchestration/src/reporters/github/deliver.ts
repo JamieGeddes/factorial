@@ -88,6 +88,7 @@ export function planDelivery(outcome: Outcome, delivery: Delivery | undefined): 
     case 'no-changes':
     case 'tests-failed':
     case 'invalid-plan':
+    case 'workflow-change-refused':
     case 'failed': {
       const { facts } = expect(delivery, 'report');
       return { target, body: reportMessage(facts, outcome.repository), reviewers: [] };

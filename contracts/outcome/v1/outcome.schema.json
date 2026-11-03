@@ -49,7 +49,7 @@
     },
     "result": {
       "description": "What the turn concluded, from a fixed enum.",
-      "enum": ["pr-opened", "pr-updated", "proposed", "no-changes", "tests-failed", "invalid-plan", "failed", "refused"]
+      "enum": ["pr-opened", "pr-updated", "proposed", "no-changes", "tests-failed", "invalid-plan", "workflow-change-refused", "failed", "refused"]
     },
     "reason": {
       "description": "For refused only: why Intake refused the turn.",

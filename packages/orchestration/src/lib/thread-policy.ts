@@ -27,6 +27,7 @@ export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   'tests-failed',
   'failed',
   'invalid-plan',
+  'workflow-change-refused',
   'not-eligible',
   'busy',
   'rework-limit',

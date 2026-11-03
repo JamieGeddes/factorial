@@ -1790,6 +1790,7 @@ Resources:
               "Assign": { "collect": "{% $states.result.Payload %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
+                { "ErrorEquals": ["WorkflowChangeRefused"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportWorkflowChangeRefused" },
                 { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "BuildIncomplete"
@@ -1831,13 +1832,14 @@ Resources:
             },
             "Collect": {
               "Type": "Task",
-              "Comment": "Read and validate the builder's plan, then push its work. A build that ends without a valid plan pushes nothing and is reported as invalid-plan.",
+              "Comment": "Read and validate the builder's plan, then push its work. A build that ends without a valid plan pushes nothing and is reported as invalid-plan; a change under .github/workflows/ or .github/actions/ that the base branch has not opted in to pushes nothing and is reported as workflow-change-refused.",
               "Resource": "arn:aws:states:::lambda:invoke",
               "Arguments": { "FunctionName": "${CollectFunctionAlias}", "Payload": "{% $merge([$ctx, { 'builderSessionId': $buildSession, 'roundStart': $buildStart, 'progress': { 'stage': $states.context.State.Name, 'round': $buildRound } }]) %}" },
               "Assign": { "collect": "{% $states.result.Payload %}", "plan": "{% $exists($states.result.Payload.plan) ? $states.result.Payload.plan : null %}" },
               "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "collect": "{% $states.result.Payload %}" },
               "Catch": [
                 { "ErrorEquals": ["InvalidPlan"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportInvalidPlan" },
+                { "ErrorEquals": ["WorkflowChangeRefused"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportWorkflowChangeRefused" },
                 { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
               ],
               "Next": "HasChanges"
@@ -2137,6 +2139,18 @@ Resources:
               "Next": "InvalidPlan"
             },
             "InvalidPlan": { "Type": "Fail", "Error": "InvalidPlan", "Cause": "The builder did not produce a valid plan; the outcome tells the requester." },
+            "ReportWorkflowChangeRefused": {
+              "Type": "Task",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ReportFunctionAlias}",
+                "Payload": { "status": "workflow-change-refused", "ctx": "{% $ctx %}", "error": "{% $failure %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
+              },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "workflow-change-refused" },
+              "Catch": [ { "ErrorEquals": ["States.ALL"], "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "workflow-change-refused", "error": "{% $states.errorOutput %}" }, "Next": "WorkflowChangeRefused" } ],
+              "Next": "WorkflowChangeRefused"
+            },
+            "WorkflowChangeRefused": { "Type": "Fail", "Error": "WorkflowChangeRefused", "Cause": "The change edits workflows or actions and the target has not opted in; the outcome tells the requester." },
             "ReportFailure": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",

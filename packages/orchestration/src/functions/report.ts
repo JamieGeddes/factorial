@@ -20,6 +20,7 @@ import { parsePlanJson } from '@factorial/plan';
 import { attemptRecord, recordProgress, type AttemptRecord } from '../lib/table.ts';
 import { continuedPullRequest } from '../lib/turn.ts';
 import { failedVerifierOf, verifyProblemsOf } from '../lib/verify.ts';
+import { REFUSED_PATHS_SHOWN, workflowPathsOf, workflowPathsOmitted } from '../lib/workflow-changes.ts';
 
 /** `proposed` ends a propose turn with its plan; the rest end a turn that failed or found nothing to do. */
 export type ReportInputStatus = ReportStatus | 'proposed';
@@ -122,6 +123,16 @@ export function reportFacts(input: ReportInput & { status: ReportStatus }, workI
       const problems = invalidPlanProblems(input.error?.Cause);
       return { ...base, ...(sessionId ? { sessionId } : {}), ...(problems.length > 0 ? { planProblems: problems } : {}) };
     }
+    case 'workflow-change-refused': {
+      const paths = workflowPathsOf(input.error?.Cause);
+      const more = paths.length - REFUSED_PATHS_SHOWN + workflowPathsOmitted(input.error?.Cause);
+      return {
+        ...base,
+        ...(sessionId ? { sessionId } : {}),
+        ...(paths.length > 0 ? { workflowPaths: paths.slice(0, REFUSED_PATHS_SHOWN).map(codeSpan) } : {}),
+        ...(more > 0 ? { workflowPathsMore: more } : {}),
+      };
+    }
     case 'failed': {
       const incomplete = builderIncomplete(input.error);
       // A step that failed before Prepare has no session; the work item id finds the run.
@@ -179,6 +190,7 @@ export function reportArtefact(input: ReportInput, workItemId?: string, plan?: P
         ? "The base branch's .factorial/verifiers.json is not valid, so the change could not be verified."
         : `A step failed: ${input.error?.Error ?? 'unknown error'}.`,
     'invalid-plan': 'The builder did not produce a valid plan.',
+    'workflow-change-refused': 'The change edits GitHub Actions workflows or actions and the target has not opted in.',
   };
   return {
     outcome: status,
