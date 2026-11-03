@@ -37,6 +37,14 @@ const issue: SourceType['reference'] = (row, repo) => {
   return { ref: `#${sourceId(row)}`, ...(url ? { url } : {}) };
 };
 
+/** The issue a comment in its conversation was made on (#169), or the source id when none is recorded. */
+const issueConversation: SourceType['reference'] = (row, repo) => {
+  const number = row.workItem?.inReplyTo?.number;
+  if (typeof number !== 'number') return { ref: sourceId(row) };
+  const url = repo ? issueUrl(repo, number) : undefined;
+  return { ref: `#${number}`, ...(url ? { url } : {}) };
+};
+
 /** The pull request a rework replies to, or the source id when none is recorded. */
 const pullRequest: SourceType['reference'] = (row, repo) => {
   const item = row.workItem ?? {};
@@ -50,6 +58,7 @@ const pullRequest: SourceType['reference'] = (row, repo) => {
 export const SOURCES: Readonly<Record<string, SourceType>> = {
   'github-issue': { label: 'GitHub issue', reference: issue },
   'github-issue-plan': { label: 'Plan for issue', reference: issue },
+  'github-issue-comment': { label: 'Issue comment', reference: issueConversation },
   'github-pull-request': { label: 'Pull request', reference: pullRequest },
   'github-pull-request-review': { label: 'PR review', reference: pullRequest },
   'github-pull-request-review-comment': { label: 'PR review comment', reference: pullRequest },

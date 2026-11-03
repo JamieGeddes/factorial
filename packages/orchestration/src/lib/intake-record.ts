@@ -21,7 +21,7 @@ export interface IntakeRecord {
   schemaVersion: 1;
   workItemId: string;
   route: Route;
-  turn: 'new' | 'resume' | 'rework' | 'approve';
+  turn: 'new' | 'resume' | 'rework' | 'approve' | 'revise';
   reason: string;
   threadKey?: string;
   branch?: string;
@@ -30,6 +30,8 @@ export interface IntakeRecord {
   previousWorkItemId?: string;
   /** For an approve turn, the proposal it approves. */
   approves?: string;
+  /** For a revise turn, the proposal it revises. */
+  revises?: string;
   resumedFrom?: string;
   refusal?: { status: RefusalStatus; replied: boolean };
 }

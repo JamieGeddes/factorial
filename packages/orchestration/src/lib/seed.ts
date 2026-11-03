@@ -92,6 +92,14 @@ export interface SeedContext {
   route?: 'change' | 'propose';
   /** For a turn that approves a proposed plan, the work item that proposed it. */
   approves?: string;
+  /**
+   * The request, when it is not the work item's own text: for a turn asked
+   * for in an issue's conversation (#169), the issue the comment was made
+   * on, read from GitHub when the session is seeded and redacted.
+   */
+  request?: SeedRequest;
+  /** For a turn that revises a proposed plan: the plan as it was shown, and what was asked to change. */
+  revision?: { proposal: string; previous: string; request: string; by: string };
   /** The builder's summary. */
   summary?: string;
   /** The reviewer's flagged paths. */
@@ -101,6 +109,13 @@ export interface SeedContext {
 }
 
 export type SeedProvider = (context: SeedContext) => SeedPart | Promise<SeedPart>;
+
+/** A request read from its source rather than carried by the work item. */
+export interface SeedRequest {
+  title: string;
+  body: string;
+  url: string;
+}
 
 export interface Seed {
   files: SeedFile[];

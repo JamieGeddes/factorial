@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "6d2f8a1c-4b3e-4f5a-9c7d-8e9f0a1b2c3d",
+  "attempt": 1,
+  "threadKey": "jamiegeddes/factorial#factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "route": "propose",
+  "source": { "type": "github-issue-comment", "id": "4123456789", "url": "https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789" },
+  "inReplyTo": { "kind": "issue", "number": 169 },
+  "repository": { "provider": "github", "owner": "JamieGeddes", "name": "factorial" },
+  "result": "proposed",
+  "at": "2026-11-03T16:00:00.000Z",
+  "artefactPrefix": "6d2f8a1c-4b3e-4f5a-9c7d-8e9f0a1b2c3d/1/",
+  "branch": "factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d"
+}

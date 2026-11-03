@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "6d2f8a1c-4b3e-4f5a-9c7d-8e9f0a1b2c3d",
+  "route": "propose",
+  "turn": "revise",
+  "reason": "Revises the plan proposed by work item 3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d, as asked in a comment on issue #169.",
+  "threadKey": "jamiegeddes/factorial#factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "branch": "factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "revises": "3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d"
+}

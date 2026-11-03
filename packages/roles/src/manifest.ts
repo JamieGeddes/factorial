@@ -19,6 +19,8 @@ export interface FirstMessageOptions {
   route?: SessionRoute;
   /** For a turn that approves a proposed plan, the work item that proposed it. */
   approves?: string;
+  /** For a turn that revises a proposed plan, the work item that proposed it (#169). */
+  revises?: string;
 }
 
 /** A model a role uses beyond its main loop, read from `FACTORIAL_<PURPOSE>_MODEL` on the Runtime version. */

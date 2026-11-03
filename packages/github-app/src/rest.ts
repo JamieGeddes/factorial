@@ -41,6 +41,19 @@ export interface PullRequestState {
   baseRepoId: number;
 }
 
+/** An issue, trimmed to what a turn on it needs: the request it holds and whether it is still open. */
+export interface IssueState {
+  number: number;
+  state: string;
+  title: string;
+  /** Empty when the issue has no description. */
+  body: string;
+  htmlUrl: string;
+  author: { id: number; login: string };
+  /** GitHub serves pull requests through the issues API too; this says which it is. */
+  isPullRequest: boolean;
+}
+
 /** Whether and how a pull request closed: the facts a PullRequestClosed event carries. */
 export interface PullRequestClose {
   number: number;
@@ -141,6 +154,28 @@ export class GitHubClient {
       headRepoId: pr.head.repo?.id,
       baseRef: pr.base.ref,
       baseRepoId: pr.base.repo.id,
+    };
+  }
+
+  /** An issue's request and state. A pull request read here says so (`isPullRequest`). */
+  async getIssue(repo: Repo, issueNumber: number): Promise<IssueState> {
+    const issue = await this.#request<{
+      number: number;
+      state: string;
+      title: string;
+      body: string | null;
+      html_url: string;
+      user: { id: number; login: string };
+      pull_request?: unknown;
+    }>('GET', `/repos/${repo.owner}/${repo.name}/issues/${issueNumber}`);
+    return {
+      number: issue.number,
+      state: issue.state,
+      title: issue.title,
+      body: issue.body ?? '',
+      htmlUrl: issue.html_url,
+      author: { id: issue.user.id, login: issue.user.login },
+      isPullRequest: issue.pull_request !== undefined && issue.pull_request !== null,
     };
   }
 

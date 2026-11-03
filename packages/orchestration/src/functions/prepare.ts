@@ -24,11 +24,11 @@
  * short-lived read-only token (`lib/repo-seed.ts`): the session never
  * contacts GitHub and no token enters it.
  */
-import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
+import { getTextArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import type { GitHubClient } from '@factorial/github-app';
 import { assertWorkItem, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
-import { parsePlanJson } from '@factorial/plan';
+import { parsePlanJson, type Plan } from '@factorial/plan';
 
 import type { Proposal, ReworkTurn, WorkContext } from '../lib/context.ts';
 import { unvalidatedId, type RunKey } from '../lib/log.ts';
@@ -38,9 +38,10 @@ import { repositoryClient } from '../lib/github.ts';
 import { seedRepository, type SeedRepositoryDeps } from '../lib/repo-seed.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
-import { approvedPlanMarkdown, canonicalPlanJson, hasHiddenCharacters, planSha256 } from '../lib/proposal-view.ts';
+import { approvedPlanMarkdown, canonicalPlanJson, hasHiddenCharacters, planSha256, planText } from '../lib/proposal-view.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
-import { notesProvider, planProvider, requestProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
+import { MAX_REVISION_BYTES, notesProvider, planProvider, requestProvider, revisionProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
+import { continuedIssue, issueCommand } from '../lib/turn.ts';
 import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
 import { transferKey } from '../lib/transfer.ts';
@@ -74,7 +75,24 @@ export interface SessionParams {
 }
 
 /** What a stage supplies to its providers beyond the item and the checkout. */
-export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive' | 'route' | 'approves'>>;
+export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive' | 'route' | 'approves' | 'revision'>>;
+
+/** The most of an issue's description a session is given: the WorkItem's own cap on `body`. */
+const MAX_ISSUE_BODY = 65_536;
+
+/**
+ * The request for a turn asked for in an issue's conversation (#169): the
+ * issue, read now with a read-only token and redacted. Every session seeded
+ * for the item reads it, so the builder, a later round and the reviewer all
+ * work from the issue, not from the comment that asked.
+ */
+async function issueRequest(workItem: WorkItem, client: () => Promise<GitHubClient>): Promise<SeedContext['request']> {
+  const issue = continuedIssue(workItem);
+  if (!issue) return undefined;
+  const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
+  const state = await (await client()).getIssue(repo, issue.number);
+  return { title: redactSecrets(state.title).slice(0, 256), body: redactSecrets(state.body).slice(0, MAX_ISSUE_BODY), url: issue.url };
+}
 
 export interface SeededCheckout {
   target: SessionTarget;
@@ -117,6 +135,8 @@ export async function placeSeed(seeded: SeededCheckout, params: SessionParams, p
   const { workItem, resumedFrom, rework } = params;
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   let client: Promise<GitHubClient> | undefined;
+  const github = () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read', issues: 'read' }));
+  const request = await issueRequest(workItem, github);
   const seed = await assembleSeed(providers, {
     role: params.role,
     workItem,
@@ -125,8 +145,9 @@ export async function placeSeed(seeded: SeededCheckout, params: SessionParams, p
     round: 1,
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(rework ? { rework } : {}),
+    ...(request ? { request } : {}),
     ...extras,
-    github: () => (client ??= repositoryClient(repo, { contents: 'read', actions: 'read', pull_requests: 'read' })),
+    github,
   });
   await writeSeed(seeded.target, seed);
   return seed;
@@ -147,7 +168,7 @@ export async function seedSession(
  * a rework's points depends on it. The plan is an approved proposal's; the
  * route file is a propose turn's. Each gives nothing otherwise.
  */
-export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider, planProvider, routeProvider];
+export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider, planProvider, routeProvider, revisionProvider];
 
 /** The approved proposal's plan cannot be read back as the plan its comment showed: the approval is not built. */
 export class ApprovedPlanMismatchError extends Error {
@@ -167,15 +188,40 @@ export class ApprovedPlanMismatchError extends Error {
  * rendering of plan.json, the text the approver read.
  */
 export function checkApprovedPlan(proposal: Proposal, json: string | undefined): { json: string; markdown: string } {
+  const plan = checkProposedPlan(proposal, json);
+  return { json: canonicalPlanJson(plan), markdown: approvedPlanMarkdown(plan, proposal.workItemId) };
+}
+
+/** The proposal's plan.json, parsed, only if it is the one its comment showed, by hash, valid and free of hidden characters. */
+export function checkProposedPlan(proposal: Proposal, json: string | undefined): Plan {
   if (json === undefined || planSha256(json) !== proposal.planSha256) throw new ApprovedPlanMismatchError(proposal);
   const parsed = parsePlanJson(json);
   if (!parsed.ok || hasHiddenCharacters(parsed.value)) throw new ApprovedPlanMismatchError(proposal);
-  return { json: canonicalPlanJson(parsed.value), markdown: approvedPlanMarkdown(parsed.value, proposal.workItemId) };
+  return parsed.value;
+}
+
+async function storedPlanJson(proposal: Proposal): Promise<string | undefined> {
+  const json = await getTextArtefact(proposal.artefactPrefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES);
+  return json?.truncated ? undefined : json?.text;
 }
 
 async function approvedPlan(proposal: Proposal): Promise<{ json: string; markdown: string }> {
-  const json = await getTextArtefact(proposal.artefactPrefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES);
-  return checkApprovedPlan(proposal, json?.truncated ? undefined : json?.text);
+  return checkApprovedPlan(proposal, await storedPlanJson(proposal));
+}
+
+/**
+ * What a revision starts from: the plan it revises, as its comment showed it,
+ * and the change asked for in the comment that asked for the revision.
+ */
+export function revisionFor(workItem: WorkItem, proposal: Proposal, plan: Plan): NonNullable<SeedContext['revision']> {
+  const command = issueCommand(workItem.body);
+  if (command.kind !== 'revise') throw new Error('a revision is asked for with `revise`');
+  return {
+    proposal: proposal.workItemId,
+    previous: planText(plan),
+    request: redactSecrets(command.request).slice(0, MAX_REVISION_BYTES / 4),
+    by: workItem.requestedBy,
+  };
 }
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
@@ -186,11 +232,12 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
   assertUuid(workItem.id, 'WorkItem id');
   const { intake } = input;
   if (intake.route === 'refuse') throw new Error(`Prepare reached for route ${intake.route}`);
-  const { route, attempt, artefactPrefix: prefix, resumedFrom, rework, approves } = intake;
+  const { route, attempt, artefactPrefix: prefix, resumedFrom, rework, approves, revises } = intake;
   const log = stageLog.with({ attempt });
 
   const branch = assertGitBranch(intake.branch, 'work branch');
   const plan = approves ? await approvedPlan(approves) : undefined;
+  const revision = revises ? revisionFor(workItem, revises, checkProposedPlan(revises, await storedPlanJson(revises))) : undefined;
   const { baseCommit, baseBranch, reworkPoints: points } = await seedSession({
     providers: PREPARE_PROVIDERS,
     role: 'builder',
@@ -200,7 +247,7 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     stage: 'prepare',
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(rework ? { rework } : {}),
-    extras: { route, ...(plan ? { plan } : {}), ...(approves ? { approves: approves.workItemId } : {}) },
+    extras: { route, ...(plan ? { plan } : {}), ...(approves ? { approves: approves.workItemId } : {}), ...(revision ? { revision } : {}) },
   });
   await handOverWorkspace(sessionTarget(workItem.id, 'builder'));
 
@@ -211,6 +258,7 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     route,
     ...(resumedFrom ? { resumedFromWorkItemId: resumedFrom.workItemId } : {}),
     ...(approves ? { approves: approves.workItemId } : {}),
+    ...(revises ? { revises: revises.workItemId } : {}),
   });
 
   await recordProgress(workItem.id, 'prepared', {

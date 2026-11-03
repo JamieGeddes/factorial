@@ -50,6 +50,7 @@ test('every registered source type has its label, reference and link built by th
   const cases: Record<string, { label: string; ref: string; url: string; workItem?: Record<string, unknown>; reworkOf?: { prNumber: number } }> = {
     'github-issue': { label: 'GitHub issue', ref: '#42', url: 'https://github.com/JamieGeddes/factorial/issues/42' },
     'github-issue-plan': { label: 'Plan for issue', ref: '#42', url: 'https://github.com/JamieGeddes/factorial/issues/42' },
+    'github-issue-comment': { label: 'Issue comment', ref: '#169', url: 'https://github.com/JamieGeddes/factorial/issues/169', workItem: { inReplyTo: { kind: 'issue', number: 169 } } },
     'github-pull-request': { label: 'Pull request', ref: 'PR #189', url: PR_URL, workItem: { context: { pullRequest: { number: 189 } } } },
     'github-pull-request-review': { label: 'PR review', ref: 'PR #189', url: PR_URL, workItem: { inReplyTo: { kind: 'pull-request', number: 189 } } },
     'github-pull-request-review-comment': { label: 'PR review comment', ref: 'PR #189', url: PR_URL, workItem: { inReplyTo: { kind: 'pull-request', number: 189 } } },

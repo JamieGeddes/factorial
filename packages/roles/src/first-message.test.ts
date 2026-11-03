@@ -31,6 +31,26 @@ describe('buildPrompt for a proposal and its approval (#169)', () => {
     assert.match(prompt, /Commit on this branch as you go/);
   });
 
+  it('starts a revision from revision.md, before the proposal\'s own instructions', () => {
+    const prompt = buildPrompt(workItem, 'b', 'main', 1, false, { route: 'propose', revises: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d' });
+    assert.match(prompt, /revises the plan proposed by work item 3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d[\s\S]*\/workspace\/revision\.md[\s\S]*This is a proposal/);
+  });
+
+  it('points a turn asked for on an issue at the issue in the notes, and quotes the comment', () => {
+    const comment = {
+      ...workItem,
+      source: { type: 'github-issue-comment', id: '4123456789', url: 'https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789' },
+      inReplyTo: { kind: 'issue' as const, number: 169 },
+      title: 'Comment on #169: Propose',
+      body: 'approve',
+    };
+    for (const prompt of [buildPrompt(comment, 'b', 'main', 1, false, { approves: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d' }), reviewPrompt(comment, 'b', 'main', [])]) {
+      assert.match(prompt, /## The request is issue #169\n\nIt is copied to \/workspace\/notes\.md under "# Task"/);
+      assert.match(prompt, /\n> approve\n/);
+      assert.doesNotMatch(prompt, /## Comment on #169/);
+    }
+  });
+
   it('is the build prompt when the route is change', () => {
     assert.equal(buildPrompt(workItem, 'b', 'main', 1, false, { route: 'change' }), buildPrompt(workItem, 'b', 'main'));
   });

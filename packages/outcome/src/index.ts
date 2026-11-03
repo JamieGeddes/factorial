@@ -35,7 +35,7 @@ export interface Outcome {
   threadKey?: string;
   route?: 'change' | 'propose' | 'refuse';
   source: { type: string; id: string; url: string };
-  inReplyTo?: { kind: 'pull-request'; number: number };
+  inReplyTo?: { kind: 'pull-request' | 'issue'; number: number };
   repository: { provider: 'github'; owner: string; name: string };
   result: OutcomeResult;
   /** For `refused` only. */

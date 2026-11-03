@@ -16,6 +16,18 @@ describe('sourceKey', () => {
     } as WorkItem;
     assert.equal(sourceKey(workItem), 'github-issue#JamieGeddes/factorial#22');
   });
+
+  it('gives an issue one key whether it was labelled for work or a plan, or commented on (#169)', () => {
+    const repository = { provider: 'github', owner: 'JamieGeddes', name: 'factorial' };
+    const plan = { source: { type: 'github-issue-plan', id: '22', url: 'https://github.com/JamieGeddes/factorial/issues/22' }, repository } as WorkItem;
+    const comment = {
+      source: { type: 'github-issue-comment', id: '4123456789', url: 'https://github.com/JamieGeddes/factorial/issues/22#issuecomment-4123456789' },
+      repository,
+      inReplyTo: { kind: 'issue', number: 22 },
+    } as WorkItem;
+    assert.equal(sourceKey(plan), 'github-issue#JamieGeddes/factorial#22');
+    assert.equal(sourceKey(comment), 'github-issue#JamieGeddes/factorial#22');
+  });
 });
 
 describe('resumableAttempt', () => {

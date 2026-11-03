@@ -414,6 +414,15 @@ describe('closingReference', () => {
     assert.equal(closingReference(other), 'Closes JamieGeddes/factorial#7');
   });
 
+  it('names the issue a turn in its conversation continued (#169)', () => {
+    const comment = {
+      ...ctx.workItem,
+      source: { type: 'github-issue-comment', id: '4123456789', url: 'https://github.com/JamieGeddes/factorial/issues/169#issuecomment-4123456789' },
+      inReplyTo: { kind: 'issue' as const, number: 169 },
+    };
+    assert.equal(closingReference(comment), 'Closes #169');
+  });
+
   it('is absent for other triggers or an unrecognised url', () => {
     assert.equal(closingReference({ ...ctx.workItem, source: { type: 'jira-ticket', id: 'FAC-1', url: 'https://x.atlassian.net/browse/FAC-1' } }), undefined);
     assert.equal(closingReference({ ...ctx.workItem, source: { ...ctx.workItem.source, url: 'https://evil.example/JamieGeddes/factorial/issues/7' } }), undefined);

@@ -20,8 +20,8 @@
       "enum": ["change", "propose", "refuse"]
     },
     "turn": {
-      "description": "What kind of turn the item is: a new request, a resumed attempt at an earlier request, a turn on a pull request Factorial opened, or the approval of a proposed plan, which builds it on the proposal's thread.",
-      "enum": ["new", "resume", "rework", "approve"]
+      "description": "What kind of turn the item is: a new request, a resumed attempt at an earlier request, a turn on a pull request Factorial opened, the approval of a proposed plan, which builds it on the proposal's thread, or a revision of a proposed plan, which proposes a new one on that thread.",
+      "enum": ["new", "resume", "rework", "approve", "revise"]
     },
     "reason": {
       "description": "Why this route, in a sentence.",
@@ -56,6 +56,11 @@
     },
     "approves": {
       "description": "For an approve turn, the proposal it approves: the work item whose stored plan the build follows.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "revises": {
+      "description": "For a revise turn, the proposal it revises: the work item whose plan the new proposal starts from.",
       "type": "string",
       "format": "uuid"
     },

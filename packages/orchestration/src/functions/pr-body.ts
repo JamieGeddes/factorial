@@ -51,6 +51,8 @@ const GITHUB_ISSUE_URL = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([
  * other trigger type; those close their own tickets elsewhere.
  */
 export function closingReference(workItem: WorkItem): string | undefined {
+  // A turn asked for in an issue's conversation (#169) names the issue, in the repository being changed.
+  if (workItem.inReplyTo?.kind === 'issue') return `Closes #${workItem.inReplyTo.number}`;
   if (!isIssueSource(workItem.source)) return undefined;
   const match = GITHUB_ISSUE_URL.exec(workItem.source.url);
   if (!match) return undefined;
