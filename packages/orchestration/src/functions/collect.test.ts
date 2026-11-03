@@ -8,6 +8,7 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 
 import {
   LEFTOVER_COMMIT_MESSAGE,
+  ProposalChangedError,
   SALVAGE_COMMIT_MESSAGE,
   bundleScript,
   collect,
@@ -353,6 +354,47 @@ describe('collect pushes from its own clean room and stops the builder session',
     failOn = 'push';
     await assert.rejects(collect({ ...ctx, salvage: true }, log, deps), /push failed/);
     assert.deepEqual(events, ['bundle', 'push']);
+  });
+
+  describe('on the propose route', () => {
+    const propose = { ...ctx, route: 'propose' } as WorkContext;
+    const validPlan = async () => {
+      const json = await readFile(new URL('../../../../contracts/plan/v1/examples/single-change.json', import.meta.url), 'utf8');
+      const encoded = (text: string) => `ok:${Buffer.byteLength(text)}:${Buffer.from(text).toString('base64')}`;
+      planReply = `${encoded('# Plan\n')}\n===FACTORIAL-PLAN===\n${encoded(json)}`;
+    };
+
+    it('ends proposed with the plan, pushing nothing and asking GitHub nothing', async () => {
+      commits = 0;
+      await validPlan();
+      const result = await collect(propose, log, { ...deps, fileExists: async () => assert.fail('no GitHub read on the propose route') });
+      assert.equal(result.proposed, true);
+      assert.equal(result.pushed, false);
+      assert.ok(result.plan);
+      assert.equal(pushes.length, 0);
+      assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+    });
+
+    it('fails the turn when the builder changed anything, and pushes nothing', async () => {
+      await validPlan();
+      await assert.rejects(collect(propose, log, deps), ProposalChangedError);
+      assert.equal(pushes.length, 0);
+      assert.ok(!events.includes('bundle'));
+    });
+
+    it('ends invalid-plan without a valid plan, as on any route', async () => {
+      commits = 0;
+      await assert.rejects(collect(propose, log, deps), InvalidPlanError);
+    });
+
+    it('saves nothing after a failed build and does not continue it', async () => {
+      const result = await collect({ ...propose, salvage: true }, log, deps);
+      assert.equal(result.pushed, false);
+      assert.equal(result.incomplete, false);
+      assert.equal(result.proposed, undefined);
+      assert.equal(pushes.length, 0);
+      assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
+    });
   });
 
   it('still succeeds when a stop fails', async () => {

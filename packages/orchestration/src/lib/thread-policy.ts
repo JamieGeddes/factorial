@@ -22,6 +22,7 @@ import type { WorkItemReworkCause } from '@factorial/workitem';
 export const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
   'pr-opened',
   'pr-updated',
+  'proposed',
   'no-changes',
   'tests-failed',
   'failed',

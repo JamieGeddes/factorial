@@ -1,11 +1,11 @@
 /**
  * Report: end a turn that opens or updates no pull request, whether because
- * the agent made no changes, tests failed, the plan was invalid, or a step
- * errored. It records the status on the ledger, writes `report.json` with
+ * a plan was proposed for approval (#169), the agent made no changes, tests
+ * failed, the plan was invalid, or a step errored. It records the status on the ledger, writes `report.json` with
  * what delivery needs and emits the outcome (#165); the reporter for the
  * item's source type tells the requester. Report itself speaks to no one.
  */
-import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
+import { artefactPrefix, getTextArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
 import type { WorkContext } from '../lib/context.ts';
@@ -13,13 +13,17 @@ import { builderIncomplete } from '../lib/incomplete.ts';
 import { runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { emitOutcome, type OutcomeFacts } from '../lib/outcome.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
-import { REPORT_ARTEFACT, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
+import { REPORT_ARTEFACT, type ProposalFacts, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
+import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import { attemptRecord, recordProgress, type AttemptRecord } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
 import { continuedPullRequest } from '../lib/turn.ts';
 
+/** `proposed` ends a propose turn with its plan; the rest end a turn that failed or found nothing to do. */
+export type ReportInputStatus = ReportStatus | 'proposed';
+
 export interface ReportInput extends ProgressInput {
-  status: ReportStatus;
+  status: ReportInputStatus;
   /** Present once Prepare has run. */
   ctx?: WorkContext;
   /** The raw WorkItem, for failures before Prepare completed. */
@@ -92,7 +96,7 @@ function savedWork(input: Pick<ReportInput, 'ctx' | 'saved'>): { branch: string;
 }
 
 /** What the requester is told, as facts: the reporter words them. Nothing from an error's cause beyond what is shown here. */
-export function reportFacts(input: ReportInput, workItemId?: string): ReportFacts {
+export function reportFacts(input: ReportInput & { status: ReportStatus }, workItemId?: string): ReportFacts {
   const rework = isRework(input);
   const branch = input.ctx?.branch;
   const sessionId = input.ctx?.sessionId;
@@ -125,8 +129,19 @@ export function reportFacts(input: ReportInput, workItemId?: string): ReportFact
   }
 }
 
-/** `report.json`: the outcome, a short reason, the redacted cause for the reviewer, and what delivery needs. */
-export function reportArtefact(input: ReportInput, workItemId?: string): ReportFile {
+/** The proposal's facts: the plan Collect stored, and where the approval will build. */
+export function proposalFacts(input: Pick<ReportInput, 'ctx'>, plan: string): ProposalFacts {
+  if (!input.ctx) throw new Error('a proposal is reported only after Prepare');
+  return { plan, branch: input.ctx.branch, sessionId: input.ctx.sessionId };
+}
+
+/** `report.json`: the outcome, a short reason, the redacted cause for the reviewer, and what delivery needs. `plan` is the proposal's plan.md, for `proposed`. */
+export function reportArtefact(input: ReportInput, workItemId?: string, plan?: string): ReportFile {
+  if (input.status === 'proposed') {
+    if (plan === undefined) throw new Error('a proposal is reported with its plan');
+    return { outcome: 'proposed', reason: 'The builder proposed a plan for approval and changed nothing.', delivery: { kind: 'proposal', proposal: proposalFacts(input, plan) } };
+  }
+  const status = input.status;
   const reasons = {
     'no-changes': 'The agent made no changes.',
     'tests-failed': "The change did not pass the repository's checks.",
@@ -134,11 +149,11 @@ export function reportArtefact(input: ReportInput, workItemId?: string): ReportF
     'invalid-plan': 'The builder did not produce a valid plan.',
   };
   return {
-    outcome: input.status,
-    reason: reasons[input.status],
+    outcome: status,
+    reason: reasons[status],
     ...(input.error ? { error: { Error: input.error.Error, Cause: input.error.Cause?.slice(0, 4000) } } : {}),
     ...(input.saved?.pushed ? { savedWork: true } : {}),
-    delivery: { kind: 'report', facts: reportFacts(input, workItemId) },
+    delivery: { kind: 'report', facts: reportFacts({ ...input, status }, workItemId) },
   };
 }
 
@@ -165,11 +180,18 @@ export function outcomeFacts(input: ReportInput, workItem: WorkItem, record: Att
     artefactPrefix: ctx?.artefactPrefix ?? record?.artefactPrefix ?? artefactPrefix(workItem.id, attempt),
     result: input.status,
     threadKey: ctx?.threadKey ?? record?.threadKey,
-    route: ctx ? 'change' : record?.route === 'change' ? 'change' : undefined,
+    route: ctx ? (ctx.route ?? 'change') : record?.route === 'change' || record?.route === 'propose' ? record.route : undefined,
     pullRequest: pr,
     branch: ctx?.branch ?? record?.branch,
     savedWork: saved,
   };
+}
+
+/** The proposed plan.md, which Collect stored before it ended the turn `proposed`; redacted again on the way into report.json. */
+async function proposedPlan(prefix: string): Promise<string> {
+  const read = await getTextArtefact(prefix, 'plan/plan.md', MAX_PLAN_ARTEFACT_BYTES);
+  if (read === undefined) throw new Error(`no plan/plan.md under ${prefix}`);
+  return read.text;
 }
 
 /** The run key from the context, or from the raw WorkItem when Prepare did not finish. */
@@ -203,8 +225,10 @@ export const handler = staged('report', reportKey, reportStage, async (input: Re
       log.error('test result not stored', { error: storeError });
     }
   }
+  // A proposal's comment carries its plan, read back from where Collect stored it.
+  const plan = input.status === 'proposed' ? await proposedPlan(facts.artefactPrefix) : undefined;
   // The reporter reads report.json, so it is written before the outcome that points at it.
-  await putJsonArtefact(facts.artefactPrefix, REPORT_ARTEFACT, reportArtefact(redacted, workItem.id));
+  await putJsonArtefact(facts.artefactPrefix, REPORT_ARTEFACT, reportArtefact(redacted, workItem.id, plan));
   const outcome = await emitOutcome(facts);
   log.info('outcome emitted', { result: outcome.result });
 });

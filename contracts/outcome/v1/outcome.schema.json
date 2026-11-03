@@ -14,7 +14,7 @@
     "workItemId": { "description": "The turn's WorkItem: one outcome per work item.", "type": "string", "format": "uuid" },
     "attempt": { "type": "integer", "minimum": 1 },
     "threadKey": { "description": "The thread, <owner>/<name>#<branch>, once Intake has found it.", "type": "string", "minLength": 1 },
-    "route": { "description": "The route Intake chose (contracts/intake/v1). Absent when the turn ended before Intake chose one.", "enum": ["change", "refuse"] },
+    "route": { "description": "The route Intake chose (contracts/intake/v1). Absent when the turn ended before Intake chose one.", "enum": ["change", "propose", "refuse"] },
     "source": {
       "description": "Copied from the WorkItem: where the request came from, and so which reporter delivers the outcome.",
       "type": "object",
@@ -49,7 +49,7 @@
     },
     "result": {
       "description": "What the turn concluded, from a fixed enum.",
-      "enum": ["pr-opened", "pr-updated", "no-changes", "tests-failed", "invalid-plan", "failed", "refused"]
+      "enum": ["pr-opened", "pr-updated", "proposed", "no-changes", "tests-failed", "invalid-plan", "failed", "refused"]
     },
     "reason": {
       "description": "For refused only: why Intake refused the turn.",
@@ -98,6 +98,10 @@
       },
       "else": { "properties": { "testedSha": false } }
     },
-    { "if": { "properties": { "result": { "const": "pr-updated" } } }, "then": { "required": ["inReplyTo"], "properties": { "inReplyTo": true } } }
+    { "if": { "properties": { "result": { "const": "pr-updated" } } }, "then": { "required": ["inReplyTo"], "properties": { "inReplyTo": true } } },
+    {
+      "if": { "properties": { "result": { "const": "proposed" } } },
+      "then": { "required": ["route", "branch"], "properties": { "route": { "const": "propose" }, "branch": true, "pullRequest": false, "savedWork": false } }
+    }
   ]
 }

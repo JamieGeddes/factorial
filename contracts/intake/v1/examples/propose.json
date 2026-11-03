@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "route": "propose",
+  "turn": "new",
+  "reason": "A request for a plan to approve.",
+  "threadKey": "jamiegeddes/factorial#factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "branch": "factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d"
+}

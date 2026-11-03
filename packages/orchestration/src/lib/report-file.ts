@@ -46,6 +46,16 @@ export interface ReportFacts {
   savedWork?: { branch: string; commits?: number };
 }
 
+/** What a proposed plan's comment is built from (#169). */
+export interface ProposalFacts {
+  /** The plan's plan.md as Collect stored it, redacted: agent text, capped again when rendered. */
+  plan: string;
+  /** The thread's branch, which an approval builds on; nothing is pushed to it yet. */
+  branch: string;
+  /** The builder's session. */
+  sessionId: string;
+}
+
 /** The run details table's values: what the orchestrator knows, never agent text. */
 export interface RunDetails {
   source: { type: string; id: string; url: string };
@@ -76,6 +86,8 @@ export type Delivery =
   | { kind: 'pr-opened' }
   | { kind: 'rework-reply'; reply: ReworkReplyFacts; reviewers: string[] }
   | { kind: 'report'; facts: ReportFacts }
+  /** A plan proposed for approval: the plan, for the requester to read. */
+  | { kind: 'proposal'; proposal: ProposalFacts }
   /** `reply` when a person asked and should be answered; orchestrator text only. */
   | { kind: 'refusal'; reply?: string };
 
@@ -135,6 +147,14 @@ function deliveryProblem(delivery: unknown): string | undefined {
       return replyProblem(delivery.reply) ?? (isStringArray(delivery.reviewers) ? undefined : 'reviewers is not a list of logins');
     case 'refusal':
       return optional(delivery.reply, isString) ? undefined : 'reply is not a string';
+    case 'proposal': {
+      const proposal = delivery.proposal;
+      if (!isObject(proposal)) return 'proposal is not an object';
+      for (const key of ['plan', 'branch', 'sessionId'] as const) {
+        if (!isString(proposal[key])) return `proposal.${key} is not a string`;
+      }
+      return undefined;
+    }
     default:
       return 'delivery.kind is unknown';
   }

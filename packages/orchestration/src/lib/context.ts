@@ -1,4 +1,4 @@
-import type { WorkItem, WorkItemReworkCause } from '@factorial/workitem';
+import { isIssueSource, type WorkItem, type WorkItemReworkCause } from '@factorial/workitem';
 
 import type { Attempt } from './resume.ts';
 import type { ReworkPoint } from './rework-points.ts';
@@ -14,6 +14,13 @@ export interface ReworkTurn {
   previousWorkItemId: string;
   /** The branch the pull request targets, as GitHub reports it. */
   baseBranch: string;
+}
+
+/** A plan proposed for approval (#169): the turn that proposed it, and where its plan is stored. */
+export interface Proposal {
+  workItemId: string;
+  /** `<workItemId>/<attempt>/`: the plan is under `plan/` there. */
+  artefactPrefix: string;
 }
 
 /** What the state machine carries from Prepare to every later step. */
@@ -45,6 +52,13 @@ export interface WorkContext {
   reworkPoints?: ReworkPoint[];
   /** Set when the item is a turn on a pull request Factorial opened. */
   rework?: ReworkTurn;
+  /**
+   * The route Intake chose: `propose` plans and changes nothing (#169).
+   * Absent from a context made before #169, which is `change`.
+   */
+  route?: 'change' | 'propose';
+  /** For a turn that approves a proposed plan: the proposal, whose plan the session was seeded with. */
+  approves?: Proposal;
 }
 
 export function branchFor(workItem: WorkItem): string {
@@ -52,7 +66,7 @@ export function branchFor(workItem: WorkItem): string {
 }
 
 export function issueNumber(workItem: WorkItem): number | undefined {
-  if (workItem.source.type !== 'github-issue') return undefined;
+  if (!isIssueSource(workItem.source)) return undefined;
   const n = Number(workItem.source.id);
   return Number.isInteger(n) && n > 0 ? n : undefined;
 }

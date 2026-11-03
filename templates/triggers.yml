@@ -91,6 +91,8 @@ Resources:
           EVENT_BUS_NAME: !Ref WorkBus
           WEBHOOK_SECRET_ARN: !Ref WebhookSecret
           TRIGGER_LABEL: !Ref TriggerLabel
+          # A plan to approve first (#169): the trigger label with -plan after it.
+          PLAN_LABEL: !Sub ${TriggerLabel}-plan
           ALLOWED_USER_IDS: !Ref AllowedGitHubUserIds
           APP_SLUG: !Ref GitHubAppSlug
           NODE_OPTIONS: --enable-source-maps

@@ -12,11 +12,11 @@
 import { redactSecrets } from '@factorial/artefacts';
 import type { TokenPermissions } from '@factorial/github-app';
 import type { Outcome } from '@factorial/outcome';
-import { TRIGGER_TYPES } from '@factorial/workitem';
+import { isIssueSource } from '@factorial/workitem';
 
 import { reworkComment } from '../../functions/pr-body.ts';
 import { parseReportFile, type Delivery } from '../../lib/report-file.ts';
-import { pullRequestOpenedMessage, reportMessage } from './messages.ts';
+import { proposalMessage, pullRequestOpenedMessage, reportMessage } from './messages.ts';
 import { issueNumberFromUrl } from './started.ts';
 import type { ReporterDeps } from './types.ts';
 
@@ -55,7 +55,7 @@ export interface DeliveryPlan {
 /** Where the requester is told: the pull request the turn continued, otherwise the source issue, if any. */
 export function commentTarget(outcome: Outcome): number | undefined {
   if (outcome.inReplyTo) return outcome.inReplyTo.number;
-  if (outcome.source.type !== TRIGGER_TYPES.githubIssue) return undefined;
+  if (!isIssueSource(outcome.source)) return undefined;
   return issueNumberFromUrl(outcome.source.url, outcome.repository);
 }
 
@@ -76,6 +76,10 @@ export function planDelivery(outcome: Outcome, delivery: Delivery | undefined): 
     case 'pr-updated': {
       const { reply, reviewers } = expect(delivery, 'rework-reply');
       return { target, body: reworkComment(reply), reviewers };
+    }
+    case 'proposed': {
+      const { proposal } = expect(delivery, 'proposal');
+      return { target, body: proposalMessage(proposal), reviewers: [] };
     }
     case 'refused': {
       const { reply } = expect(delivery, 'refusal');

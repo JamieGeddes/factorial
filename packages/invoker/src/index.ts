@@ -274,7 +274,16 @@ async function main(): Promise<number> {
   run.previousRoundsUsage = previousRoundsUsage(row.Item, stage, round);
 
   const resumed = typeof row.Item?.resumedFrom === 'string';
-  const prompt = manifest.firstMessage(workItem, branch, baseBranch, { sensitivePaths, ...(round !== undefined ? { round } : {}), resumed });
+  // Intake's route and approval, on the row (#169): a proposal plans and changes nothing; an approval follows the plan it was seeded with.
+  const route = row.Item?.route === 'propose' ? ('propose' as const) : undefined;
+  const approves = typeof row.Item?.approves === 'string' ? row.Item.approves : undefined;
+  const prompt = manifest.firstMessage(workItem, branch, baseBranch, {
+    sensitivePaths,
+    ...(round !== undefined ? { round } : {}),
+    resumed,
+    ...(route ? { route } : {}),
+    ...(approves ? { approves } : {}),
+  });
   run.version = await runtimeInfo(target);
   // A version from either side of a run contract change fails here, before
   // the session starts a run. When the version could not be read, the host's

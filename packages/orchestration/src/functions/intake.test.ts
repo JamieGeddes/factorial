@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { assertIntakeRecord } from '../lib/intake-record.ts';
 import { threadKeyFor, type Thread } from '../lib/thread.ts';
 
-import { intakeRecord } from './intake.ts';
+import { intakeRecord, proposalToApprove } from './intake.ts';
 
 const ID = '3e9b1f4a-2c6d-4e8f-9a0b-1c2d3e4f5a6b';
 const OPENER = '146b11c0-ca7d-11f1-9d6b-acd4bff0d455';
@@ -72,9 +72,41 @@ describe('intakeRecord', () => {
     assert.deepEqual(busy.refusal, { status: 'busy', replied: true });
   });
 
+  it('records a proposal on the propose route, and an approval with the proposal it approves', () => {
+    const proposed = intakeRecord(ID, { route: 'propose', turn: 'new', reason: 'A request for a plan to approve.', thread });
+    assert.equal(proposed.route, 'propose');
+    assert.equal(proposed.approves, undefined);
+    const approval = intakeRecord(ID, { route: 'change', turn: 'approve', reason: 'Approves.', thread, approves: { workItemId: OPENER, artefactPrefix: `${OPENER}/1/` } });
+    assert.equal(approval.turn, 'approve');
+    assert.equal(approval.approves, OPENER);
+  });
+
   it('cuts a long reason to the schema cap rather than fail', () => {
     const record = intakeRecord(ID, { route: 'refuse', turn: 'new', status: 'busy', reason: 'x'.repeat(2000), thread });
     assert.equal(record.reason.length, 1000);
+  });
+});
+
+describe('proposalToApprove', () => {
+  const PROPOSAL = '5a6b7c8d-1e2f-4a3b-8c4d-9e0f1a2b3c4d';
+
+  it('finds the newest turn when it ended proposed', () => {
+    assert.equal(proposalToApprove([{ workItemId: PROPOSAL, status: 'proposed' }], ID)?.workItemId, PROPOSAL);
+  });
+
+  it('passes over the request itself and turns Intake refused', () => {
+    const turns = [
+      { workItemId: ID, status: 'accepted' },
+      { workItemId: OPENER, status: 'busy' },
+      { workItemId: PROPOSAL, status: 'proposed' },
+    ];
+    assert.equal(proposalToApprove(turns, ID)?.workItemId, PROPOSAL);
+  });
+
+  it('finds nothing once a later turn ran on the thread, or when the newest turn did not propose', () => {
+    assert.equal(proposalToApprove([{ workItemId: OPENER, status: 'pr-opened' }, { workItemId: PROPOSAL, status: 'proposed' }], ID), undefined);
+    assert.equal(proposalToApprove([{ workItemId: PROPOSAL, status: 'invalid-plan' }], ID), undefined);
+    assert.equal(proposalToApprove([], ID), undefined);
   });
 });
 

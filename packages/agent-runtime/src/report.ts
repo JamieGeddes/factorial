@@ -129,7 +129,7 @@ export function planErrors(planJson: string | undefined): string[] | undefined {
   return result.errors.slice(0, MAX_ERRORS).map((e) => `plan.json ${e.length > ERROR_CHARS ? `${e.slice(0, ERROR_CHARS)}…` : e}`);
 }
 
-function planInstruction(errors: string[]): string {
+export function planInstruction(errors: string[]): string {
   return [
     '/workspace/plan.json does not meet the plan contract. Fix each problem and write the file again, before changing anything else:',
     ...errors.map((e) => `- ${e}`),

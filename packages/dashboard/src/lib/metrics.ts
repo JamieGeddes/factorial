@@ -343,6 +343,8 @@ export function metrics(input: MetricsInput): Metrics {
         return { name: 'Tests failed', tone: 'failed' };
       case 'failed':
         return i.row.savedWork ? { name: 'Incomplete', tone: 'failed' } : { name: 'Failed', tone: 'failed' };
+      case 'proposed':
+        return { name: 'Plan proposed', tone: 'neutral' };
       case 'no-changes':
         return { name: 'No changes', tone: 'neutral' };
       case 'invalid-plan':
@@ -353,7 +355,7 @@ export function metrics(input: MetricsInput): Metrics {
         return { name: cap(oneLine(text(i.result)) || 'Unknown'), tone: 'failed' };
     }
   };
-  const ORDER = ['PR opened', 'PR updated', 'Tests failed', 'Incomplete', 'Failed', 'No changes', 'Invalid plan', 'Refused'];
+  const ORDER = ['PR opened', 'PR updated', 'Plan proposed', 'Tests failed', 'Incomplete', 'Failed', 'No changes', 'Invalid plan', 'Refused'];
   const counts = new Map<string, { v: number; tone: Metrics['outcomes'][number]['tone'] }>();
   for (const i of finished) {
     const o = outcome(i);

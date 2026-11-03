@@ -8,7 +8,7 @@
  */
 import { redactSecrets } from '@factorial/artefacts';
 import type { CheckJob, GitHubClient, Repo } from '@factorial/github-app';
-import { ROLES } from '@factorial/roles';
+import { ROLES, ROUTE_FILE, routeFileContent } from '@factorial/roles';
 import { TRIGGER_TYPES, type WorkItem, type WorkItemReviewDetail, type WorkItemReworkCause } from '@factorial/workitem';
 
 import type { ReworkTurn } from './context.ts';
@@ -48,7 +48,7 @@ export const MAX_DIFF_BYTES = 5 * 1024 * KIB;
  */
 export function initialNotes(
   workItem: WorkItem,
-  options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole } = {},
+  options: { rework?: boolean; resumedFrom?: Attempt; role?: SessionRole; route?: 'change' | 'propose'; approves?: string } = {},
 ): string {
   return [
     '# Task',
@@ -62,6 +62,8 @@ export function initialNotes(
     workItem.body.trim() || '_No further description was given._',
     ...(options.rework ? ['', 'This is rework: every numbered point in /workspace/rework.md must be addressed, and answered by its number under `## Rework points` in summary.md.'] : []),
     ...(options.resumedFrom ? ['', ...previousAttemptSection(options.resumedFrom)] : []),
+    ...(options.route === 'propose' ? ['', ...proposalSection()] : []),
+    ...(options.approves ? ['', ...approvalSection(options.approves)] : []),
     '',
     '# Plan',
     '',
@@ -70,6 +72,24 @@ export function initialNotes(
     '# Notes',
     '',
   ].join('\n');
+}
+
+/** A propose turn (#169): the plan is the whole of the work. */
+function proposalSection(): string[] {
+  return [
+    '# Proposal',
+    '',
+    'The requester asked for a plan to approve before anything is built. Write /workspace/plan.json and /workspace/plan.md with the plan subagent, and change nothing in the repository: no edits and no commits. The plan is posted on the issue for approval.',
+  ];
+}
+
+/** A turn that approves a proposed plan: the plan is seeded, and followed as it is. */
+function approvalSection(proposal: string): string[] {
+  return [
+    '# Approved plan',
+    '',
+    `The plan in /workspace/plan.json and /workspace/plan.md was proposed by work item ${proposal} and approved by the requester. Follow it as it is: do not plan again. Where the repository has moved on since, note the difference under "# Plan" and in summary.md.`,
+  ];
 }
 
 function previousAttemptSection(attempt: Attempt): string[] {
@@ -200,6 +220,8 @@ export const notesProvider: SeedProvider = (context): SeedPart => ({
         rework: context.rework !== undefined,
         role: context.role,
         ...(context.resumedFrom ? { resumedFrom: context.resumedFrom } : {}),
+        ...(context.route ? { route: context.route } : {}),
+        ...(context.approves ? { approves: context.approves } : {}),
       }),
       cap: MAX_NOTES_BYTES,
       truncate: true,
@@ -216,7 +238,12 @@ export const roundNotesProvider: SeedProvider = (context): SeedPart => {
   const { continuing } = context;
   if (continuing === undefined) throw new Error('a continuation needs to know what the previous round left');
   const notes =
-    context.previousNotes ?? initialNotes(context.workItem, { role: context.role, ...(context.resumedFrom ? { resumedFrom: context.resumedFrom } : {}) });
+    context.previousNotes ??
+    initialNotes(context.workItem, {
+      role: context.role,
+      ...(context.resumedFrom ? { resumedFrom: context.resumedFrom } : {}),
+      ...(context.approves ? { approves: context.approves } : {}),
+    });
   const section = continuingSection({
     round: context.round,
     baseCommit: continuing.baseCommit,
@@ -249,6 +276,16 @@ export const planProvider: SeedProvider = (context): SeedPart => {
       { path: 'plan.md', content: context.plan.markdown, cap: MAX_PLAN_BYTES, truncate: true },
     ],
   };
+};
+
+/**
+ * The route, for the host (#169): a propose session is seeded with
+ * /workspace/route.json, which the host reads before the model runs and
+ * which closes every tool once the plan is valid. A change session has none.
+ */
+export const routeProvider: SeedProvider = (context): SeedPart => {
+  if (context.route !== 'propose') return {};
+  return { files: [{ path: ROUTE_FILE, content: routeFileContent('propose'), cap: 1024 }] };
 };
 
 /** The builder's account of its work. */

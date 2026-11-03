@@ -4,10 +4,12 @@
  * reporter words the same facts its own way.
  */
 import { agentBlock } from '../../functions/pr-body.ts';
-import type { ReportFacts } from '../../lib/report-file.ts';
+import type { ProposalFacts, ReportFacts } from '../../lib/report-file.ts';
 
 /** How much of what the agent said a no-changes comment shows. */
 export const AGENT_SAID_CHARS = 4000;
+/** How much of a proposed plan its comment shows: well inside GitHub's 65,536-character comment. */
+export const PROPOSED_PLAN_CHARS = 50_000;
 
 /** The work item's commits over every round, when known: a round's own count says nothing about what the branch holds. */
 function commitsNote(commits: number | undefined): string {
@@ -60,6 +62,22 @@ export function reportMessage(facts: ReportFacts, repository: { owner: string; n
       // in the execution history and the ledger, both inside the account.
       return `Factorial could not complete this work item (\`${facts.errorName ?? 'unknown error'}\`). Session \`${session}\`; see the Factorial execution log.${savedWorkNote(facts, repository)}`;
   }
+}
+
+/**
+ * The comment that proposes a plan (#169): what to do next, then the plan.
+ * The plan is agent text: capped, headings and tags neutralised, no mentions.
+ */
+export function proposalMessage(proposal: ProposalFacts): string {
+  return [
+    `Factorial proposes the plan below and has changed nothing. Session \`${proposal.sessionId}\`.`,
+    '',
+    `To have it built as written, add the label that starts work to this issue: the change is built on \`${proposal.branch}\` from this plan, without planning again. For a different plan, edit the issue and add the plan label again.`,
+    '',
+    '**Proposed plan:**',
+    '',
+    agentBlock(proposal.plan.trim(), PROPOSED_PLAN_CHARS),
+  ].join('\n');
 }
 
 /** The comment on the issue once its pull request is open. */

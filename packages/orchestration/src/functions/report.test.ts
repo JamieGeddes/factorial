@@ -7,12 +7,14 @@ import { builderIncomplete } from '../lib/incomplete.ts';
 
 import { reportMessage as render, savedWorkNote as renderNote } from '../reporters/github/messages.ts';
 
+import type { ReportStatus } from '../lib/report-file.ts';
+
 import { invalidPlanProblems, outcomeFacts, reportArtefact, reportFacts, type ReportInput } from './report.ts';
 
 const repository = { owner: 'JamieGeddes', name: 'factorial' };
 
 /** What the GitHub reporter says for a Report input: the facts Report stores, worded as the reporter words them. */
-const reportMessage = (input: ReportInput & { sessionIdHint?: string }): string => render(reportFacts(input, input.sessionIdHint), repository);
+const reportMessage = (input: ReportInput & { status: ReportStatus; sessionIdHint?: string }): string => render(reportFacts(input, input.sessionIdHint), repository);
 const savedWorkNote = (input: Pick<ReportInput, 'ctx' | 'saved' | 'workItem'>): string => renderNote(reportFacts({ status: 'failed', ...input }), repository);
 
 const ctx: WorkContext = {
@@ -268,6 +270,25 @@ describe('the outcome Report emits', () => {
     assert.equal(facts.attempt, 1);
     assert.equal(facts.artefactPrefix, `${ctx.workItem.id}/1/`);
     assert.equal(facts.route, undefined);
+  });
+
+  it('ends a proposal on the propose route, with its branch and no saved work', () => {
+    const facts = outcomeFacts({ status: 'proposed', ctx: { ...ctx, route: 'propose' } }, ctx.workItem, undefined);
+    assert.equal(facts.result, 'proposed');
+    assert.equal(facts.route, 'propose');
+    assert.equal(facts.branch, ctx.branch);
+    assert.equal(facts.savedWork, undefined);
+    assert.equal(facts.pullRequest, undefined);
+  });
+
+  it('stores a proposal\'s plan for the reporter, and refuses to store one without it', () => {
+    const input = { status: 'proposed' as const, ctx: { ...ctx, route: 'propose' as const } };
+    assert.deepEqual(reportArtefact(input, ctx.workItem.id, '# Plan\n').delivery, {
+      kind: 'proposal',
+      proposal: { plan: '# Plan\n', branch: ctx.branch, sessionId: ctx.sessionId },
+    });
+    assert.equal(reportArtefact(input, ctx.workItem.id, '# Plan\n').outcome, 'proposed');
+    assert.throws(() => reportArtefact(input, ctx.workItem.id), /with its plan/);
   });
 
   it('stores the facts the reporter words, never the cause', () => {

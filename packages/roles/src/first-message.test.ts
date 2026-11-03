@@ -14,6 +14,28 @@ const workItem = {
   createdAt: '2026-10-17T09:00:00Z',
 };
 
+describe('buildPrompt for a proposal and its approval (#169)', () => {
+  it('asks a proposal for a plan and no change, and says the tools close once the plan is valid', () => {
+    const prompt = buildPrompt(workItem, 'factorial/7f3c', 'main', 1, false, { route: 'propose' });
+    assert.match(prompt, /## Fix typo/);
+    assert.match(prompt, /This is a proposal/);
+    assert.match(prompt, /Change nothing in the repository/);
+    assert.match(prompt, /every tool closes/);
+    assert.doesNotMatch(prompt, /Commit on this branch as you go/);
+  });
+
+  it('tells an approval to follow the seeded plan without planning again', () => {
+    const prompt = buildPrompt(workItem, 'factorial/7f3c', 'main', 1, false, { approves: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d' });
+    assert.match(prompt, /proposed by work item 3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d and approved by the requester/);
+    assert.match(prompt, /do not run the plan subagent/);
+    assert.match(prompt, /Commit on this branch as you go/);
+  });
+
+  it('is the build prompt when the route is change', () => {
+    assert.equal(buildPrompt(workItem, 'b', 'main', 1, false, { route: 'change' }), buildPrompt(workItem, 'b', 'main'));
+  });
+});
+
 describe('buildPrompt', () => {
   it('includes the request, where the code is and what to produce', () => {
     const prompt = buildPrompt(workItem, 'factorial/7f3c', 'main');

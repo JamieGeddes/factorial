@@ -6,6 +6,10 @@
  *
  * - A new request opens a thread for a new branch. A request whose earlier
  *   attempt stopped with its work saved resumes that attempt's thread.
+ * - An issue labelled for a plan (`github-issue-plan`) is a new request on
+ *   the `propose` route: the builder plans and changes nothing (#169).
+ * - An issue labelled for work whose newest turn proposed a plan approves
+ *   it: the `change` route on the proposal's thread, from its stored plan.
  * - A turn on a pull request finds the thread of the pull request.
  * - An item in the superseded rework `context` shape is refused: nothing
  *   emits it since #163, and nothing downstream reads it.
@@ -19,9 +23,9 @@
  */
 import { artefactPrefix, putJsonArtefact } from '@factorial/artefacts';
 import type { Repo } from '@factorial/github-app';
-import { assertWorkItem, type WorkItem, type WorkItemReworkCause } from '@factorial/workitem';
+import { TRIGGER_TYPES, assertWorkItem, type WorkItem, type WorkItemReworkCause } from '@factorial/workitem';
 
-import { branchFor, type ReworkTurn } from '../lib/context.ts';
+import { branchFor, type Proposal, type ReworkTurn } from '../lib/context.ts';
 import { botLogin, repositoryClient } from '../lib/github.ts';
 import { assertIntakeRecord, type IntakeRecord, type RefusalStatus } from '../lib/intake-record.ts';
 import { unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
@@ -43,7 +47,7 @@ import {
   writeThreadState,
   type Thread,
 } from '../lib/thread.ts';
-import { acceptWorkItem, attemptRecord, pullRequestKey, recordProgress, statusOf, turnsOf } from '../lib/table.ts';
+import { acceptWorkItem, attemptRecord, pullRequestKey, recordProgress, statusOf, turnsOf, type Turn } from '../lib/table.ts';
 import { continuedPullRequest, reworkCause } from '../lib/turn.ts';
 
 interface IntakeInput extends ProgressInput {
@@ -53,32 +57,34 @@ interface IntakeInput extends ProgressInput {
   executionArn?: string;
 }
 
-/** What the state machine carries from Intake: the route, and for `change` what Prepare needs. */
+/** What the state machine carries from Intake: the route, and for `change` or `propose` what Prepare needs. */
 export type IntakeResult =
   | {
-      route: 'change';
+      route: 'change' | 'propose';
       attempt: number;
       artefactPrefix: string;
       threadKey: string;
       branch: string;
       resumedFrom?: Attempt;
       rework?: ReworkTurn;
+      approves?: Proposal;
     }
   | { route: 'refuse'; attempt: number; artefactPrefix: string; status: RefusalStatus; reason: string };
 
 /** A decision before it is recorded: the route, and what the record and the reply need. */
 export type Decision =
   | {
-      route: 'change';
-      turn: 'new' | 'resume' | 'rework';
+      route: 'change' | 'propose';
+      turn: 'new' | 'resume' | 'rework' | 'approve';
       reason: string;
       thread: Thread;
       resumedFrom?: Attempt;
       rework?: ReworkTurn;
+      approves?: Proposal;
     }
   | {
       route: 'refuse';
-      turn: 'new' | 'resume' | 'rework';
+      turn: 'new' | 'resume' | 'rework' | 'approve';
       status: RefusalStatus;
       reason: string;
       reply?: string;
@@ -154,8 +160,57 @@ async function resumable(repo: Repo, workItem: WorkItem, log: Logger): Promise<A
   }
 }
 
-/** A new request, or a new attempt at one: the thread of the branch it works on, opened if new. */
-async function requestTurn(repo: Repo, workItem: WorkItem, resumedFrom: Attempt | undefined): Promise<Decision> {
+/** Statuses of a turn Intake refused: it ran nothing, so it says nothing about what the thread last did. */
+const REFUSED_STATUSES: ReadonlySet<string> = new Set(['not-eligible', 'busy', 'rework-limit', 'covered-by-review']);
+
+/**
+ * The turn a request for work approves, given a thread's turns newest first:
+ * the newest turn that ran, other than the request itself, when it ended
+ * `proposed`. A turn that ran since (an earlier approval, say) means there is
+ * nothing left to approve.
+ */
+export function proposalToApprove(turns: readonly Turn[], currentId: string): Turn | undefined {
+  const latest = turns.find((turn) => turn.workItemId !== currentId && !REFUSED_STATUSES.has(turn.status ?? ''));
+  return latest?.status === 'proposed' ? latest : undefined;
+}
+
+/**
+ * The proposal a request for work approves, if any: the newest turn that ran
+ * on the newest thread the issue opened ended `proposed` on the `propose`
+ * route. Any failure to tell starts the item as it would have started
+ * without one. Read before the item is accepted, like `resumable`.
+ */
+async function approvable(workItem: WorkItem, log: Logger): Promise<{ thread: Thread; proposal: Proposal } | undefined> {
+  try {
+    const thread = await newestThreadForSource(sourceKey(workItem));
+    if (!thread) return undefined;
+    const latest = proposalToApprove(await turnsOf(thread.threadKey), workItem.id);
+    if (!latest) return undefined;
+    const record = await attemptRecord(latest.workItemId);
+    if (record?.route !== 'propose' || record.artefactPrefix === undefined) return undefined;
+    return { thread, proposal: { workItemId: latest.workItemId, artefactPrefix: record.artefactPrefix } };
+  } catch (error) {
+    log.info('not approving a proposal', { error });
+    return undefined;
+  }
+}
+
+/** The approval of a proposed plan: a change on the proposal's thread and branch, built from its stored plan. */
+async function approveTurn(workItem: WorkItem, found: { thread: Thread; proposal: Proposal }): Promise<Decision> {
+  const { thread, proposal } = found;
+  const admission = await claimThread(workItem.id, undefined, thread);
+  if (!admission.ok) return { route: 'refuse', turn: 'approve', status: admission.status, reason: admission.reason, thread };
+  return {
+    route: 'change',
+    turn: 'approve',
+    reason: `Approves the plan proposed by work item ${proposal.workItemId}.`,
+    thread,
+    approves: proposal,
+  };
+}
+
+/** A new request, or a new attempt at one: the thread of the branch it works on, opened if new. A request for a plan takes the `propose` route. */
+async function requestTurn(repo: Repo, workItem: WorkItem, resumedFrom: Attempt | undefined, route: 'change' | 'propose' = 'change'): Promise<Decision> {
   const branch = resumedFrom?.branch ?? branchFor(workItem);
   const turn = resumedFrom ? 'resume' : 'new';
   // A resumed attempt's thread exists; this returns it as it is.
@@ -169,10 +224,15 @@ async function requestTurn(repo: Repo, workItem: WorkItem, resumedFrom: Attempt 
   });
   const admission = await claimThread(workItem.id, undefined, thread);
   if (!admission.ok) return { route: 'refuse', turn, status: admission.status, reason: admission.reason, thread };
+  const reason = resumedFrom
+    ? `Resumes work item ${resumedFrom.workItemId}, which stopped with its work saved.`
+    : route === 'propose'
+      ? 'A request for a plan to approve.'
+      : 'A new request.';
   return {
-    route: 'change',
+    route,
     turn,
-    reason: resumedFrom ? `Resumes work item ${resumedFrom.workItemId}, which stopped with its work saved.` : 'A new request.',
+    reason,
     thread,
     ...(resumedFrom ? { resumedFrom } : {}),
   };
@@ -235,7 +295,8 @@ export function intakeRecord(workItemId: string, decision: Decision, replied = f
     reason: decision.reason.slice(0, 1000),
     ...(thread ? { threadKey: thread.threadKey, branch: thread.branch } : {}),
   };
-  if (decision.route === 'change') {
+  if (decision.route !== 'refuse') {
+    if (decision.approves) record.approves = decision.approves.workItemId;
     if (decision.rework) {
       record.pullRequest = decision.rework.pullRequest.number;
       record.cause = decision.rework.cause;
@@ -281,7 +342,10 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
   const repo = { owner: workItem.repository.owner, name: workItem.repository.name };
   const pr = continuedPullRequest(workItem);
   const superseded = workItem.context !== undefined;
-  const resumedFrom = pr || superseded ? undefined : await resumable(repo, workItem, stageLog);
+  // A request for a plan always starts afresh; a request for work first looks for a proposal to approve, then for an attempt to resume.
+  const forPlan = workItem.source.type === TRIGGER_TYPES.githubIssuePlan;
+  const proposal = pr || superseded || forPlan ? undefined : await approvable(workItem, stageLog);
+  const resumedFrom = pr || superseded || forPlan || proposal ? undefined : await resumable(repo, workItem, stageLog);
   const attempt = nextAttempt(resumedFrom);
   const log = stageLog.with({ attempt });
   const prefix = artefactPrefix(workItem.id, attempt);
@@ -294,7 +358,9 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
     ? { route: 'refuse', turn: 'rework', status: 'not-eligible', reason: 'the rework context is superseded by inReplyTo (#163); the item names no pull request Intake reads' }
     : pr
       ? await pullRequestTurn(repo, workItem, pr)
-      : await requestTurn(repo, workItem, resumedFrom);
+      : proposal
+        ? await approveTurn(workItem, proposal)
+        : await requestTurn(repo, workItem, resumedFrom, forPlan ? 'propose' : 'change');
   const threadKey = decision.thread?.threadKey;
 
   if (decision.route === 'refuse') {
@@ -334,17 +400,24 @@ export const handler = staged('intake', intakeKey, intakeStage, async (input, st
   }
 
   const record = intakeRecord(workItem.id, decision);
-  await recordProgress(workItem.id, 'accepted', { route: 'change', threadKey, branch: decision.thread.branch });
+  // The route and the approval go on the row, where the invoker reads them for the builder's first message.
+  await recordProgress(workItem.id, 'accepted', {
+    route: decision.route,
+    threadKey,
+    branch: decision.thread.branch,
+    ...(decision.approves ? { approves: decision.approves.workItemId } : {}),
+  });
   await putJsonArtefact(prefix, 'intake/intake.json', record);
   if (decision.rework) await acknowledge(repo, workItem, log);
-  log.info('admitted', { route: 'change', turn: decision.turn, threadKey });
+  log.info('admitted', { route: decision.route, turn: decision.turn, threadKey, ...(decision.approves ? { approves: decision.approves.workItemId } : {}) });
   return {
-    route: 'change',
+    route: decision.route,
     attempt,
     artefactPrefix: prefix,
     threadKey: decision.thread.threadKey,
     branch: decision.thread.branch,
     ...(decision.resumedFrom ? { resumedFrom: decision.resumedFrom } : {}),
     ...(decision.rework ? { rework: decision.rework } : {}),
+    ...(decision.approves ? { approves: decision.approves } : {}),
   };
 });

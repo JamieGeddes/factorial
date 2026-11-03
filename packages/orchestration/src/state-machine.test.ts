@@ -91,13 +91,28 @@ test('every task tells its Lambda or invoker the state it runs in, for the progr
 test('a pushed change skips Test when the base branch has no test workflow, and its result says so', () => {
   const machine = definition().States;
   const choices = machine.HasChanges?.Choices ?? [];
-  // The skip is checked first: a pushed change with a reason never reaches Test.
-  assert.deepEqual(choices.map((c) => c.Next), ['SkipTest', 'Test']);
-  assert.match(choices[0]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.testSkipReason\)/);
+  // A proposal is checked first, then the skip: a pushed change with a reason never reaches Test.
+  assert.deepEqual(choices.map((c) => c.Next), ['ReportProposed', 'SkipTest', 'Test']);
+  assert.match(choices[1]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.testSkipReason\)/);
   assert.equal(machine.HasChanges?.Default, 'ReportNoChanges');
   const skip = machine.SkipTest;
   assert.equal(skip?.Type, 'Pass');
   assert.equal(skip?.Next, 'PrepareReview');
   assert.equal(skip?.Assign?.test, "{% { 'skipped': $collect.testSkipReason } %}");
   assert.equal(machine.Test?.Next, 'PrepareReview');
+});
+
+test('a propose turn starts at Prepare like a change, and a proposal ends at Report with its own status (#169)', () => {
+  const machine = definition().States;
+  const route = machine.Route?.Choices ?? [];
+  assert.deepEqual(route.map((c) => c.Next), ['Prepare']);
+  assert.match(route[0]?.Condition ?? '', /\$intake\.route = 'change' or \$intake\.route = 'propose'/);
+  assert.equal(machine.Route?.Default, 'NotAdmitted');
+  const proposed = machine.HasChanges?.Choices?.[0];
+  assert.equal(proposed?.Condition, '{% $collect.proposed = true %}');
+  const report = machine.ReportProposed;
+  assert.equal(report?.Resource, 'arn:aws:states:::lambda:invoke');
+  assert.equal((report?.Arguments?.Payload as Record<string, unknown> | undefined)?.status, 'proposed');
+  assert.equal(report?.Next, 'Proposed');
+  assert.equal(machine.Proposed?.Type, 'Succeed');
 });

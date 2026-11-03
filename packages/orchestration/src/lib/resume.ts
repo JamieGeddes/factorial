@@ -3,7 +3,7 @@
  * issue, say) stopped early but left its work on a branch, the next attempt
  * continues on that branch instead of starting again from the default branch.
  */
-import type { WorkItem } from '@factorial/workitem';
+import { TRIGGER_TYPES, isIssueSource, type WorkItem } from '@factorial/workitem';
 
 /** One earlier attempt at the same source: a turn on the newest thread the source opened. */
 export interface Attempt {
@@ -15,10 +15,15 @@ export interface Attempt {
   attempt?: number;
 }
 
-/** The ledger key that groups attempts at the same source in the same repository. */
+/**
+ * The ledger key that groups attempts at the same source in the same
+ * repository. An issue is one source whichever label it was given, so a
+ * proposed plan and the turn that approves it share a key (#169).
+ */
 export function sourceKey(workItem: WorkItem): string {
   const { owner, name } = workItem.repository;
-  return `${workItem.source.type}#${owner}/${name}#${workItem.source.id}`;
+  const type = isIssueSource(workItem.source) ? TRIGGER_TYPES.githubIssue : workItem.source.type;
+  return `${type}#${owner}/${name}#${workItem.source.id}`;
 }
 
 /**

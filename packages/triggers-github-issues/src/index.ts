@@ -123,6 +123,7 @@ export const handler = async (event: LambdaFunctionURLEvent): Promise<LambdaFunc
       ? decidePullRequestEvent(githubEvent!, payload, { appSlug: requireEnv('APP_SLUG'), allowedUserIds: allowedUserIds(), deliveryId })
       : decideIssueEvent(payload, {
           triggerLabel: process.env.TRIGGER_LABEL ?? 'factorial',
+          ...(process.env.PLAN_LABEL ? { planLabel: process.env.PLAN_LABEL } : {}),
           allowedUserIds: allowedUserIds(),
           deliveryId,
         });

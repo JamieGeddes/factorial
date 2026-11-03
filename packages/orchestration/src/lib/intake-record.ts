@@ -12,7 +12,7 @@ import schema from '../../../../contracts/intake/v1/intake.schema.json' with { t
 const Ajv2020 = Ajv2020Module.default;
 const addFormats = addFormatsModule.default;
 
-export const ROUTES = ['change', 'refuse'] as const;
+export const ROUTES = ['change', 'propose', 'refuse'] as const;
 export type Route = (typeof ROUTES)[number];
 
 export type RefusalStatus = 'not-eligible' | 'busy' | 'rework-limit' | 'covered-by-review';
@@ -21,13 +21,15 @@ export interface IntakeRecord {
   schemaVersion: 1;
   workItemId: string;
   route: Route;
-  turn: 'new' | 'resume' | 'rework';
+  turn: 'new' | 'resume' | 'rework' | 'approve';
   reason: string;
   threadKey?: string;
   branch?: string;
   pullRequest?: number;
   cause?: 'review' | 'checks-failed' | 'comment';
   previousWorkItemId?: string;
+  /** For an approve turn, the proposal it approves. */
+  approves?: string;
   resumedFrom?: string;
   refusal?: { status: RefusalStatus; replied: boolean };
 }

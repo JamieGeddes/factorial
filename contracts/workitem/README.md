@@ -48,7 +48,9 @@ The pull request source types, each with `source.id` the record's own id:
 | `github-pull-request-comment` | A comment in its conversation |
 | `github-workflow-run` | A workflow run that completed on its head |
 
-The GitHub adapter emits these since #163's third step. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`, which `v2` removed.
+The GitHub adapter emits these since #163's third step.
+
+The issue source types, each with `source.id` the issue number and no `inReplyTo`: `github-issue` (the issue was labelled for work) and `github-issue-plan` (it was labelled for a plan first, #169). The adapter records which label it was; Intake decides what it means, and treats both as one source. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`, which `v2` removed.
 
 
 ## One repository per WorkItem

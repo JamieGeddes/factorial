@@ -14,6 +14,7 @@ import type { RoleManifest } from './manifest.ts';
 import { reviewer } from './reviewer.ts';
 
 export type { FirstMessageOptions, ModelPurpose, RoleManifest, SensitivePath } from './manifest.ts';
+export { ROUTE_FILE, SESSION_ROUTES, parseRouteFile, routeFileContent, type SessionRoute } from './route.ts';
 
 /** Every role, each `factorial_<role>` on its own Runtime. The planner is the builder's plan subagent. */
 export const ROLE_NAMES = ['builder', 'reviewer'] as const;

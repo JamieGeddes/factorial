@@ -31,7 +31,10 @@ export const WORKITEM_DETAIL_TYPE = 'WorkItem' as const;
 
 /** Trigger types known to this version of Factorial. The schema accepts any kebab-case value. */
 export const TRIGGER_TYPES = {
+  /** An issue labelled for work. `source.id` is the issue number. */
   githubIssue: 'github-issue',
+  /** An issue labelled for a plan first (#169): the same issue as `github-issue`, asking for a plan to approve. `source.id` is the issue number. */
+  githubIssuePlan: 'github-issue-plan',
   /**
    * An event on a pull request Factorial opened: a review, a comment addressed to it, or failed checks. `source.id` is the pull request number.
    * Superseded by the four types below, which say what the event was and carry `inReplyTo` (#163).
@@ -46,6 +49,14 @@ export const TRIGGER_TYPES = {
   /** A workflow run that completed on a pull request's head. `source.id` is the run id. */
   githubWorkflowRun: 'github-workflow-run',
 } as const;
+
+/** The trigger types whose `source.id` is a GitHub issue's number: one issue, whichever label it was given. */
+export const ISSUE_TRIGGER_TYPES: ReadonlySet<string> = new Set([TRIGGER_TYPES.githubIssue, TRIGGER_TYPES.githubIssuePlan]);
+
+/** Whether a source is a GitHub issue, labelled for work or for a plan. */
+export function isIssueSource(source: { type: string }): boolean {
+  return ISSUE_TRIGGER_TYPES.has(source.type);
+}
 
 export interface WorkItemSource {
   /** Trigger type in kebab-case, e.g. `github-issue`. */
