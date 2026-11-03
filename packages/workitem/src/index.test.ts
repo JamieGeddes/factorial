@@ -258,9 +258,27 @@ describe('WorkItem inReplyTo', () => {
     assert.equal(item.inReplyTo, undefined);
   });
 
+  it('accepts an item that continues an issue (#169)', async () => {
+    const item = parseWorkItem(await loadExample('github-issue-comment.json'));
+    assert.deepEqual(item.inReplyTo, { kind: 'issue', number: 169 });
+    assert.equal(item.source.type, TRIGGER_TYPES.githubIssueComment);
+  });
+
+  it('applies the same rules to an issue as to a pull request', async () => {
+    const base = await loadExample('github-issue-comment.json');
+    for (const value of [0, 2.5, '169']) {
+      const item = clone(base) as { inReplyTo: Record<string, unknown> };
+      item.inReplyTo.number = value;
+      assert.equal(validateWorkItem(item).ok, false, String(value));
+    }
+    const extra = clone(base) as { inReplyTo: Record<string, unknown> };
+    extra.inReplyTo.comment = 4123456789;
+    assert.equal(validateWorkItem(extra).ok, false);
+  });
+
   it('rejects an unknown kind', async () => {
     const item = clone(await loadExample('github-pr-comment.json')) as { inReplyTo: Record<string, unknown> };
-    item.inReplyTo.kind = 'issue';
+    item.inReplyTo.kind = 'discussion';
     const result = validateWorkItem(item);
     assert.equal(result.ok, false);
     assert.ok(result.ok === false && result.errors.some((e) => e.startsWith('/inReplyTo/kind')));

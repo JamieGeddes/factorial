@@ -31,13 +31,14 @@ The single Stage 0 rule matches on `source` and `detail-type` and starts the sta
 | `createdAt` | When the adapter created the `WorkItem`. |
 | `group` | Optional. The set of items one trigger produced: `id` (UUID, shared by the set), `size` (at least 1) and `index` (1 to `size`). `size` lets a consumer tell when the set is complete. The validator also checks `index` ≤ `size`, which JSON Schema cannot express. |
 | `parentId` | Optional. The `id` of the `WorkItem` whose Plan stage emitted this one. |
-| `inReplyTo` | Optional. What the item continues, e.g. the pull request a review or comment was made on. Absent for a new request. See Continuity. |
+| `inReplyTo` | Optional. What the item continues, e.g. the pull request a review or comment was made on, or the issue a comment was made on. Absent for a new request. See Continuity. |
 
 ## Continuity
 
 `inReplyTo` says what an item continues, and nothing more. An adapter records the facts of the event: `source.type` says what happened (a review, an inline comment, a conversation comment, a failed workflow run), `source.id` and `source.url` point at it, `body` holds what was said and `requestedBy` who said it. The pipeline's Intake step resolves the thread from `inReplyTo`, fetches what the event did not carry and decides what the item means, so a new kind of turn needs no contract change.
 
-- **`kind: "pull-request"`** with the pull request's `number` in `repository`. The only kind today; new kinds add a `kind` const.
+- **`kind: "pull-request"`** with the pull request's `number` in `repository`.
+- **`kind: "issue"`** with the issue's `number` in `repository` (#169): a comment in an issue's conversation, such as `@<slug> plan this`, `@<slug> approve` or the answer to Factorial's questions. New kinds add a value to `kind`.
 
 The pull request source types, each with `source.id` the record's own id:
 
@@ -48,9 +49,15 @@ The pull request source types, each with `source.id` the record's own id:
 | `github-pull-request-comment` | A comment in its conversation |
 | `github-workflow-run` | A workflow run that completed on its head |
 
-The GitHub adapter emits these since #163's third step.
+The GitHub adapter emits these since #163's third step. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`, which `v2` removed.
 
-The issue source types, each with `source.id` the issue number and no `inReplyTo`: `github-issue` (the issue was labelled for work) and `github-issue-plan` (it was labelled for a plan first, #169). The adapter records which label it was; Intake decides what it means, and treats both as one source. Before it, it emitted `github-pull-request` (with `source.id` the pull request number) and a rework `context`, which `v2` removed.
+The issue source types, each with `source.id` the issue number and no `inReplyTo`: `github-issue` (the issue was labelled for work) and `github-issue-plan` (it was labelled for a plan first, #169). The adapter records which label it was; Intake decides what it means, and treats both as one source.
+
+The issue conversation's source type (#169), with `inReplyTo` the issue:
+
+| `source.type` | The event |
+|---|---|
+| `github-issue-comment` | A comment in the issue's conversation; `source.id` is the comment's id |
 
 
 ## One repository per WorkItem
@@ -92,6 +99,8 @@ Changing this schema is a deliberate, human-approved decision, never a side effe
 4. Update the examples and the tests in `packages/workitem` in the same PR.
 
 ## Change log
+
+- **2026-11: `inReplyTo` gains `kind: "issue"`, and the `github-issue-comment` source type.** Additive: existing items validate unchanged. The first `inReplyTo` kind after `pull-request`, as the design planned (`docs/design-extension-points.md` §3.2): it lets a requester talk to Factorial on an issue as they can on a pull request (#169's `@<slug> plan this`, `approve` and `revise`, and the answer to Clarify's questions). Shipped as #163 shipped `inReplyTo`: nothing emits the new kind until Intake reads it, and the adapter moves after that, in later PRs. Loosening a const makes in-flight executions on the previous validator reject the new value, so this needs a drain before promotion. The Outcome contract (`contracts/outcome/`) copies `inReplyTo` and still allows only `pull-request`; it gains `issue` with the consumers.
 
 - **2026-10: v2, removed `context`.** Breaking, so a new version: `v2/` beside `v1/`, `schemaVersion` 2. `inReplyTo` replaced `context` in #163: nothing has set it since the adapter moved to facts, and Intake refuses an item that carries it. `v2` is otherwise `v1` unchanged. Shipped in three steps so nothing is rejected in flight: the validator reads both versions; then the adapters emit `v2`; once the `v1` items have drained, the validator stops reading `v1`, Intake drops its refusal of `context` and `v1/` stays as the record. `v1` items with `context` remain readable, and refused, until the last step.
 

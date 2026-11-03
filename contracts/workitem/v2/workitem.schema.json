@@ -119,17 +119,17 @@
       "format": "uuid"
     },
     "inReplyTo": {
-      "description": "Optional. What this item continues: the record in the source system it was said on, e.g. the pull request a review or comment belongs to. The pipeline resolves the thread from it and decides what the item means; the adapter does not interpret it. Absent for a new request, such as an issue.",
+      "description": "Optional. What this item continues: the record in the source system it was said on, e.g. the pull request a review or comment belongs to, or the issue a comment was made on. The pipeline resolves the thread from it and decides what the item means; the adapter does not interpret it. Absent for a new request, such as a labelled issue.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "number"],
       "properties": {
         "kind": {
-          "description": "Discriminator for what is continued. Only pull-request exists today; new kinds add a new const here without changing anything else.",
-          "const": "pull-request"
+          "description": "Discriminator for what is continued: a pull request, or an issue (#169). New kinds add a value here without changing anything else.",
+          "enum": ["pull-request", "issue"]
         },
         "number": {
-          "description": "The pull request's number in `repository`.",
+          "description": "The pull request's or the issue's number in `repository`.",
           "type": "integer",
           "minimum": 1
         }
