@@ -46,16 +46,27 @@ describe('reportMessage', () => {
     assert.match(text, /Nothing to do\./);
   });
 
-  it('links the failed test run when the cause carries it', () => {
-    const text = reportMessage({
-      status: 'tests-failed',
-      error: { Error: 'TestsFailed', Cause: JSON.stringify({ runUrl: 'https://x/run/9' }) },
+  it('names the required verifier that did not pass, and how', () => {
+    const text = reportMessage({ status: 'tests-failed', error: { Error: 'VerifierFailed', Cause: JSON.stringify({ errorType: 'VerifierFailed', errorMessage: JSON.stringify({ name: 'checks', required: true, outcome: 'timed-out', sha: 'a'.repeat(40), durationSeconds: 1800 }) }) } });
+    assert.match(text, /did not pass the repository's checks \(verifier `checks` timed out\), so no pull request was opened/);
+  });
+
+  it('explains invalid verifier settings, listing the problems as inline code, and points at the saved work', () => {
+    const facts = reportFacts({
+      status: 'failed',
+      ctx,
+      saved: { pushed: true, itemCommitCount: 2 },
+      error: { Error: 'VerifyUnconfigured', Cause: JSON.stringify({ problems: ['/verifiers/0/kind must be equal to constant', 'a `tick`'] }) },
     });
-    assert.match(text, /\[run\]\(https:\/\/x\/run\/9\)/);
+    assert.deepEqual(facts.verifyProblems, ['`/verifiers/0/kind must be equal to constant`', '`a  tick `']);
+    const text = render(facts, repository);
+    assert.match(text, /^Factorial could not verify this change: `\.factorial\/verifiers\.json` on the base branch is not valid, so no pull request was opened\./);
+    assert.match(text, /Work in progress \(2 commits\) was saved/);
+    assert.match(text, /- `\/verifiers\/0\/kind must be equal to constant`/);
   });
 
   it('survives a non-JSON cause', () => {
-    const text = reportMessage({ status: 'tests-failed', error: { Error: 'TestsFailed', Cause: 'boom' } });
+    const text = reportMessage({ status: 'tests-failed', error: { Error: 'VerifierFailed', Cause: 'boom' } });
     assert.match(text, /did not pass/);
   });
 
@@ -221,8 +232,8 @@ describe('a rework item', () => {
   });
 
   it('says failing commits are on the pull request when its tests fail', () => {
-    const text = reportMessage({ status: 'tests-failed', ctx: reworkCtx, error: { Error: 'TestsFailed', Cause: JSON.stringify({ runUrl: 'https://x/run/9' }) } });
-    assert.match(text, /rework did not pass the repository's checks \(\[run\]\(https:\/\/x\/run\/9\)\)/);
+    const text = reportMessage({ status: 'tests-failed', ctx: reworkCtx, error: { Error: 'VerifierFailed', Cause: JSON.stringify({ errorType: 'VerifierFailed', errorMessage: JSON.stringify({ name: 'checks', required: true, outcome: 'timed-out', sha: 'a'.repeat(40), durationSeconds: 1800 }) }) } });
+    assert.match(text, /rework did not pass the repository's checks \(verifier `checks` timed out\)\./);
     assert.match(text, /pull request now includes them\. Do not merge/);
   });
 

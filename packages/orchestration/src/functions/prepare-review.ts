@@ -1,5 +1,5 @@
 /**
- * PrepareReview: after the tests pass, set up a fresh reviewer session. It
+ * PrepareReview: after the verifiers pass, set up a fresh reviewer session. It
  * seeds the work branch from a bundle (`lib/repo-seed.ts`), checks that its head is the tested commit, and
  * seeds it with the validated plan (read back from the artefact store, the only copy
  * no agent has touched), the builder's summary and the diff against the base
@@ -40,6 +40,7 @@ import {
 import { handOverWorkspace, mustRun } from '../lib/session.ts';
 import { assertCommitSha } from '../lib/shell.ts';
 import { recordProgress } from '../lib/table.ts';
+import type { VerifySummary } from '../lib/verify.ts';
 
 import { SENSITIVE_PATHS_SECTION, diffProvider, notesProvider, planProvider, requestProvider, sensitivePathsProvider, summaryProvider, reworkProvider } from '../lib/seed-providers.ts';
 import { sectionText, type SeedProvider } from '../lib/seed.ts';
@@ -48,8 +49,9 @@ import { seedCheckout, placeSeed } from './prepare.ts';
 
 export interface PrepareReviewInput extends ProgressInput {
   ctx: WorkContext;
-  /** `testSkipReason` is set when Test was skipped (no test workflow on the base branch). */
-  collect: { headSha: string; summary: string; testSkipReason?: string };
+  collect: { headSha: string; summary: string };
+  /** How Verify went: skipped when the target declares no verifiers. */
+  verify?: VerifySummary | null;
 }
 
 export interface PrepareReviewResult {
@@ -78,10 +80,10 @@ async function planArtefact(ctx: WorkContext, path: string): Promise<string> {
   return read.text;
 }
 
-// The state machine reaches PrepareReview only when the tests passed, so it ends the Test stage.
-/** Reaching review ends a Test that ran; a skipped Test never started, so the ledger records no Test stage for it. */
+// The state machine reaches PrepareReview only when every required verifier passed, so it ends the Verify stage.
+/** Reaching review ends a Verify that ran; a skipped Verify never started, so the ledger records no Verify stage for it. */
 export const prepareReviewStage: StagePolicy<PrepareReviewInput, PrepareReviewResult> = {
-  closes: (input) => (input.collect.testSkipReason ? [] : [{ stage: 'Test', outcome: 'succeeded' }]),
+  closes: (input) => (input.verify && 'skipped' in input.verify ? [] : [{ stage: 'Verify', outcome: 'succeeded' }]),
 };
 
 export const handler = staged('prepare-review', (input: PrepareReviewInput) => runKey(input.ctx), prepareReviewStage, async (input, log): Promise<PrepareReviewResult> => {

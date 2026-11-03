@@ -12,8 +12,9 @@
  * be fetched from, and a blob-less clone in the session would have nowhere to
  * fetch missing blobs from. Every target in view is well under 100 MB.
  *
- * Prepare, ContinueBuild and PrepareReview call `seedRepository`, and so will
- * the verifier sessions of #167.
+ * Prepare, ContinueBuild and PrepareReview call `seedRepository`; PrepareVerify
+ * calls `bundleForTask`, for a verifier task that sets the repository up
+ * itself (packages/agent-runtime/src/verifier/runner.ts).
  */
 import path from 'node:path';
 
@@ -22,7 +23,7 @@ import { NO_HOOKS, mustGit, runGit, withGitWorkspace, type GitWorkspace } from '
 import { repositoryToken } from './github.ts';
 import { mustRun, type CommandResult, type SessionTarget } from './session.ts';
 import { HARDENED_GIT_ENV, assertCommitSha, assertGitBranch, assertGitHubName, shellQuote } from './shell.ts';
-import { s3Transfer, type Transfer } from './transfer.ts';
+import { TASK_PRESIGNED_URL_SECONDS, s3Transfer, type Transfer } from './transfer.ts';
 
 /** Which branches the session gets and where it starts. */
 export interface RepoRefs {
@@ -250,4 +251,38 @@ export async function seedRepository(params: SeedRepositoryParams, deps: SeedRep
   } finally {
     await deps.transfer.remove(params.transferKey).catch(() => {});
   }
+}
+
+export interface TaskBundleParams {
+  repository: { owner: string; name: string };
+  transferKey: string;
+  /** The branch the task checks out, which must still be at `at`. */
+  branch: string;
+  at: string;
+  /** A rework's base branch, when it is not the default branch. */
+  baseBranch?: string;
+}
+
+/**
+ * For a verifier task (#167): fetch the work branch and the default branch,
+ * fail unless the work branch is still at `at`, bundle them, upload the
+ * bundle and presign it for the task. The task downloads and checks it out
+ * itself; CollectVerifier deletes the object once the task has ended, and
+ * the bucket's lifecycle rule removes any a failed delete leaves.
+ */
+export async function bundleForTask(
+  params: TaskBundleParams,
+  deps: Pick<SeedRepositoryDeps, 'token' | 'remoteUrl' | 'transfer'> = defaultSeedDeps,
+): Promise<{ bundleUrl: string; head: string; defaultBranch: string }> {
+  const refs = checkRefs({ branch: params.branch, mode: 'checkout', at: params.at, ...(params.baseBranch === undefined ? {} : { baseBranch: params.baseBranch }) });
+  const token = await deps.token(params.repository);
+  const remoteUrl = deps.remoteUrl(params.repository);
+  const bundled = await withGitWorkspace(async (workspace) => {
+    const bundlePath = path.join(workspace.dir, 'repo.bundle');
+    const result = await bundleRepository(workspace, { ...refs, remoteUrl, ...(token === undefined ? {} : { token }) }, bundlePath);
+    await deps.transfer.upload(params.transferKey, bundlePath);
+    return result;
+  });
+  const bundleUrl = await deps.transfer.presign(params.transferKey, TASK_PRESIGNED_URL_SECONDS);
+  return { bundleUrl, head: bundled.head, defaultBranch: bundled.defaultBranch };
 }

@@ -1,7 +1,8 @@
 /**
  * Open the pull request for human approval. Before opening it, confirm that
- * the branch still points at the commit that was tested, so the PR cannot
- * present untested code.
+ * every required verifier the base branch declares passed on exactly the
+ * commit the branch points at, so the PR cannot present unverified code. A
+ * target that declares no verifiers gets a pull request that says so.
  *
  * A rework item's branch already has a pull request. Instead of opening
  * another, the same checks run and the pull request is recorded as updated.
@@ -28,14 +29,16 @@ import { assertCommitSha } from '../lib/shell.ts';
 import type { ReworkPoint } from '../lib/rework-points.ts';
 import { pullRequestKey, recordProgress } from '../lib/table.ts';
 import { recordThreadPullRequest } from '../lib/thread.ts';
-import { testResultArtefact } from '../lib/test-result.ts';
+import { unverifiedHead, type VerifyPlan, type VerifySummary } from '../lib/verify.ts';
 
-import { pullRequestBody, reworkReplyFacts, safeLogin, type ReviewOutcome, type TestResult } from './pr-body.ts';
+import { pullRequestBody, reworkReplyFacts, safeLogin, type ReviewOutcome } from './pr-body.ts';
 
 interface OpenPrInput extends ProgressInput {
   ctx: WorkContext;
-  collect: { headSha: string; summary: string };
-  test: TestResult & { sha?: string };
+  /** `verify` is what the base branch declares, as Collect read it. */
+  collect: { headSha: string; summary: string; verify: VerifyPlan };
+  /** How Verify went: each verifier's result, or why nothing ran. */
+  verify: VerifySummary;
   /** The plan the builder followed; absent for runs started before the Plan stage. */
   plan?: PlanDigest | null;
   /** The Review stage's outcome: null when it failed outright, absent for runs started before the stage. */
@@ -101,13 +104,13 @@ async function endTurn(ctx: WorkContext, report: ReportFile, outcome: Parameters
 async function recordRework(input: OpenPrInput, rework: ReworkTurn, headSha: string, log: Logger): Promise<OpenPrResult> {
   const { ctx } = input;
   const pr = rework.pullRequest;
-  await recordProgress(ctx.workItem.id, 'pr-updated', { prUrl: pr.url, prNumber: pr.number, testRunUrl: input.test.runUrl, testSkipped: input.test.skipped });
+  await recordProgress(ctx.workItem.id, 'pr-updated', { prUrl: pr.url, prNumber: pr.number, ...verifyFields(input.verify) });
   try {
     await putJsonArtefact(ctx.artefactPrefix, 'pr/pr.json', { number: pr.number, url: pr.url, headSha, rework: true });
   } catch (error) {
     log.error('artefacts not stored', { error });
   }
-  const reply = reworkReplyFacts(ctx, rework, redactSecrets(input.collect.summary), input.test, headSha, { review: input.review, facts: input.prFacts });
+  const reply = reworkReplyFacts(ctx, rework, redactSecrets(input.collect.summary), input.verify, headSha, { review: input.review, facts: input.prFacts });
   await endTurn(
     ctx,
     {
@@ -122,9 +125,15 @@ async function recordRework(input: OpenPrInput, rework: ReworkTurn, headSha: str
   return { prNumber: pr.number, prUrl: pr.url };
 }
 
-/** The outcome's `testedSha`: the head, unless Test was skipped and nothing was tested. */
+/** The outcome's `testedSha`: the head, unless the target declares no verifiers and nothing was verified. */
 function testedOf(input: OpenPrInput, headSha: string): { testedSha?: string } {
-  return input.test.skipped ? {} : { testedSha: headSha };
+  return 'skipped' in input.verify ? {} : { testedSha: headSha };
+}
+
+/** The ledger row's record of how Verify went: the skip reason, or each verifier's outcome. */
+function verifyFields(verify: VerifySummary): { verifySkipped?: string; verifyOutcomes?: Record<string, string> } {
+  if ('skipped' in verify) return { verifySkipped: verify.skipped };
+  return { verifyOutcomes: Object.fromEntries(verify.verifiers.map((v) => [v.name, v.outcome])) };
 }
 
 /** A pull request opened or answered ends the work item; a failure goes on to ReportFailure, which ends it. */
@@ -132,18 +141,16 @@ const openPrStage: StagePolicy<OpenPrInput, OpenPrResult> = { ends: (_input, res
 
 export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ctx), openPrStage, async (input, log): Promise<OpenPrResult> => {
   const { ctx } = input;
-  await putJsonArtefact(ctx.artefactPrefix, 'test/result.json', testResultArtefact(input.test));
   const headSha = assertCommitSha(input.collect.headSha, 'head sha');
-  if (input.test.sha !== undefined && input.test.sha !== headSha) {
-    throw new UntestedHeadError(`tests ran on ${input.test.sha}, but the branch head is ${headSha}`);
-  }
+  const unverified = unverifiedHead(input.collect.verify, input.verify, headSha);
+  if (unverified) throw new UntestedHeadError(unverified);
 
   const repo = { owner: ctx.workItem.repository.owner, name: ctx.workItem.repository.name };
   const client = await repositoryClient(repo, { contents: 'read', pull_requests: 'write' });
 
   const remoteHead = await client.getBranchSha(repo, ctx.branch);
   if (remoteHead !== headSha) {
-    throw new UntestedHeadError(`branch ${ctx.branch} now points at ${remoteHead}, not the tested ${headSha}`);
+    throw new UntestedHeadError(`branch ${ctx.branch} now points at ${remoteHead}, not the verified ${headSha}`);
   }
 
   if (ctx.rework) return recordRework(input, ctx.rework, headSha, log);
@@ -151,7 +158,7 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
   const fullPlan = await storedPlan(ctx, log);
   const pr = await client.createPullRequest(repo, {
     title: ctx.workItem.title,
-    body: pullRequestBody(ctx, redactSecrets(input.collect.summary), input.test, headSha, {
+    body: pullRequestBody(ctx, redactSecrets(input.collect.summary), input.verify, headSha, {
       plan: input.plan,
       fullPlan,
       review: input.review,
@@ -164,8 +171,7 @@ export const handler = staged('open-pr', (input: OpenPrInput) => runKey(input.ct
   await recordProgress(ctx.workItem.id, 'pr-opened', {
     prUrl: pr.htmlUrl,
     prNumber: pr.number,
-    testRunUrl: input.test.runUrl,
-    testSkipped: input.test.skipped,
+    ...verifyFields(input.verify),
   });
   // The pull request is open, so a failure to record it must not turn the run
   // into a reported failure. The thread is how a later turn on the pull

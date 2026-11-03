@@ -6,6 +6,7 @@ import { isRepository, issueUrl, pullRequestUrl, type Repository } from './links
 import { buildRounds, currentStage, isStale, resultOf, statusPill, RESULT_SINCE, type Pill } from './status.ts';
 import { oneLine, text } from './sanitise.ts';
 import type { LedgerRow, ThreadRow } from './records.ts';
+import { isVerifyStage } from './stages.ts';
 
 export const FILTERS = ['all', 'running', 'waiting', 'finished', 'attention', 'refused'] as const;
 export type Filter = (typeof FILTERS)[number];
@@ -166,8 +167,8 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
   const prState = prNumber ? pullRequestState(thread, prNumber) : undefined;
   const pill = statusPill(row, thread, resultSince);
   const status = incomplete ? { ...pill, note: INCOMPLETE_NOTE } : pill;
-  const running = result === undefined && current?.stage !== 'Test';
-  const waiting = result === undefined && current?.stage === 'Test';
+  const running = result === undefined && !isVerifyStage(current?.stage);
+  const waiting = result === undefined && isVerifyStage(current?.stage);
   const cost = costOf(row);
   const mean = meanOf(row.reviewScores);
   const run = latestRun(row);

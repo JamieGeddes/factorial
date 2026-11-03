@@ -11,9 +11,10 @@
  */
 import type { WorkItemReworkCause } from '@factorial/workitem';
 
-import type { ReviewOutcome, TestResult } from '../functions/pr-body.ts';
+import type { ReviewOutcome } from '../functions/pr-body.ts';
 import type { PrFacts } from './pr-facts.ts';
 import type { ReworkPoint } from './rework-points.ts';
+import type { VerifySummary } from './verify.ts';
 
 export const REPORT_ARTEFACT = 'report.json';
 /** Far above any real report: the cap guards the reader, not the writer. */
@@ -28,8 +29,8 @@ export interface ReportFacts {
   rework: boolean;
   /** no-changes: what the agent said, as Collect read it. */
   agentSaid?: string;
-  /** tests-failed: the failed run. */
-  testRunUrl?: string;
+  /** tests-failed: the required verifier that did not pass, and how it went. */
+  failedVerifier?: { name: string; outcome: string };
   /** The work branch, once Prepare has named it. */
   branch?: string;
   /** The builder's session; for a step failure before Prepare, the work item id. */
@@ -42,6 +43,8 @@ export interface ReportFacts {
   buildRound?: number;
   /** failed: the error's name. Never its cause, which can hold command output. */
   errorName?: string;
+  /** failed with VerifyUnconfigured: what is wrong with the base branch's .factorial/verifiers.json, each a redacted code span. */
+  verifyProblems?: string[];
   /** failed: untested work pushed to the branch. */
   savedWork?: { branch: string; commits?: number };
 }
@@ -75,7 +78,8 @@ export interface ReworkReplyFacts {
   cause: WorkItemReworkCause;
   requestedBy: string;
   headSha: string;
-  test: TestResult;
+  /** How Verify went on the head. */
+  verify: VerifySummary;
   /** Who raised each point and where, numbered as in rework.md. */
   points: ReworkPoint[];
   /** The builder's summary.md, redacted. */
@@ -113,10 +117,12 @@ function reportFactsProblem(facts: unknown): string | undefined {
   if (!isObject(facts)) return 'facts is not an object';
   if (!['no-changes', 'tests-failed', 'failed', 'invalid-plan'].includes(facts.status as string)) return 'facts.status is not a report status';
   if (typeof facts.rework !== 'boolean') return 'facts.rework is not a boolean';
-  for (const key of ['agentSaid', 'testRunUrl', 'branch', 'sessionId', 'errorName'] as const) {
+  for (const key of ['agentSaid', 'branch', 'sessionId', 'errorName'] as const) {
     if (!optional(facts[key], isString)) return `facts.${key} is not a string`;
   }
   if (!optional(facts.planProblems, isStringArray)) return 'facts.planProblems is not a list of strings';
+  if (!optional(facts.verifyProblems, isStringArray)) return 'facts.verifyProblems is not a list of strings';
+  if (!optional(facts.failedVerifier, (v) => isObject(v) && isString(v.name) && isString(v.outcome))) return 'facts.failedVerifier is malformed';
   if (!optional(facts.incomplete, (v) => typeof v === 'boolean')) return 'facts.incomplete is not a boolean';
   if (!optional(facts.buildRound, isCount)) return 'facts.buildRound is not a count';
   if (!optional(facts.savedWork, (v) => isObject(v) && isString(v.branch) && optional(v.commits, isCount))) return 'facts.savedWork is malformed';
@@ -129,8 +135,13 @@ function replyProblem(reply: unknown): string | undefined {
   for (const key of ['requestedBy', 'headSha', 'summaryText'] as const) {
     if (!isString(reply[key])) return `reply.${key} is not a string`;
   }
-  if (!isObject(reply.test)) return 'reply.test is not an object';
-  if (reply.test.skipped !== undefined && !isString(reply.test.skipped)) return 'reply.test.skipped is not a string';
+  if (!isObject(reply.verify)) return 'reply.verify is not an object';
+  if (reply.verify.skipped === undefined) {
+    const verifiers = reply.verify.verifiers;
+    if (!Array.isArray(verifiers) || !verifiers.every((v) => isObject(v) && isString(v.name) && isString(v.outcome) && typeof v.required === 'boolean' && isCount(v.durationSeconds))) {
+      return 'reply.verify.verifiers is malformed';
+    }
+  } else if (!isString(reply.verify.skipped)) return 'reply.verify.skipped is not a string';
   if (!Array.isArray(reply.points) || !reply.points.every((p) => isObject(p) && isString(p.author))) return 'reply.points is malformed';
   const details = reply.runDetails;
   if (!isObject(details) || !isObject(details.source)) return 'reply.runDetails is malformed';

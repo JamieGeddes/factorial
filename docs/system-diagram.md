@@ -13,9 +13,7 @@ flowchart TB
         direction TB
         issue["Issue #N<br/>(this repository)"]
         webhooksignature["Webhook delivery<br/>(HMAC-signed)"]
-        testwf["test.yml run<br/>(dispatched on main,<br/>trusted definition)"]
         pr["Pull request<br/>(author: factorial[bot])<br/>awaiting human approval"]
-        oidc["GitHub OIDC token<br/>(sub: repo:ref:main)"]
         issue -->|"factorial label added<br/>(control)"| webhooksignature
     end
 
@@ -51,6 +49,7 @@ flowchart TB
         agentrole["factorial-agent-builder role<br/>(agent permissions boundary:<br/>no GitHub, no PutEvents;<br/>named Bedrock profiles only)"]
         bedrock["Amazon Bedrock<br/>EU inference profiles"]
         reviewerruntime["AgentCore Runtime:<br/>factorial_reviewer<br/>same image and host, review mode,<br/>Sonnet 5.5 on Bedrock"]
+        verifierrole["factorial-agent-verifier role<br/>(agent permissions boundary:<br/>the npm mirror only, no model)"]
         builderruntime --- agentrole
         builderruntime -->|"InvokeModel with<br/>the execution role<br/>(data)"| bedrock
         reviewerruntime -->|"InvokeModel with<br/>its execution role<br/>(data)"| bedrock
@@ -61,20 +60,23 @@ flowchart TB
     subgraph orchestration["Stack 30: factorial-orchestration"]
         direction TB
         ledger["DynamoDB:<br/>factorial-work-items<br/>(idempotency + progress)"]
-        sfn["Step Functions: factorial-work<br/>(live alias)<br/>Prepare → Build → Collect →<br/>HasChanges → Test → OpenPullRequest"]
+        sfn["Step Functions: factorial-work<br/>(live alias)<br/>Prepare → Build → Collect →<br/>HasChanges → Verify → Review →<br/>OpenPullRequest"]
         prepare["Lambda: factorial-prepare-seed<br/>(fetches and bundles the repo,<br/>seeds the session from the bundle,<br/>creates work branch)"]
-        transfer["S3: factorial-transfer<br/>(repo bundles, presigned 5 min,<br/>expire after a day)"]
+        transfer["S3: factorial-transfer<br/>(repo bundles, presigned 5 min<br/>or 15 for a verifier task,<br/>expire after a day)"]
         invoker["Fargate task: factorial-invoker<br/>(ecs:runTask.sync, egress only)<br/>runs each agent to completion,<br/>streams transcript to logs"]
+        verifiertask["Fargate task: factorial-verifier<br/>(ecs:runTask.sync, egress only)<br/>agent image, no model; checks out<br/>the bundle, runs the declared check<br/>as the agent user, exits with its status"]
         collect["Lambda: factorial-collect-clean-room<br/>(commits leftovers, exports git<br/>bundle from hostile session,<br/>pushes from its own clean room)"]
-        dispatch["Lambda: factorial-dispatch-tests<br/>(dispatches test.yml on main<br/>with task token + tested sha)"]
-        openpr["Lambda: factorial-open-pr<br/>(verifies head = tested sha,<br/>opens PR, emits the outcome)"]
+        prepareverify["Lambda: factorial-prepare-verify<br/>(bundles the pushed head<br/>for the verifier task)"]
+        collectverifier["Lambda: factorial-collect-verifier<br/>(judges each verifier from its<br/>task's exit status and log;<br/>a required failure stops Verify)"]
+        openpr["Lambda: factorial-open-pr<br/>(verifies head = verified sha,<br/>opens PR, emits the outcome)"]
         report["Lambda: factorial-report<br/>(ends a turn with no PR,<br/>emits the outcome)"]
         reporter["Lambda: factorial-report-github<br/>(one comment per outcome,<br/>the started notice)"]
-        callbackrole["factorial-test-callback role<br/>(OIDC, main only,<br/>SendTask* only)"]
         sfn --> prepare
         sfn -->|"RunTask"| invoker
+        sfn -->|"RunTask: one per verifier"| verifiertask
         sfn --> collect
-        sfn --> dispatch
+        sfn --> prepareverify
+        sfn --> collectverifier
         sfn --> openpr
         sfn --> report
     end
@@ -89,10 +91,11 @@ flowchart TB
     invoker -->|"InvokeAgentRuntime: review<br/>qualifier 'live'<br/>(control)"| reviewerruntime
     collect -->|"session command API:<br/>inspect, bundle<br/>(data)"| builderruntime
     collect -->|"push branch with<br/>App installation token<br/>(data)"| github
-    dispatch -->|"workflow_dispatch<br/>(control)"| testwf
-    testwf --> oidc
-    oidc -->|"sts:AssumeRoleWithWebIdentity<br/>(control)"| callbackrole
-    callbackrole -->|"SendTaskSuccess /<br/>SendTaskFailure<br/>(control)"| sfn
+    github -->|"fetch with read token,<br/>in the Lambda<br/>(data)"| prepareverify
+    prepareverify -->|"upload bundle<br/>(data)"| transfer
+    transfer -->|"presigned GET, 15 min<br/>(data)"| verifiertask
+    verifiertask --- verifierrole
+    verifiertask -->|"exit status, log<br/>(data)"| collectverifier
     openpr -->|"create PR<br/>(data)"| pr
     openpr -->|"PutEvents: Outcome<br/>(data)"| bus
     report -->|"PutEvents: Outcome<br/>(data)"| bus
@@ -102,7 +105,7 @@ flowchart TB
     prepare -.-> ledger
     invoker -.-> ledger
     collect -.-> ledger
-    dispatch -.-> ledger
+    prepareverify -.-> ledger
     openpr -.-> ledger
     report -.-> ledger
     reporter -.-> ledger
@@ -119,8 +122,9 @@ flowchart TB
 5. **Build** (Fargate, `runTask.sync`). Step Functions runs the invoker task and waits. The invoker reads the `WorkItem` from the ledger, invokes the `factorial_builder` Runtime on the `live` endpoint in that session, and streams the transcript to CloudWatch Logs. Factorial's host process runs pi there, with every tool the model calls running as the unprivileged `agent` user. The builder first plans with its read-only plan subagent and writes `plan.json` and `plan.md`, which the host checks against the plan contract; the agent edits the code inside the sandbox, which holds no credentials beyond the execution role's model access.
 6. **Collect** (Lambda, deterministic). Treats the session as hostile: validates and stores the builder's plan (no valid plan → **report** `invalid-plan`), commits anything uncommitted, exports the commits as a git bundle, and pushes the branch itself, from a pristine clone in its own `/tmp` with hooks disabled, using a fresh installation token that never enters a session.
 7. **HasChanges** (Choice). No pushed commits → **report** (`no-changes`) and finish.
-8. **Test** (Lambda + callback). Dispatches `test.yml` on the default branch with the task token and the tested commit sha. The checks job runs the untrusted commit with no credentials; the report job assumes `factorial-test-callback` through OIDC (main only) and sends task success or failure. Failure → **report** (`tests-failed`) and fail.
-9. **OpenPullRequest** (Lambda). Confirms the branch head is still the tested commit, opens the PR attributed to `factorial[bot]`, and emits the turn's `Outcome`; `factorial-report-github` comments on the issue (#165). A human reviews and approves.
+8. **Verify** (Map, one verifier at a time). For each check the base branch declares in `.factorial/verifiers.json`, PrepareVerify bundles the pushed head through the transfer bucket, a fresh `factorial-verifier` Fargate task from the agent image checks it out and runs the check as the unprivileged user with none of the task's credentials, and CollectVerifier judges it from the task's exit status and stores the end of its log. A required verifier that does not pass → **report** (`tests-failed`) and fail. No file → the pull request says it was not verified.
+9. **Review**. A fresh `factorial_reviewer` session judges the change; advisory.
+10. **OpenPullRequest** (Lambda). Confirms every required verifier passed on the branch head and that it is still that commit, opens the PR attributed to `factorial[bot]`, and emits the turn's `Outcome`; `factorial-report-github` comments on the issue (#165). A human reviews and approves.
 
 ## Versioning and promotion
 
@@ -128,7 +132,7 @@ Each part is independently versioned and referenced only through its `live` alia
 
 | Part | Versioned resource | `live` pointer |
 |---|---|---|
-| Agents | Runtime versions (builder, reviewer) | Endpoint named `live` |
+| Agents | Runtime versions (builder, reviewer, verifier) | Endpoint named `live` |
 | State machine | Step Functions versions | Alias named `live` |
 | Adapters and Lambdas | Lambda versions | Alias named `live` |
 

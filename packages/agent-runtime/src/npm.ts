@@ -86,7 +86,10 @@ export function writeNpmrc(home: string, content: string): string {
  * before any model call rather than at the first install. The variables
  * themselves are checked earlier, when the host starts (config.ts).
  */
-export async function configureNpm(config: Config, mint?: MintToken): Promise<string | undefined> {
+export async function configureNpm(
+  config: Pick<Config, 'npmMirror' | 'region' | 'agentHome' | 'maxDurationSeconds'>,
+  mint?: MintToken,
+): Promise<string | undefined> {
   const mirror = config.npmMirror;
   if (!mirror) return undefined;
   const token = await (mint ?? codeArtifactToken(config.region))(mirror, tokenSeconds(config));

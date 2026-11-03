@@ -16,9 +16,10 @@ interface State {
   Output?: Record<string, unknown> | string;
   Catch?: Array<{ ErrorEquals: string[]; Output?: Record<string, unknown> }>;
   Resource?: string;
+  TimeoutSeconds?: number | string;
   Arguments?: {
     Payload?: Record<string, unknown> | string;
-    Overrides?: { ContainerOverrides?: Array<{ Environment?: Array<{ Name: string; Value: string }> }> };
+    Overrides?: { ContainerOverrides?: Array<{ Name?: string; Environment?: Array<{ Name: string; Value: string }> }> };
   };
 }
 
@@ -36,7 +37,19 @@ function definition(): { StartAt: string; States: Record<string, State> } {
   return JSON.parse(body.join('\n').replace(/\$\{[A-Za-z]+\}/g, '0'));
 }
 
-const states = Object.entries(definition().States);
+interface Container extends State {
+  ItemProcessor?: { StartAt: string; States: Record<string, State> };
+}
+
+/** Every state, those inside a Map's processor too. */
+function allStates(from: Record<string, Container>): Array<[string, Container]> {
+  return Object.entries(from).flatMap(([name, state]) => [[name, state] as [string, Container], ...(state.ItemProcessor ? allStates(state.ItemProcessor.States) : [])]);
+}
+
+const machine = definition().States as Record<string, Container>;
+const states = allStates(machine);
+/** The states that run one verifier: they record their progress against the Verify stage they belong to. */
+const verifierStates = new Set(Object.keys(machine.Verify?.ItemProcessor?.States ?? {}));
 
 test('every Task and Pass state outputs the work item id', () => {
   for (const [name, state] of states.filter(([, s]) => s.Type === 'Task' || s.Type === 'Pass')) {
@@ -71,35 +84,85 @@ test('every task tells its Lambda or invoker the state it runs in, for the progr
   const tasks = states.filter(([, s]) => s.Type === 'Task');
   assert.ok(tasks.length > 0);
   for (const [name, state] of tasks) {
+    const stage = verifierStates.has(name) ? 'Verify' : '{% $states.context.State.Name %}';
     if (state.Resource?.startsWith('arn:aws:states:::lambda:invoke')) {
       const payload = state.Arguments?.Payload;
       if (typeof payload === 'string') {
         assert.match(payload, /'progress': \{ 'stage': \$states\.context\.State\.Name, 'round': \$buildRound \}/, `${name} payload lacks progress`);
       } else {
-        assert.deepEqual(payload?.progress, { stage: '{% $states.context.State.Name %}', round: '{% $buildRound %}' }, `${name} payload lacks progress`);
+        assert.deepEqual(payload?.progress, { stage, round: '{% $buildRound %}' }, `${name} payload lacks progress`);
       }
     } else {
-      const environment = state.Arguments?.Overrides?.ContainerOverrides?.[0]?.Environment ?? [];
-      assert.ok(
-        environment.some((variable) => variable.Name === 'STAGE' && variable.Value === '{% $states.context.State.Name %}'),
-        `${name} does not pass STAGE`,
-      );
+      const container = state.Arguments?.Overrides?.ContainerOverrides?.[0];
+      // The verifier task records no progress: PrepareVerify and CollectVerifier around it do.
+      if (container?.Name === 'verifier') continue;
+      const environment = container?.Environment ?? [];
+      assert.ok(environment.some((variable) => variable.Name === 'STAGE' && variable.Value === stage), `${name} does not pass STAGE`);
     }
   }
 });
 
-test('a pushed change skips Test when the base branch has no test workflow, and its result says so', () => {
-  const machine = definition().States;
+test('a pushed change is verified, skips Verify when its target declares no verifiers, and ends the turn when the settings are invalid', () => {
   const choices = machine.HasChanges?.Choices ?? [];
-  // A proposal is checked first, then the skip: a pushed change with a reason never reaches Test.
-  assert.deepEqual(choices.map((c) => c.Next), ['ReportProposed', 'SkipTest', 'Test']);
-  assert.match(choices[1]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.testSkipReason\)/);
+  // A proposal is checked first, then the invalid file and the skip: none of them reaches Verify.
+  assert.deepEqual(choices.map((c) => c.Next), ['ReportProposed', 'VerifyUnconfigured', 'SkipVerify', 'Verify']);
+  assert.match(choices[1]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.verify\.invalid\)/);
+  assert.match(choices[2]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.verify\.skipped\)/);
   assert.equal(machine.HasChanges?.Default, 'ReportNoChanges');
-  const skip = machine.SkipTest;
-  assert.equal(skip?.Type, 'Pass');
-  assert.equal(skip?.Next, 'PrepareReview');
-  assert.equal(skip?.Assign?.test, "{% { 'skipped': $collect.testSkipReason } %}");
-  assert.equal(machine.Test?.Next, 'PrepareReview');
+  assert.equal(machine.SkipVerify?.Type, 'Pass');
+  assert.equal(machine.SkipVerify?.Next, 'PrepareReview');
+  assert.equal(machine.SkipVerify?.Assign?.verify, "{% { 'skipped': $collect.verify.skipped } %}");
+  assert.equal(machine.VerifyUnconfigured?.Next, 'ReportFailure');
+  assert.match(String(machine.VerifyUnconfigured?.Assign?.failure), /'Error': 'VerifyUnconfigured'/);
+});
+
+test('Verify runs the declared verifiers one at a time, each through PrepareVerify, RunVerifier and CollectVerifier', () => {
+  const verify = machine.Verify as Container & { Items?: string; MaxConcurrency?: number };
+  assert.equal(verify.Type, 'Map');
+  assert.equal(verify.Items, '{% $collect.verify.verifiers %}');
+  assert.equal(verify.MaxConcurrency, 1);
+  assert.equal(verify.Next, 'PrepareReview');
+  assert.deepEqual(verify.Catch?.map((c) => [c.ErrorEquals, (c as { Next?: string }).Next]), [
+    [['VerifierFailed'], 'ReportTestsFailed'],
+    [['States.ALL'], 'ReportFailure'],
+  ]);
+  const inner = verify.ItemProcessor?.States ?? {};
+  assert.equal(verify.ItemProcessor?.StartAt, 'Verifier');
+  assert.deepEqual(
+    Object.entries(inner).map(([name, state]) => [name, state.Next ?? (state as { End?: boolean }).End]),
+    [['Verifier', 'PrepareVerify'], ['PrepareVerify', 'RunVerifier'], ['RunVerifier', 'CollectVerifier'], ['CollectVerifier', true]],
+  );
+  // A failed seed or run is still judged, as the verifier's error or timeout.
+  for (const name of ['PrepareVerify', 'RunVerifier']) assert.deepEqual(inner[name]?.Catch?.map((c) => (c as { Next?: string }).Next), ['CollectVerifier'], name);
+  // The verifier's own task, never the invoker: the check runs in a container
+  // with the verifier's role, given the bundle PrepareVerify made.
+  const run = inner.RunVerifier;
+  assert.equal(run?.Resource, 'arn:aws:states:::ecs:runTask.sync');
+  const container = run?.Arguments?.Overrides?.ContainerOverrides?.[0];
+  assert.equal(container?.Name, 'verifier');
+  assert.deepEqual(
+    (container?.Environment ?? []).map((v) => v.Name),
+    ['WORK_ITEM_ID', 'VERIFIER', 'VERIFY_SHA', 'VERIFY_BRANCH', 'DEFAULT_BRANCH', 'REPOSITORY', 'BUNDLE_URL'],
+  );
+  assert.equal(run?.TimeoutSeconds, '{% $verifier.timeoutSeconds + 600 %}');
+  // CollectVerifier is given the stopped task on a zero exit, and the error (whose cause holds it) otherwise.
+  const payload = inner.CollectVerifier?.Arguments?.Payload;
+  assert.ok(typeof payload === 'object');
+  assert.equal(payload.task, '{% $verifierTask %}');
+  assert.equal(payload.error, '{% $verifierError %}');
+  assert.equal(run?.Assign?.verifierTask, '{% $states.result %}');
+  assert.equal(inner.Verifier?.Assign?.verifierTask, null);
+  // Substituted away by definition(); the template names the verifier's task definition and security group.
+  const template = readFileSync(new URL('../../../templates/orchestration.yml', import.meta.url), 'utf8');
+  assert.ok(template.includes('"TaskDefinition": "${VerifierTaskDefinitionArn}"'));
+  assert.ok(template.includes('"SecurityGroups": ["${VerifierSecurityGroup}"]'));
+});
+
+test('the pull request and the review are given how Verify went', () => {
+  for (const name of ['PrepareReview', 'OpenPullRequest']) {
+    const payload = machine[name]?.Arguments?.Payload;
+    assert.ok(typeof payload === 'object' && payload.verify === '{% $verify %}', `${name} is not given $verify`);
+  }
 });
 
 test('a propose turn starts at Prepare like a change, and a proposal ends at Report with its own status (#169)', () => {

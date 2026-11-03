@@ -9,7 +9,8 @@ import type { PrFacts } from '../lib/pr-facts.ts';
 
 import type { ReworkContext } from '@factorial/workitem';
 
-import { agentText, closingReference, noMentions, pullRequestBody, reworkComment, reworkReplyFacts, safeLogin, type BodyExtras, type TestResult } from './pr-body.ts';
+import { agentText, closingReference, durationText, noMentions, pullRequestBody, reworkComment, reworkReplyFacts, safeLogin, type BodyExtras } from './pr-body.ts';
+import type { VerifySummary } from '../lib/verify.ts';
 
 const ctx: WorkContext = {
   workItem: {
@@ -33,7 +34,7 @@ const ctx: WorkContext = {
 };
 
 const HEAD = 'f'.repeat(40);
-const PASS: TestResult = { runUrl: 'https://x/run/1', outcome: 'success' };
+const PASS: VerifySummary = { verifiers: [{ name: 'checks', required: true, outcome: 'passed', sha: 'f'.repeat(40), durationSeconds: 252 }] };
 
 const SECTIONS = ['## Summary', '## Impact', '## Review focus', '## Automated review', '## Tests', '## Plan', '<summary>Run details</summary>'];
 
@@ -72,8 +73,8 @@ const summaryMd = (steps = '- one: done\n- two: done'): string =>
     steps,
   ].join('\n');
 
-const render = (summary: string, extras: BodyExtras = { fullPlan: plan, facts: noFacts, review: undefined }, test = PASS): string =>
-  pullRequestBody(ctx, summary, test, HEAD, extras);
+const render = (summary: string, extras: BodyExtras = { fullPlan: plan, facts: noFacts, review: undefined }, verify: VerifySummary = PASS): string =>
+  pullRequestBody(ctx, summary, verify, HEAD, extras);
 
 /** Section headings appear in the fixed order, once each. */
 function assertOrder(body: string): void {
@@ -115,17 +116,34 @@ describe('pullRequestBody: a plain code change', () => {
 
   it('shows the test result, and the plan only as planned', () => {
     const tests = section(body, '## Tests');
-    assert.match(tests, /- \*\*Result:\*\* \[success\]\(https:\/\/x\/run\/1\)/);
+    assert.match(tests, /- \*\*Verifiers:\*\* `checks` passed in 4m 12s$/m);
     assert.match(tests, /- \*\*Test files added or changed:\*\* none among the changed files/);
     assert.match(tests, /- \*\*Not tested:\*\* The live deploy\./);
     assert.match(tests, /Planned tests \(from the plan, not a report of what was added\)/);
   });
 
-  it('says plainly that a change was not verified when Test was skipped, keeping the reason as text', () => {
-    const skipped = render(summaryMd(), { fullPlan: plan, facts: noFacts, review: undefined }, { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main <b>`x`</b>' });
+  it('says plainly that a change was not verified when the target declares no verifiers, keeping the reason as text', () => {
+    const skipped = render(summaryMd(), { fullPlan: plan, facts: noFacts, review: undefined }, { skipped: 'JamieGeddes/other declares no verifiers <b>`x`</b>' });
     const tests = section(skipped, '## Tests');
-    assert.match(tests, /- \*\*Result:\*\* \*\*not verified\*\*: JamieGeddes\/other has no \.github\/workflows\/test\.yml on main  b  x  \/b , so no automated tests ran on this change\. Check it before merging\./);
+    assert.match(tests, /- \*\*Verifiers:\*\* \*\*not verified\*\*: JamieGeddes\/other declares no verifiers  b  x  \/b , so no automated checks ran on this change\. Check it before merging\./);
     assert.ok(!tests.includes('<b>'));
+  });
+
+  it('lists each verifier in order with its outcome and time, marking the optional ones', () => {
+    const verify: VerifySummary = {
+      verifiers: [
+        { name: 'checks', required: true, outcome: 'passed', sha: HEAD, durationSeconds: 61 },
+        { name: 'lint', required: false, outcome: 'timed-out', sha: HEAD, durationSeconds: 3725 },
+      ],
+    };
+    const tests = section(render(summaryMd(), undefined, verify), '## Tests');
+    assert.match(tests, /- \*\*Verifiers:\*\* `checks` passed in 1m 1s; `lint` timed-out in 1h 2m \(optional\)$/m);
+  });
+
+  it('writes durations as a person reads them', () => {
+    assert.equal(durationText(45), '45s');
+    assert.equal(durationText(252), '4m 12s');
+    assert.equal(durationText(3725), '1h 2m');
   });
 
   it('says every step was done and lists the steps once, untruncated, in details', () => {
@@ -145,10 +163,6 @@ describe('pullRequestBody: a plain code change', () => {
     assert.match(details, /\| Artefacts \| `7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c\/1\/` \|/);
     assert.doesNotMatch(details, /\| Tests \|/);
     assert.ok(details.trimEnd().endsWith('</details>'));
-  });
-
-  it('says tests did not run when there is no run', () => {
-    assert.match(render(summaryMd(), undefined, {}), /- \*\*Result:\*\* not run/);
   });
 
   it('keeps the part above the details short', () => {
@@ -362,7 +376,7 @@ describe('pullRequestBody: a summary with missing sections', () => {
   });
 
   it('says nothing was written for an empty summary, and says nothing needs attention when it is so', () => {
-    const body = pullRequestBody(ctx, '   ', {}, HEAD);
+    const body = pullRequestBody(ctx, '   ', PASS, HEAD);
     assertOrder(body);
     assert.match(body, /_The builder did not write a summary\._/);
     assert.match(section(body, '## Review focus'), /Nothing needs particular attention\./);
@@ -428,18 +442,24 @@ describe('reworkComment', () => {
     assert.match(text, /## Points raised\n\n1\. @alice on `src\/a\.ts:3`: Renamed it to `b\.ts`\.\n2\. @bob: Added `a\.test\.ts`\.\n3\. @carol: _Not reported by the builder\._/);
   });
 
-  it('opens with the new head and the passing run, and says the description is unchanged', () => {
+  it('opens with the new head and the passing verifiers, and says the description is unchanged', () => {
     const text = reworkComment(reworkReplyFacts(reworkCtx, rework, summary, PASS, HEAD, {}));
-    assert.match(text, /^Factorial has reworked this pull request after the review\. The branch is now at `ffffffffffff`, and the \[tests\]\(https:\/\/x\/run\/1\) passed on it\./);
+    assert.match(text, /^Factorial has reworked this pull request after the review\. The branch is now at `ffffffffffff`, and its required verifiers passed on it \(see Tests below\)\./);
     assert.match(text, /description above still describes the change as first opened/);
   });
 
-  it('says the rework was not verified when Test was skipped, never that tests passed', () => {
-    const facts = reworkReplyFacts(reworkCtx, rework, summary, { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main' }, HEAD, {});
-    assert.deepEqual(facts.test, { skipped: 'JamieGeddes/other has no .github/workflows/test.yml on main' });
+  it('says the rework was not verified when the target declares no verifiers, never that checks passed', () => {
+    const facts = reworkReplyFacts(reworkCtx, rework, summary, { skipped: 'JamieGeddes/other declares no verifiers' }, HEAD, {});
+    assert.deepEqual(facts.verify, { skipped: 'JamieGeddes/other declares no verifiers' });
     const text = reworkComment(facts);
-    assert.match(text, /The branch is now at `ffffffffffff`, and it was \*\*not verified\*\*: no automated tests ran \(see Tests below\)\./);
-    assert.ok(!/passed on it|its tests passed/.test(text));
+    assert.match(text, /The branch is now at `ffffffffffff`, and it was \*\*not verified\*\*: no automated checks ran \(see Tests below\)\./);
+    assert.ok(!/passed on it/.test(text));
+  });
+
+  it('says the required verifiers passed on the new head', () => {
+    const text = reworkComment(reworkReplyFacts(reworkCtx, rework, summary, PASS, HEAD, {}));
+    assert.match(text, /and its required verifiers passed on it \(see Tests below\)\./);
+    assert.match(text, /- \*\*Verifiers:\*\* `checks` passed in 4m 12s/);
   });
 
   it('carries the summary, review, tests and run details, but no closing reference or plan', () => {

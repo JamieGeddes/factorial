@@ -41,7 +41,7 @@ Delivery never fails the turn: a reporter writes nothing but its own delivery re
 | `artefactPrefix` | `<workItemId>/<attempt>/`; its `report.json` carries what delivery needs. |
 | `pullRequest` | The pull request opened or updated, or the one a rework turn continued. Required for `pr-opened` and `pr-updated`. |
 | `branch` | The thread's branch, once known. Required for `pr-opened` and `pr-updated`. |
-| `testedSha` | The commit the checks passed on, which is the branch head. On `pr-opened` and `pr-updated` only, and required there. |
+| `testedSha` | The commit every required verifier passed on, which is the branch head. On `pr-opened` and `pr-updated` only; absent there when the target declares no verifiers, so nothing was verified. |
 | `savedWork` | Untested work pushed to the branch after a failed build: its `branch` and, when known, the work item's `commits`. Never on `pr-opened`, `pr-updated` or `refused`. |
 
 `additionalProperties` is `false` at every level. Nothing in an outcome is content: no title, body, comment, summary or log.
@@ -54,3 +54,4 @@ At least once. A retried terminal state emits the same outcome again, and EventB
 
 - **2026-11: v1, additive.** Result `proposed` and route `propose`, for plans proposed for approval (#169).
 - **2026-10: v1.** One outcome per turn, from Intake, Report and OpenPullRequest, delivered by the GitHub reporter (#165).
+- **2026-11: v1, `testedSha` optional on `pr-opened` and `pr-updated`** (#167). A target with no `.factorial/verifiers.json` gets an unverified pull request (decided 2026-10-31), whose outcome has no tested commit; requiring one meant that outcome failed validation and was never emitted. No reader relied on it being present, so v1 is loosened in place.

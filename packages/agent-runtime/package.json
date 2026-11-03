@@ -14,11 +14,13 @@
     "@aws-sdk/credential-provider-node": "^3.972.86",
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.4.0",
+    "@factorial/artefacts": "^0.1.0",
     "@factorial/log": "^0.1.0",
     "@factorial/plan": "^0.1.0",
     "@factorial/review": "^0.1.0",
     "@factorial/roles": "^0.1.0",
     "@factorial/run": "^0.1.0",
+    "@factorial/verifiers": "^0.1.0",
     "@smithy/signature-v4": "^5.7.4"
   }
 }

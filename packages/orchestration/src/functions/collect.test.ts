@@ -16,7 +16,6 @@ import {
   leftoverMessage,
   parseInspection,
   roundStartFor,
-  testSkipReason,
   touchesWorkflows,
 } from './collect.ts';
 import type { CleanRoomPush } from '../lib/clean-room.ts';
@@ -154,38 +153,10 @@ describe('roundStartFor', () => {
   });
 });
 
-describe('testSkipReason', () => {
-  const repo = { owner: 'JamieGeddes', name: 'other' };
-  let saved: string | undefined;
-  beforeEach(() => {
-    saved = process.env.TEST_WORKFLOW_FILE;
-    process.env.TEST_WORKFLOW_FILE = 'test.yml';
-  });
-  afterEach(() => {
-    if (saved === undefined) delete process.env.TEST_WORKFLOW_FILE;
-    else process.env.TEST_WORKFLOW_FILE = saved;
-  });
-
-  it("is undefined when the base branch has the test workflow, so Test runs", async () => {
-    const asked: string[] = [];
-    assert.equal(await testSkipReason(repo, 'main', async (_r, path, ref) => (asked.push(`${ref}:${path}`), true)), undefined);
-    // The base branch, never the work branch: the builder cannot remove the gate.
-    assert.deepEqual(asked, ['main:.github/workflows/test.yml']);
-  });
-
-  it('names the missing workflow and the branch when there is none, so Test is skipped', async () => {
-    assert.equal(await testSkipReason(repo, 'main', async () => false), 'JamieGeddes/other has no .github/workflows/test.yml on main');
-  });
-
-  it('fails Collect rather than skipping when GitHub cannot say', async () => {
-    await assert.rejects(testSkipReason(repo, 'main', async () => { throw new Error('GitHub GET failed: 403'); }), /403/);
-  });
-});
-
 describe('collect pushes from its own clean room and stops the builder session', () => {
   const WORK_ITEM_ID = '7f3c1d2e-5b7a-4c7e-9a1b-2d3e4f5a6b7c';
   const pushed = 'c'.repeat(40);
-  const ENV = { BUILDER_RUNTIME_ARN: 'arn:builder', REVIEWER_RUNTIME_ARN: 'arn:reviewer', RUNTIME_QUALIFIER: 'live', ARTEFACT_BUCKET: 'bucket', TABLE_NAME: 'table', TEST_WORKFLOW_FILE: 'test.yml' };
+  const ENV = { BUILDER_RUNTIME_ARN: 'arn:builder', REVIEWER_RUNTIME_ARN: 'arn:reviewer', RUNTIME_QUALIFIER: 'live', ARTEFACT_BUCKET: 'bucket', TABLE_NAME: 'table' };
   const ctx = {
     workItem: { id: WORK_ITEM_ID, repository: { provider: 'github', owner: 'JamieGeddes', name: 'factorial' } },
     sessionId: WORK_ITEM_ID,
@@ -258,11 +229,11 @@ describe('collect pushes from its own clean room and stops the builder session',
     }
   });
 
-  it('does not look for the test workflow when salvaging: saved work goes to ContinueBuild or a report, never to Test', async () => {
+  it('does not read the verifiers when salvaging: saved work goes to ContinueBuild or a report, never to Verify', async () => {
     let asked = 0;
-    const result = await collect({ ...ctx, salvage: true }, log, { ...deps, fileExists: async () => (asked += 1) > 0 });
+    const result = await collect({ ...ctx, salvage: true }, log, { ...deps, readFile: async () => ((asked += 1), undefined) });
     assert.equal(asked, 0);
-    assert.equal(result.testSkipReason, undefined);
+    assert.equal(result.verify, undefined);
   });
 
   it('pushes the exported bundle from the Lambda, with no second session, and stops the builder session before returning', async () => {
@@ -317,18 +288,19 @@ describe('collect pushes from its own clean room and stops the builder session',
     assert.deepEqual(events, [`stop ${WORK_ITEM_ID}`]);
   });
 
-  it('sends a finished resumed attempt that added nothing to Test, at the branch head', async () => {
+  it('sends a finished resumed attempt that added nothing to Verify, at the branch head', async () => {
     commits = 0;
     const json = await readFile(new URL('../../../../contracts/plan/v1/examples/single-change.json', import.meta.url), 'utf8');
     const encoded = (text: string) => `ok:${Buffer.byteLength(text)}:${Buffer.from(text).toString('base64')}`;
     planReply = `${encoded('# Plan\n')}\n===FACTORIAL-PLAN===\n${encoded(json)}`;
     const resumedFrom = { workItemId: 'a', status: 'tests-failed', branch: 'factorial/x' };
-    let asked = 0;
-    const result = await collect({ ...ctx, resumedFrom }, log, { ...deps, fileExists: async () => (asked += 1) > 0 });
+    const asked: string[] = [];
+    const result = await collect({ ...ctx, resumedFrom }, log, { ...deps, readFile: async (_repo, path, ref) => (asked.push(`${ref}:${path}`), undefined) });
     assert.equal(result.pushed, true);
     assert.equal(result.headSha, base);
-    assert.equal(result.testSkipReason, undefined);
-    assert.equal(asked, 1);
+    // The base branch, never the work branch: the builder cannot remove the gate.
+    assert.deepEqual(asked, ['main:.factorial/verifiers.json']);
+    assert.deepEqual(result.verify, { skipped: 'JamieGeddes/factorial declares no verifiers (no .factorial/verifiers.json on main)' });
     assert.equal(pushes.length, 0);
   });
 
@@ -367,7 +339,7 @@ describe('collect pushes from its own clean room and stops the builder session',
     it('ends proposed with the plan, pushing nothing and asking GitHub nothing', async () => {
       commits = 0;
       await validPlan();
-      const result = await collect(propose, log, { ...deps, fileExists: async () => assert.fail('no GitHub read on the propose route') });
+      const result = await collect(propose, log, { ...deps, readFile: async () => assert.fail('no GitHub read on the propose route') });
       assert.equal(result.proposed, true);
       assert.equal(result.pushed, false);
       assert.ok(result.plan);

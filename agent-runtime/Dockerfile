@@ -1,5 +1,8 @@
 # Agent runtime for Factorial: an AgentCore Runtime container whose entrypoint
 # is Factorial's host process around pi (packages/agent-runtime).
+# The verifier task (#167) runs the same image on Fargate with the check
+# runner, verify.mjs, as its entrypoint, so a check runs in the toolchain the
+# builder had.
 # Built for linux/arm64 only (AgentCore Runtime requirement).
 #
 # The toolchain is Node 22, git, gh, jq and quiet (packages/agent-tools),
@@ -72,14 +75,15 @@ RUN usermod --login agent --home /home/agent --move-home node \
  && chown agent:agent /workspace
 
 # pi from its own lockfile, without peer dependencies (the host bundle carries
-# what it uses), then the bundled host, quiet and pi's file helper. Everything
+# what it uses), then the bundled host, quiet, pi's file helper and the
+# verifier tasks' check runner (verify.mjs, #167). Everything
 # under /opt/factorial is root-owned with no group or other write, so the agent
 # user can read and execute it but not change it.
 WORKDIR /opt/factorial/agent-runtime
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --omit=peer \
  && npm cache clean --force
-COPY dist/host.mjs dist/quiet.mjs dist/agent-ops.mjs ./
+COPY dist/host.mjs dist/quiet.mjs dist/agent-ops.mjs dist/verify.mjs ./
 # pi's grep starts `rg` as the root host; this wrapper, ahead of /usr/bin/rg on
 # PATH, runs it as the agent user instead (see the file).
 COPY rg-as-agent /usr/local/bin/rg

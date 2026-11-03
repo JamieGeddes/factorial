@@ -35,6 +35,28 @@ describe('redactSecrets', () => {
     assert.equal(redactSecrets('laughs_loudly'), 'laughs_loudly');
   });
 
+  it("masks the npm mirror's token and the role's AWS credentials, however a check prints them", () => {
+    const secret = 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY';
+    const session = 'IQoJb3JpZ2luX2VjEAEaCWV1LXdlc3QtMSJHMEUCIQ+/=';
+    const text = [
+      '//factorial-123456789012.d.codeartifact.eu-west-1.amazonaws.com/npm/factorial-npm/:_authToken=eyJ2ZXIiOjEsImlzdSI6MTcwMH0.abc-def_ghi',
+      'AWS_ACCESS_KEY_ID=ASIAIOSFODNN7EXAMPLE',
+      `AWS_SECRET_ACCESS_KEY=${secret}`,
+      `aws_session_token = ${session}`,
+      JSON.stringify({ AccessKeyId: 'AKIAIOSFODNN7EXAMPLE', SecretAccessKey: secret, Token: session }),
+    ].join('\n');
+    for (const out of [redactSecrets(text), redactSecrets(JSON.stringify({ text }))]) {
+      assert.doesNotMatch(out, /eyJ2ZXIi|IOSFODNN7EXAMPLE|wJalrXUtnFEMI|IQoJb3JpZ2lu/);
+      assert.match(out, /:_authToken=\*\*\*/);
+      assert.match(out, /ASIA\*{16}/);
+    }
+  });
+
+  it('leaves a short or ordinary value after a credential name alone', () => {
+    assert.equal(redactSecrets('AWS_SESSION_TOKEN is not set'), 'AWS_SESSION_TOKEN is not set');
+    assert.equal(redactSecrets('"Token": "abc"'), '"Token": "abc"');
+  });
+
   it('leaves ordinary text alone', () => {
     assert.equal(redactSecrets('git exited 128: not a repository'), 'git exited 128: not a repository');
   });

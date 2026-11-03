@@ -9,7 +9,7 @@ import { clip, fmtDur, fmtK, fmtTime, fmtUsd, shortId } from './format.ts';
 import { actionsRunUrl } from './links.ts';
 import type { LedgerRow, ThreadRow } from './records.ts';
 import { oneLine, text } from './sanitise.ts';
-import { graphStage, percentile, secondsBetween, stageDurations, stageKeyOf, stageLabel, STAGES, type GraphStage, type StageDuration } from './stages.ts';
+import { graphStage, isVerifyStage, percentile, secondsBetween, stageDurations, stageKeyOf, stageLabel, STAGES, type GraphStage, type StageDuration } from './stages.ts';
 import { currentStage, isStale, resultOf, RESULT_SINCE, type Pill } from './status.ts';
 import { summarise, type WorkItemSummary } from './work-items.ts';
 
@@ -262,7 +262,7 @@ function puckOf(f: Facts): Puck | undefined {
   const current = currentStage(f.row);
   const stage = graphStage(current?.stage) ?? (current ? undefined : 'Intake');
   if (!stage) return undefined;
-  const kind: PuckKind = stage === 'Test' ? 'waiting' : REWORK.test(f.summary.source.type) ? 'rework' : stage === 'Review' ? 'reviewer' : 'builder';
+  const kind: PuckKind = isVerifyStage(stage) ? 'waiting' : REWORK.test(f.summary.source.type) ? 'rework' : stage === 'Review' ? 'reviewer' : 'builder';
   const round = stage === 'Build' && current?.round && current.round > 1 ? current.round : undefined;
   return {
     id: f.summary.id,
@@ -276,7 +276,7 @@ function puckOf(f: Facts): Puck | undefined {
   };
 }
 
-function notices(facts: Facts[], threads: Map<string, ThreadRow>, now: number, testP90: number | undefined, alarms: { name: string; since?: string }[], resultSince: string, deploys: DeployNotice[] = []): Notice[] {
+function notices(facts: Facts[], threads: Map<string, ThreadRow>, now: number, verifyP90: number | undefined, alarms: { name: string; since?: string }[], resultSince: string, deploys: DeployNotice[] = []): Notice[] {
   const out: Notice[] = [];
   const recent = (ms: number | undefined) => ms !== undefined && now - ms <= HOUR && ms <= now + 60_000;
   for (const f of facts) {
@@ -297,11 +297,11 @@ function notices(facts: Facts[], threads: Map<string, ThreadRow>, now: number, t
       const at = Date.parse(f.row.live.at);
       out.push({ tone: 'crit', text: `${id}'s run has not reported for ${fmtDur((now - at) / 1000)}: its invoker has stopped`, at: f.row.live.at, href: runHref(f.summary) });
     }
-    if (f.result === undefined && testP90 !== undefined) {
-      const test = f.row.stages?.Test;
-      const started = test?.startedAt ? Date.parse(test.startedAt) : NaN;
-      if (test && !test.endedAt && Number.isFinite(started) && (now - started) / 1000 > testP90) {
-        out.push({ tone: 'warn', text: `Test stage waiting ${fmtDur((now - started) / 1000)} on GitHub Actions for ${id}, past its p90 of ${fmtDur(testP90)}`, at: new Date(started + testP90 * 1000).toISOString(), href: `/work-items/${f.summary.id}` });
+    if (f.result === undefined && verifyP90 !== undefined) {
+      const verify = f.row.stages?.Verify ?? f.row.stages?.Test;
+      const started = verify?.startedAt ? Date.parse(verify.startedAt) : NaN;
+      if (verify && !verify.endedAt && Number.isFinite(started) && (now - started) / 1000 > verifyP90) {
+        out.push({ tone: 'warn', text: `Verify stage running ${fmtDur((now - started) / 1000)} for ${id}, past its p90 of ${fmtDur(verifyP90)}`, at: new Date(started + verifyP90 * 1000).toISOString(), href: `/work-items/${f.summary.id}` });
       }
     }
   }
@@ -320,7 +320,8 @@ function sessions(facts: Facts[]): SessionRow[] {
     const s = f.summary;
     const base = { id: s.id, ref: s.source.ref, title: s.title };
     if (s.waiting) {
-      const test = f.row.stages?.Test;
+      // Verify since #167; Test, and its workflow run, on rows from before it.
+      const test = f.row.stages?.Verify ?? f.row.stages?.Test;
       const run = s.repository ? actionsRunUrl(s.repository, f.row.testRunUrl) : undefined;
       out.push({ ...base, kind: 'test', href: `/work-items/${s.id}`, ...(test?.startedAt ? { startedAt: test.startedAt } : {}), ...(run ? { testRun: run } : {}) });
       continue;
@@ -369,7 +370,7 @@ export function overview(input: OverviewInput): Overview {
     };
   });
   const durations = stageDurations(rows);
-  const testP90 = durations.find((d) => d.stage === 'Test')?.p90;
+  const verifyP90 = durations.find((d) => d.stage === 'Verify')?.p90;
   const days14 = lastDays(now, 14);
   const today = days14[13] as string;
   const runs = runsByDay(rows, today);
@@ -396,7 +397,7 @@ export function overview(input: OverviewInput): Overview {
     tiles: tiles(facts, rows, threads, now),
     stages: durations,
     pucks,
-    notices: notices(facts, threads, now, testP90, input.alarms ?? [], resultSince, input.deploys),
+    notices: notices(facts, threads, now, verifyP90, input.alarms ?? [], resultSince, input.deploys),
     sessions: sessions(facts),
     throughput: {
       labels: days14.map(dayLabel),
