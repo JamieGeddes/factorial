@@ -26,6 +26,11 @@
  * its generated directories (node_modules, .git, dist). These steer a
  * cooperative model; they are not an access control, and a determined
  * command can get round them (docs/security.md section 9 has the gates).
+ *
+ * One more refusal (#283): `git commit` after a check joined to it by `;`, a
+ * pipe or anything but `&&`, since the commit then happens whether or not the
+ * check passed (a pipe returns the last command's exit code). `CHECK_TOOLS`
+ * says what a check is; a command with no check before the commit is allowed.
  */
 import path from 'node:path';
 
@@ -34,6 +39,9 @@ import type { ToolNames } from './tools.ts';
 
 /** Separators between simple commands; a `|` means the next one reads a pipe. */
 const SEPARATOR = /(\|\||&&|\|&|\||;|&|\n|\$\(|[()`])/;
+
+/** Separators that let the next command run whatever the one before returned. */
+const UNCHAINED = new Set([';', '|', '|&', '||', '&', '\n']);
 
 /** Words that run the command after them. */
 const WRAPPERS = new Set(['sudo', 'env', 'time', 'command', 'nice', 'nohup', 'exec', 'xargs']);
@@ -45,6 +53,49 @@ const SCRIPT_FILE = /\.(?:py|[cm]?[jt]s|pl|rb)$/;
 /** A script that writes, renames or deletes a file. */
 const WRITES_FILE =
   /\bopen\s*\([^)]*,\s*(?:mode\s*=\s*)?['"][^'"]*[wax+]|\.write_(?:text|bytes)\s*\(|\b(?:write|append)File(?:Sync)?\b|\bcreateWriteStream\b|\b(?:rename|copyFile|rm|unlink)Sync\b|\bFile\.(?:write|open)\b|\bopen\s*\(?\s*(?:my\s+)?\$?\w+\s*,\s*['"]\+?>|\bshutil\.(?:copy|move)|\bos\.(?:rename|replace|remove)\b/;
+
+/**
+ * What counts as a check (#283), in one place: a simple command whose name, after wrappers, is one of these.
+ * `quiet` and a package manager's `test` or `run <script>` are handled in `isCheck`; this lists the tools.
+ */
+export const CHECK_TOOLS = {
+  /** Package managers: `test`, `t`, `run <script>` and `run-script <script>` are checks; `ci` and `install` are not. */
+  packageManagers: new Set(['npm', 'pnpm', 'yarn', 'bun']),
+  /** Runners of a tool by name: `npx <tool>` and `pnpm exec <tool>`, and the tool itself. */
+  tools: new Set(['tsc', 'eslint', 'vitest', 'jest', 'mocha', 'pytest', 'ruff', 'mypy', 'cfn-lint', 'make']),
+  /** Tools that are a check with these subcommands. */
+  subcommands: { cargo: new Set(['test', 'clippy', 'build']), go: new Set(['test', 'vet', 'build']) } as Record<string, Set<string>>,
+};
+
+const wordsAfterName = (words: string[]) => words.slice(1).filter((w) => !w.startsWith('-'));
+
+/** Whether a simple command's words (wrappers taken out) are a check. */
+function isCheck(words: string[]): boolean {
+  const name = words[0] ? path.basename(words[0]) : undefined;
+  if (name === undefined) return false;
+  if (name === 'quiet') return true;
+  const rest = wordsAfterName(words);
+  if (CHECK_TOOLS.packageManagers.has(name)) {
+    if (rest[0] === 'test' || rest[0] === 't') return true;
+    if (rest[0] === 'run' || rest[0] === 'run-script') return rest[1] !== undefined;
+    if (name === 'pnpm' && rest[0] === 'exec') return rest[1] !== undefined && CHECK_TOOLS.tools.has(path.basename(rest[1]));
+    return false;
+  }
+  if (name === 'npx') return rest[0] !== undefined && CHECK_TOOLS.tools.has(path.basename(rest[0]));
+  if (CHECK_TOOLS.tools.has(name)) return true;
+  if (name === 'node') return words.includes('--test');
+  if (/^python[\d.]*$/.test(name)) return words.some((w, j) => w === '-m' && words[j + 1] === 'pytest');
+  const subcommands = CHECK_TOOLS.subcommands[name];
+  return subcommands !== undefined && rest[0] !== undefined && subcommands.has(rest[0]);
+}
+
+/** Whether the words are `git commit`, with git's own options (`-C <dir>`, `-c <k=v>`) skipped. */
+function isGitCommit(words: string[]): boolean {
+  if (words[0] === undefined || path.basename(words[0]) !== 'git') return false;
+  let i = 1;
+  while (i < words.length && words[i]!.startsWith('-')) i += ['-C', '-c', '--git-dir', '--work-tree'].includes(words[i]!) ? 2 : 1;
+  return words[i] === 'commit';
+}
 
 const READERS = new Set(['cat', 'head', 'tail', 'nl', 'less', 'more', 'bat']);
 const SEARCHERS = new Set(['grep', 'egrep', 'fgrep', 'rg', 'ag', 'ack']);
@@ -145,6 +196,8 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
   const searchReason = (name: string) =>
     `Search the repository with the ${tools.grep} tool and find files by name with the ${tools.glob} tool, not by running ${name} in ${tools.shell}. When a question means reading more than two files, ask the explore subagent through ${tools.agent}.`;
 
+  const commitReason =
+    `A check joined to git commit by \`;\` or a pipe does not stop the commit when the check fails (a pipe returns the last command's exit code, and \`quiet\` already keeps output short, so \`| tail\` is not needed). Chain them with &&, as \`quiet '<check>' && git commit ...\`, and commit only work a passing check covered, with no file changed since.`;
   const readable = (target: string | undefined) => target !== undefined && isInside(repository, target) && !GENERATED.test(path.relative(repository, target));
   let read: string | undefined;
   // Whether any part prints something other than a repository read: a test run, a build, git, a read elsewhere.
@@ -152,9 +205,12 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
 
   // Quoted literal redirection targets are unquoted, so `> "src/a.ts"` is judged too.
   const { shell } = splitHeredocs(command);
-  const text = unquoted(shell.replace(/(>>?\s*)(['"])([^'"$`\\\s]+)\2/g, '$1$3'));
+  const text = unquoted(shell.replace(/(>>?\s*)(['"])([^'"$`\\\s]+)\2/g, '$1$3')).replace(/&&[ \t]*(?:\\[ \t]*)?\n\s*/g, '&& ');
   const parts = text.split(SEPARATOR);
   let cwd: string | undefined = repository;
+  // Whether a check has come before in this command, and whether something other than `&&` followed it.
+  let afterCheck = false;
+  let unchained = false;
 
   for (let i = 0; i < parts.length; i += 2) {
     const piece = parts[i]!;
@@ -187,6 +243,16 @@ function scan(repository: string, command: string, tools: ToolNames): { refusal?
         const resolved = resolveIn(cwd, target);
         if (resolved !== undefined && isInside(repository, resolved)) return { refusal: writeReason(`tee ${target}`) };
       }
+    }
+
+    // A commit after a check that was joined to it by anything but `&&` (`2>&1` is not a separator).
+    const separator = parts[i - 1];
+    const redirect = separator === '&' && (/[<>]\s*$/.test(parts[i - 2] ?? '') || piece.startsWith('>'));
+    if (afterCheck && separator !== undefined && UNCHAINED.has(separator) && !redirect) unchained = true;
+    if (unchained && isGitCommit(words)) return { refusal: commitReason };
+    if (isCheck(words)) {
+      afterCheck = true;
+      unchained = false;
     }
 
     // Reading or searching files, not a pipe: noted, and the scan goes on, since a later part may still be refused.

@@ -182,6 +182,66 @@ describe('builderShellRule (#250)', () => {
     assert.ok(rule('grep -rn x src; python3 /tmp/fix.py')?.startsWith("Run only the repository's own scripts"));
   });
 
+  it('refuses git commit after a check joined by ; or a pipe, and names the && rule (#283)', () => {
+    for (const command of [
+      "quiet 'npm run ci'; git commit -m x",
+      "quiet 'npm run ci' 2>&1 | tail -5; git add -A && git commit -m x",
+      'npm test; git commit -am x',
+      'npm run build; git commit -am x',
+      'pnpm run lint; git commit -am x',
+      'yarn test; git commit -am x',
+      'bun run-script check; git commit -am x',
+      'env CI=1 npm test; git commit -am x',
+      "time quiet 'x'; git commit -m x",
+      'npx tsc --noEmit; git commit -am x',
+      'pnpm exec eslint .; git commit -am x',
+      'tsc -b; git commit -am x',
+      'node --test a.test.ts; git commit -am x',
+      'python -m pytest; git commit -am x',
+      'cargo test; git commit -am x',
+      'go vet ./...; git commit -am x',
+      'make; git commit -am x',
+      "quiet 'x' || git commit -m x",
+      "quiet 'x'\ngit commit -m x",
+      "quiet 'x' && git add -A; git commit -m x",
+      "quiet 'x' 2>&1; git -C . commit -m y",
+    ]) {
+      const reason = rule(command);
+      assert.ok(reason?.includes('&&'), command);
+      assert.ok(reason?.includes('git commit'), command);
+    }
+  });
+
+  it('allows git commit chained with && after a check, or with no check before it (#283)', () => {
+    for (const command of [
+      "quiet 'npm run ci' && git commit -m x",
+      "quiet 'npm run ci' 2>&1 && git commit -m x",
+      "quiet 'npm test' && \\\ngit commit -m x",
+      "quiet 'npm test' &&\ngit commit -m x",
+      "quiet 'npm test' && \\\n  git add -A &&\n  git commit -m 'Add x\n\nMore; git commit y'",
+      'quiet "npm test" &&\ngit commit -m "Add x\n\nBody"',      "quiet 'x' && git add -A && git commit -m x",
+      'git status --short; git add -A && git commit -m x',
+      'git log | head; git commit -m x',
+      'npm ci; git commit -am x',
+      'npm install; git commit -am x',
+      'npm run; git commit -am x',
+      "git commit -m x && quiet 'npm run ci'",
+      "git commit -m x; quiet 'npm run ci'",
+      "quiet 'x'; git status",
+      'git commit -m "quiet x; y"',
+      'echo make; git commit -m x',
+    ]) {
+      assert.equal(rule(command), undefined, command);
+    }
+  });
+
+  it('denies a commit after an unchained check through the builder policy (#283)', () => {
+    const command = "quiet 'x'; git commit -m y";
+    const builder = HOST_ROLES.builder.session({ workspace: '/workspace', repository: REPO }, () => {}, PI_TOOLS).decide({ kind: 'shell', command });
+    assert.equal(builder.allow, false);
+    assert.ok(!builder.allow && builder.reason.includes('&&'));
+  });
+
   describe('steerShellOutput (#271)', () => {
     const NOTE = 'Use the read tool next time.';
     const steer = (output: string, readAlone = true) => steerShellOutput(output, { note: NOTE, alone: readAlone }, PI_TOOLS);

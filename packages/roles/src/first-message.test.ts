@@ -50,6 +50,13 @@ describe('buildPrompt', () => {
     assert.match(buildPrompt(workItem, 'b', 'main'), /Commit on this branch as you go/);
   });
 
+  it('commits after a step whose verification has passed, and says Collect saves uncommitted work', () => {
+    const prompt = buildPrompt(workItem, 'b', 'main');
+    assert.match(prompt, /after each step whose verification has passed/);
+    assert.match(prompt, /Collect saves uncommitted work/);
+    assert.doesNotMatch(prompt, /only committed work is kept/);
+  });
+
   it('points to the work item file and the notes file, since a later session starts from them', () => {
     const prompt = buildPrompt(workItem, 'b', 'main');
     assert.match(prompt, /That file already starts with this request/);
