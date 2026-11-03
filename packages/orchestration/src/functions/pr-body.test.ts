@@ -184,6 +184,35 @@ describe('pullRequestBody: a new dependency', () => {
     assert.match(section(body, '## Impact'), /- \*\*Dependencies:\*\* added `left-pad` `\^1\.3\.0` in `packages\/a\/package\.json`, licence per the lockfile: `MIT`; removed `old` \(dev\) from `package\.json`/);
   });
 
+  it('lists the files the verifiers run when they changed, after the verifiers line', () => {
+    const facts: PrFacts = {
+      ...noFacts,
+      sensitive: [
+        { path: 'package.json', reason: 'r', verifierInput: true },
+        { path: '.github/workflows/ci.yml', reason: 'r' },
+      ],
+    };
+    const tests = section(render(summaryMd(), { fullPlan: plan, facts }), '## Tests');
+    assert.match(tests, /- \*\*Verifiers:\*\* .*\n- \*\*Verifier inputs changed:\*\* `package\.json`\. The verifiers run the branch's own scripts/);
+    assert.ok(!tests.includes('ci.yml'));
+  });
+
+  it('adds no verifier inputs line when none changed or the facts are missing', () => {
+    const other: PrFacts = { ...noFacts, sensitive: [{ path: '.github/workflows/ci.yml', reason: 'r' }] };
+    for (const facts of [noFacts, other, null]) {
+      assert.ok(!section(render(summaryMd(), { fullPlan: plan, facts }), '## Tests').includes('Verifier inputs changed'));
+    }
+  });
+
+  it('shortens a long list of verifier inputs, keeps paths in code spans, and notes a cut list', () => {
+    const many: PrFacts = { ...noFacts, truncated: true, sensitive: Array.from({ length: 8 }, (_, i) => ({ path: `p${i}/package.json`, reason: 'r', verifierInput: true })) };
+    assert.match(section(render(summaryMd(), { fullPlan: plan, facts: many }), '## Tests'), /`p4\/package\.json` and 3 more \(the list may be incomplete\)\./);
+    const hostile: PrFacts = { ...noFacts, sensitive: [{ path: 'a`</details>\n## Pwned/package.json', reason: 'r', verifierInput: true }] };
+    const body = render(summaryMd(), { fullPlan: plan, facts: hostile });
+    assert.ok(!/^## Pwned/m.test(body));
+    assert.match(section(body, '## Tests'), /`a <\/details> ## Pwned\/package\.json`/);
+  });
+
   it('keeps values the branch controls inside their code spans', () => {
     const facts: PrFacts = {
       ...noFacts,
@@ -440,6 +469,12 @@ describe('reworkComment', () => {
   it('answers each point by number, mentioning who raised it and where', () => {
     const text = reworkComment(reworkReplyFacts(reworkCtx, rework, summary, PASS, HEAD, { review: undefined, facts: noFacts }));
     assert.match(text, /## Points raised\n\n1\. @alice on `src\/a\.ts:3`: Renamed it to `b\.ts`\.\n2\. @bob: Added `a\.test\.ts`\.\n3\. @carol: _Not reported by the builder\._/);
+  });
+
+  it('lists changed verifier inputs in the reply too', () => {
+    const facts: PrFacts = { ...noFacts, sensitive: [{ path: 'package-lock.json', reason: 'r', verifierInput: true }] };
+    const text = reworkComment(reworkReplyFacts(reworkCtx, rework, summary, PASS, HEAD, { review: undefined, facts }));
+    assert.match(text, /- \*\*Verifier inputs changed:\*\* `package-lock\.json`\./);
   });
 
   it('opens with the new head and the passing verifiers, and says the description is unchanged', () => {

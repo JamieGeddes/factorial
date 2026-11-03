@@ -31,7 +31,7 @@ A target repository can list changes that need particular care in `.factorial/se
 
 The `reason` completes "This change ...", for example `"changes the IAM roles the service deploys with"`. At most 20 rules.
 
-The orchestrator applies built-in rules first (`.github/workflows/`, `.github/actions/`, `CODEOWNERS` in its three locations, `.gitattributes` in any directory, and `.factorial/`), then the repository's, and the first match gives a file's reason. It reads the file from the base branch, never the branch under review. An invalid or oversized file (over 64 KiB) is ignored and recorded in `review/prepared.json` as `rulesProblems`; the built-in rules still apply. Every matched file gets a high-severity finding from the orchestrator in the review, whatever the reviewer concludes.
+The orchestrator applies built-in rules first (`.github/workflows/`, `.github/actions/`, `CODEOWNERS` in its three locations, `.gitattributes` in any directory, `.factorial/`, and the files the verifiers run from the branch: `package.json` in any directory, lockfiles, and test and CI configuration), then the repository's, and the first match gives a file's reason. It reads the file from the base branch, never the branch under review. An invalid or oversized file (over 64 KiB) is ignored and recorded in `review/prepared.json` as `rulesProblems`; the built-in rules still apply. Every matched file gets a high-severity finding from the orchestrator in the review, whatever the reviewer concludes.
 
 Factorial's own rules are in its `.factorial/sensitive-paths.json`.
 

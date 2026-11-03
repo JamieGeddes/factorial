@@ -305,10 +305,16 @@ export function testsSection(verify: VerifySummary, summary: BuilderSummary | un
     : summary.notTested.length
       ? summary.notTested.slice(0, SUMMARY_CAPS.notTestedBullets).map((n) => agentText(n, SUMMARY_CAPS.uncertainty)).join('; ')
       : 'Nothing reported.';
+  const verifierInputs = facts ? facts.sensitive.filter((c) => c.verifierInput).map((c) => c.path) : [];
   return [
     '## Tests',
     '',
     `- **Verifiers:** ${result}`,
+    ...(verifierInputs.length
+      ? [
+          `- **Verifier inputs changed:** ${listPaths(verifierInputs)}${facts?.truncated ? ' (the list may be incomplete)' : ''}. The verifiers run the branch's own scripts and test configuration, so their pass does not show these changes are sound; check them by hand.`,
+        ]
+      : []),
     `- **Test files added or changed:** ${files}`,
     `- **Not tested:** ${notTested}`,
     ...(plan?.plannedTests.length
