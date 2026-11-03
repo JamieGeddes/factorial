@@ -49,6 +49,7 @@ const pullRequest: SourceType['reference'] = (row, repo) => {
 /** Every source type the views know. A new trigger type adds one entry, with its URL builder in `lib/links.ts`. */
 export const SOURCES: Readonly<Record<string, SourceType>> = {
   'github-issue': { label: 'GitHub issue', reference: issue },
+  'github-issue-plan': { label: 'Plan for issue', reference: issue },
   'github-pull-request': { label: 'Pull request', reference: pullRequest },
   'github-pull-request-review': { label: 'PR review', reference: pullRequest },
   'github-pull-request-review-comment': { label: 'PR review comment', reference: pullRequest },
@@ -197,7 +198,7 @@ export function summarise(row: LedgerRow, thread?: ThreadRow, now = Date.now(), 
   };
 }
 
-const FINISHED = new Set(['pr-opened', 'pr-updated', 'no-changes']);
+const FINISHED = new Set(['pr-opened', 'pr-updated', 'proposed', 'no-changes']);
 const ATTENTION = new Set(['failed', 'tests-failed', 'invalid-plan']);
 
 export function matchesFilter(item: WorkItemSummary, filter: Filter): boolean {

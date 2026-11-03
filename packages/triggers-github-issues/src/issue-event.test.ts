@@ -92,6 +92,29 @@ describe('decideIssueEvent', () => {
     assert.deepEqual(decision, { kind: 'ignore', reason: 'ignored label "bug"' });
   });
 
+  it('records the plan label as the github-issue-plan source type, on the same issue', () => {
+    const decision = decideIssueEvent(payload({ label: { name: 'factorial-plan' } }), { triggerLabel: 'factorial', planLabel: 'factorial-plan', allowedUserIds, deliveryId, now });
+    assert.equal(decision.kind, 'work');
+    if (decision.kind !== 'work') return;
+    assert.equal(validateWorkItem(decision.workItem).ok, true);
+    assert.deepEqual(decision.workItem.source, { type: 'github-issue-plan', id: '7', url: 'https://github.com/JamieGeddes/factorial/issues/7' });
+  });
+
+  it('keeps the trigger label as github-issue when a plan label is configured', () => {
+    const decision = decideIssueEvent(payload(), { triggerLabel: 'factorial', planLabel: 'factorial-plan', allowedUserIds, deliveryId });
+    assert.equal(decision.kind === 'work' && decision.workItem.source.type, 'github-issue');
+  });
+
+  it('applies the same trust checks to the plan label', () => {
+    const decision = decideIssueEvent(payload({ label: { name: 'factorial-plan' }, sender: stranger }), { triggerLabel: 'factorial', planLabel: 'factorial-plan', allowedUserIds, deliveryId });
+    assert.deepEqual(decision, { kind: 'ignore', reason: 'label applied by untrusted user "stranger"' });
+  });
+
+  it('ignores the plan label when none is configured', () => {
+    const decision = decideIssueEvent(payload({ label: { name: 'factorial-plan' } }), { triggerLabel: 'factorial', allowedUserIds, deliveryId });
+    assert.deepEqual(decision, { kind: 'ignore', reason: 'ignored label "factorial-plan"' });
+  });
+
   it('respects a custom trigger label', () => {
     const decision = decideIssueEvent(payload({ label: { name: 'robot' } }), { triggerLabel: 'robot', allowedUserIds, deliveryId });
     assert.equal(decision.kind, 'work');

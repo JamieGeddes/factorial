@@ -5,7 +5,7 @@
  * outcome (`deliver.ts`) answers at the end.
  */
 import type { ProgressEvent } from '@factorial/progress';
-import { TRIGGER_TYPES } from '@factorial/workitem';
+import { TRIGGER_TYPES, isIssueSource } from '@factorial/workitem';
 
 import type { ReporterDeps } from './types.ts';
 
@@ -24,13 +24,16 @@ export function issueNumberFromUrl(url: string, repository: ProgressEvent['repos
   return Number.isSafeInteger(number) ? number : undefined;
 }
 
-/** The comment: no event content, no user text. */
-export function startedComment(workItemId: string): string {
+/** The comment: no event content, no user text. A plan label asks for a plan, so the notice says one will follow. */
+export function startedComment(workItemId: string, sourceType: string = TRIGGER_TYPES.githubIssue): string {
+  if (sourceType === TRIGGER_TYPES.githubIssuePlan) {
+    return `Factorial has started planning this issue (work item \`${workItemId}\`). It will post a plan here for approval and change nothing.`;
+  }
   return `Factorial has started work on this issue (work item \`${workItemId}\`). A pull request or a comment here will follow.`;
 }
 
 export async function noticeStarted(event: ProgressEvent, deps: ReporterDeps): Promise<void> {
-  if (event.source.type !== TRIGGER_TYPES.githubIssue) return;
+  if (!isIssueSource(event.source)) return;
   // Round 1 of the build is the only start without a `round`: it is recorded from round 2.
   if (event.stage !== 'Build' || event.transition !== 'started' || event.round !== undefined) return;
 
@@ -55,7 +58,7 @@ export async function noticeStarted(event: ProgressEvent, deps: ReporterDeps): P
       // The comment is what matters; a missing reaction is not worth a retry.
       deps.log.error('reaction failed', { error });
     }
-    await client.commentOnIssue(repo, number, startedComment(event.workItemId));
+    await client.commentOnIssue(repo, number, startedComment(event.workItemId, event.source.type));
   } catch (error) {
     // Let the retry send the notice, instead of leaving the issue without one.
     try {

@@ -104,10 +104,10 @@ test('every task tells its Lambda or invoker the state it runs in, for the progr
 
 test('a pushed change is verified, skips Verify when its target declares no verifiers, and ends the turn when the settings are invalid', () => {
   const choices = machine.HasChanges?.Choices ?? [];
-  // The invalid file and the skip are checked first: neither reaches Verify.
-  assert.deepEqual(choices.map((c) => c.Next), ['VerifyUnconfigured', 'SkipVerify', 'Verify']);
-  assert.match(choices[0]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.verify\.invalid\)/);
-  assert.match(choices[1]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.verify\.skipped\)/);
+  // A proposal is checked first, then the invalid file and the skip: none of them reaches Verify.
+  assert.deepEqual(choices.map((c) => c.Next), ['ReportProposed', 'VerifyUnconfigured', 'SkipVerify', 'Verify']);
+  assert.match(choices[1]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.verify\.invalid\)/);
+  assert.match(choices[2]?.Condition ?? '', /\$collect\.pushed = true and \$exists\(\$collect\.verify\.skipped\)/);
   assert.equal(machine.HasChanges?.Default, 'ReportNoChanges');
   assert.equal(machine.SkipVerify?.Type, 'Pass');
   assert.equal(machine.SkipVerify?.Next, 'PrepareReview');
@@ -163,4 +163,19 @@ test('the pull request and the review are given how Verify went', () => {
     const payload = machine[name]?.Arguments?.Payload;
     assert.ok(typeof payload === 'object' && payload.verify === '{% $verify %}', `${name} is not given $verify`);
   }
+});
+
+test('a propose turn starts at Prepare like a change, and a proposal ends at Report with its own status (#169)', () => {
+  const machine = definition().States;
+  const route = machine.Route?.Choices ?? [];
+  assert.deepEqual(route.map((c) => c.Next), ['Prepare']);
+  assert.match(route[0]?.Condition ?? '', /\$intake\.route = 'change' or \$intake\.route = 'propose'/);
+  assert.equal(machine.Route?.Default, 'NotAdmitted');
+  const proposed = machine.HasChanges?.Choices?.[0];
+  assert.equal(proposed?.Condition, '{% $collect.proposed = true %}');
+  const report = machine.ReportProposed;
+  assert.equal(report?.Resource, 'arn:aws:states:::lambda:invoke');
+  assert.equal((report?.Arguments?.Payload as Record<string, unknown> | undefined)?.status, 'proposed');
+  assert.equal(report?.Next, 'Proposed');
+  assert.equal(machine.Proposed?.Type, 'Succeed');
 });

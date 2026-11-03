@@ -18,6 +18,7 @@ import { BUILDER_SUBAGENTS, type SubagentSpec } from './agents.ts';
 import { builderShellRule, repositoryRead, steerShellOutput } from './builder-shell.ts';
 import { builderPrompt } from './prompts/builder.ts';
 import { reviewerPrompt } from './prompts/reviewer.ts';
+import { PROPOSAL_DONE, proposalDone, proposalRule, proposalStopCheck, seededRoute } from './proposal.ts';
 import { PLAN_GATE_CLOSED, planBrief, planCheck, readAgentFile, reportStopCheck, type PlanGate } from './report.ts';
 import { reviewStopCheck } from './review.ts';
 import { decideReviewerToolUse, decideToolUse, type Decision } from './tool-rules.ts';
@@ -70,15 +71,30 @@ const builder: HostRole = {
   subagents: BUILDER_SUBAGENTS,
   session({ workspace, repository }, note, tools) {
     const planGate: PlanGate = { closed: false };
+    // The route is read once, before the model runs (#169): a proposal plans, changes nothing and closes every tool once the plan is done.
+    const proposal = seededRoute(workspace) === 'propose';
+    const proposed = { done: false };
+    if (proposal) note('proposal run', {});
+    const checkPlan = planCheck(workspace, planGate, (errors, closed) => note(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors }));
     return {
       decide(call, agentType) {
         if (planGate.closed) return { allow: false, reason: PLAN_GATE_CLOSED };
+        if (proposed.done) return { allow: false, reason: PROPOSAL_DONE };
         const decision = decideToolUse(workspace, call, agentType);
-        if (!decision.allow || call.kind !== 'shell') return decision;
+        if (!decision.allow) return decision;
+        const proposalReason = proposal ? proposalRule({ workspace, repository }, call) : undefined;
+        if (proposalReason !== undefined) return { allow: false, reason: proposalReason };
+        if (call.kind !== 'shell') return decision;
         const reason = builderShellRule(repository, call.command, tools);
         return reason === undefined ? decision : { allow: false, reason };
       },
-      afterFileChange: planCheck(workspace, planGate, (errors, closed) => note(closed ? 'plan invalid again; tools closed' : 'plan invalid; builder sent back', { errors })),
+      afterFileChange(target) {
+        const reply = checkPlan(target);
+        if (reply !== undefined || !proposal || proposed.done || !proposalDone(workspace)) return reply;
+        proposed.done = true;
+        note('plan done; proposal tools closed', {});
+        return PROPOSAL_DONE;
+      },
       // A read or search of a repository file is steered by its output's size, not refused (#271).
       afterShellResult(command, output) {
         const read = repositoryRead(repository, command, tools);
@@ -87,9 +103,12 @@ const builder: HostRole = {
         note('shell read steered', { truncated: steered.truncated, alone: read.alone, lines: steered.lines, bytes: steered.bytes });
         return steered.text;
       },
-      beforeStop: reportStopCheck(workspace, planGate, (reason) => note('report incomplete; builder sent back', { reason })),
-      // A later round starts with the plan's steps in full.
+      beforeStop: proposal
+        ? proposalStopCheck(workspace, (reason) => note('plan not done; proposal sent back', { reason }))
+        : reportStopCheck(workspace, planGate, (reason) => note('report incomplete; builder sent back', { reason })),
+      // A later round, or an approved proposal, starts with the plan's steps in full.
       prompt(requestPrompt) {
+        if (proposal) return requestPrompt;
         const brief = planBrief(readAgentFile(path.join(workspace, 'plan.json')));
         return brief ? `${requestPrompt}\n\n${brief}` : requestPrompt;
       },

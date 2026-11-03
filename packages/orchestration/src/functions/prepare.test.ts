@@ -4,7 +4,10 @@ import { describe, it } from 'node:test';
 import type { ReworkContext, WorkItem } from '@factorial/workitem';
 import { type CheckJob, GitHubClient } from '@factorial/github-app';
 
+import { planSha256 } from '../lib/proposal-view.ts';
 import { MAX_REWORK_BYTES, buildReworkFile, detailsFor, initialNotes, logSection } from '../lib/seed-providers.ts';
+
+import { ApprovedPlanMismatchError, checkApprovedPlan } from './prepare.ts';
 
 const TOKEN = `ghs_${'t'.repeat(36)}`;
 const HEAD_SHA = 'b'.repeat(40);
@@ -263,5 +266,44 @@ describe('detailsFor', () => {
     const client = { getReviewComment: async () => assert.fail('fetched') };
     const comment = { ...base, source: { type: 'github-pull-request-comment', id: '9', url: 'https://github.com/JamieGeddes/factorial/pull/26#issuecomment-9' } };
     assert.deepEqual(await detailsFor(client, repo, comment), [{ author: 'alice', body: 'Rename this.' }]);
+  });
+});
+
+describe('checkApprovedPlan (#169)', () => {
+  const json = JSON.stringify({
+    schemaVersion: 1,
+    summary: 'Rename the helper.',
+    steps: [{ id: 'rename', description: 'Rename it.', files: ['src/a.ts'], verification: 'npm test passes' }],
+    tests: { run: ['npm test'], add: [] },
+    risks: [],
+    openQuestions: [],
+  });
+  const proposal = { workItemId: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d', artefactPrefix: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d/1/', planSha256: planSha256(json) };
+
+  it('seeds the plan.json the proposal showed, with a plan.md rendered from it rather than the planner\'s', () => {
+    const seeded = checkApprovedPlan(proposal, json);
+    assert.deepEqual(JSON.parse(seeded.json), JSON.parse(json));
+    assert.match(seeded.markdown, /^# Approved plan\n/);
+    assert.match(seeded.markdown, /Step 1: rename\n  Rename it\./);
+  });
+
+  it('gives the build the parsed plan re-serialised, not the stored text: a duplicate key reads as what was shown', () => {
+    const duplicated = json.replace('"summary":"Rename the helper."', '"summary":"Hidden.","summary":"Rename the helper."');
+    assert.notEqual(duplicated, json);
+    const seeded = checkApprovedPlan({ ...proposal, planSha256: planSha256(duplicated) }, duplicated);
+    assert.doesNotMatch(seeded.json, /Hidden/);
+  });
+
+  it('refuses a plan with a hidden character, even one written as an escape', () => {
+    const hidden = json.replace('Rename it.', 'Rename it.\\u202e');
+    assert.notEqual(hidden, json);
+    assert.throws(() => checkApprovedPlan({ ...proposal, planSha256: planSha256(hidden) }, hidden), ApprovedPlanMismatchError);
+  });
+
+  it('refuses any other plan.json, a missing file or an invalid plan', () => {
+    const changed = json.replace('Rename it.', 'Delete everything.');
+    assert.throws(() => checkApprovedPlan(proposal, changed), ApprovedPlanMismatchError);
+    assert.throws(() => checkApprovedPlan(proposal, undefined), ApprovedPlanMismatchError);
+    assert.throws(() => checkApprovedPlan({ ...proposal, planSha256: planSha256('{}') }, '{}'), ApprovedPlanMismatchError);
   });
 });

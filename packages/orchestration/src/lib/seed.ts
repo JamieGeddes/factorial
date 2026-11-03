@@ -86,8 +86,12 @@ export interface SeedContext {
   continuing?: { baseCommit: string; pushed: boolean; commitCount: number };
   /** The previous round's notes, from the artefact store. */
   previousNotes?: string;
-  /** The stored plan, validated. */
+  /** The stored plan, validated: the previous round's, or the proposal an approval approves. */
   plan?: { json: string; markdown: string };
+  /** The route the session runs on; `change` when absent (#169). */
+  route?: 'change' | 'propose';
+  /** For a turn that approves a proposed plan, the work item that proposed it. */
+  approves?: string;
   /** The builder's summary. */
   summary?: string;
   /** The reviewer's flagged paths. */

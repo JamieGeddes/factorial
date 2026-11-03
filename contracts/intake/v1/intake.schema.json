@@ -16,12 +16,12 @@
       "format": "uuid"
     },
     "route": {
-      "description": "Which path through the fixed stage graph the item takes: change (Prepare, Build, Collect, Test, Review, OpenPullRequest), or refuse (nothing runs; the refusal is recorded and, when a person asked, answered).",
-      "enum": ["change", "refuse"]
+      "description": "Which path through the fixed stage graph the item takes: change (Prepare, Build, Collect, Test, Review, OpenPullRequest), propose (Prepare, Build stopping once the plan is written, Collect, Report: a plan for the requester to approve, nothing pushed), or refuse (nothing runs; the refusal is recorded and, when a person asked, answered).",
+      "enum": ["change", "propose", "refuse"]
     },
     "turn": {
-      "description": "What kind of turn the item is: a new request, a resumed attempt at an earlier request, or a turn on a pull request Factorial opened.",
-      "enum": ["new", "resume", "rework"]
+      "description": "What kind of turn the item is: a new request, a resumed attempt at an earlier request, a turn on a pull request Factorial opened, or the approval of a proposed plan, which builds it on the proposal's thread.",
+      "enum": ["new", "resume", "rework", "approve"]
     },
     "reason": {
       "description": "Why this route, in a sentence.",
@@ -51,6 +51,11 @@
     },
     "previousWorkItemId": {
       "description": "For a turn on a pull request, the item that opened it, from the thread.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "approves": {
+      "description": "For an approve turn, the proposal it approves: the work item whose stored plan the build follows.",
       "type": "string",
       "format": "uuid"
     },

@@ -29,6 +29,24 @@ describe('the lists', () => {
     assert.deepEqual(prepare.data.reworkPoints, review.data.reworkPoints);
   });
 
+  it('seed a proposal with the route file for the host, and nothing else new (#169)', async () => {
+    const seed = await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem, { route: 'propose' }));
+    assert.deepEqual(Object.keys(snapshotOf(seed).files), ['workitem.json', 'notes.md', 'route.json']);
+    assert.deepEqual(JSON.parse(file(seed, 'route.json')), { route: 'propose' });
+    assert.match(file(seed, 'notes.md'), /# Proposal/);
+    const change = await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem, { route: 'change' }));
+    assert.ok(!change.files.some((f) => f.path === 'route.json'));
+  });
+
+  it('seed an approval with the proposal\'s plan and say in the notes that it was approved', async () => {
+    const plan = { json: '{"schemaVersion":1}', markdown: '# Plan\n' };
+    const seed = await assembleSeed(PREPARE_PROVIDERS, contextFor(newItem, { plan, approves: '3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d' }));
+    assert.deepEqual(Object.keys(snapshotOf(seed).files), ['workitem.json', 'notes.md', 'plan.json', 'plan.md']);
+    assert.equal(file(seed, 'plan.json'), plan.json);
+    assert.match(file(seed, 'notes.md'), /# Approved plan[\s\S]*proposed by work item 3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d/);
+    assert.ok(!seed.files.some((f) => f.path === 'route.json'));
+  });
+
   it('name every provider, so a refusal says whose it was', () => {
     for (const p of [...PREPARE_PROVIDERS, ...CONTINUE_PROVIDERS, ...REVIEW_PROVIDERS]) assert.notEqual(p.name, '');
   });

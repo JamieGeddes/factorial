@@ -4,13 +4,17 @@
  * reporter words the same facts its own way.
  */
 import { agentBlock } from '../../functions/pr-body.ts';
-import type { ReportFacts } from '../../lib/report-file.ts';
+import type { ProposalFacts, ReportFacts } from '../../lib/report-file.ts';
 
 /** How a failed verifier's outcome reads in a sentence. */
 const VERIFIER_OUTCOME_TEXT: Readonly<Record<string, string>> = { failed: 'failed', 'timed-out': 'timed out', error: 'could not be run' };
 
 /** How much of what the agent said a no-changes comment shows. */
 export const AGENT_SAID_CHARS = 4000;
+/** The most a proposal's comment may take: inside GitHub's 65,536-character comment. */
+export const PROPOSAL_COMMENT_CHARS = 60_000;
+/** Below this much room, plan.md is left out of the comment rather than shown as a stub. */
+const MIN_PLAN_NOTES_CHARS = 500;
 
 /** The work item's commits over every round, when known: a round's own count says nothing about what the branch holds. */
 function commitsNote(commits: number | undefined): string {
@@ -70,6 +74,30 @@ export function reportMessage(facts: ReportFacts, repository: { owner: string; n
       // in the execution history and the ledger, both inside the account.
       return `Factorial could not complete this work item (\`${facts.errorName ?? 'unknown error'}\`). Session \`${session}\`; see the Factorial execution log.${savedWorkNote(facts, repository)}`;
   }
+}
+
+/**
+ * The comment that proposes a plan (#169): what to do next, then the steps
+ * an approved build follows, whole (plan.json, rendered by Report), then
+ * the planner's plan.md, collapsed and capped, as context only. plan.md is
+ * agent text: headings and tags neutralised, no mentions.
+ */
+export function proposalMessage(proposal: ProposalFacts): string {
+  const head = [
+    `Factorial proposes the plan below and has changed nothing. Session \`${proposal.sessionId}\`.`,
+    '',
+    `To have it built, add the label that starts work to this issue: the change is built on \`${proposal.branch}\` from exactly these steps, without planning again. For a different plan, edit the issue and add the plan label again.`,
+    '',
+    '**The plan an approved build follows** (plan.json, shown literally):',
+    '',
+    proposal.steps,
+  ].join('\n');
+  const room = PROPOSAL_COMMENT_CHARS - head.length - 200;
+  const notes =
+    room >= MIN_PLAN_NOTES_CHARS && proposal.plan.trim()
+      ? ['', '<details>', "<summary>The planner's notes (plan.md): context only, not given to the build</summary>", '', agentBlock(proposal.plan.trim(), room), '', '</details>']
+      : ['', "_The planner's notes (plan.md) are too long to show here. They are context only and not given to the build, which follows the plan above._"];
+  return [head, ...notes].join('\n');
 }
 
 /** The comment on the issue once its pull request is open. */

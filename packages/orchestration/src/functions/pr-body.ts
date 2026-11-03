@@ -1,4 +1,4 @@
-import type { WorkItem } from '@factorial/workitem';
+import { isIssueSource, type WorkItem } from '@factorial/workitem';
 
 import type { Plan } from '@factorial/plan';
 
@@ -51,7 +51,7 @@ const GITHUB_ISSUE_URL = /^https:\/\/github\.com\/([A-Za-z0-9][A-Za-z0-9-]*)\/([
  * other trigger type; those close their own tickets elsewhere.
  */
 export function closingReference(workItem: WorkItem): string | undefined {
-  if (workItem.source.type !== 'github-issue') return undefined;
+  if (!isIssueSource(workItem.source)) return undefined;
   const match = GITHUB_ISSUE_URL.exec(workItem.source.url);
   if (!match) return undefined;
   const [, owner, repo, number] = match;

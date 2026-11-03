@@ -48,7 +48,7 @@ export interface OutcomeFacts {
   result: OutcomeResult;
   reason?: RefusalReason;
   threadKey?: string | undefined;
-  route?: 'change' | 'refuse' | undefined;
+  route?: 'change' | 'propose' | 'refuse' | undefined;
   pullRequest?: { number: number; url: string } | undefined;
   branch?: string | undefined;
   testedSha?: string | undefined;

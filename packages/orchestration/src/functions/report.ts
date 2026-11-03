@@ -1,11 +1,11 @@
 /**
  * Report: end a turn that opens or updates no pull request, whether because
- * the agent made no changes, a required verifier did not pass, the plan was
- * invalid, or a step errored. It records the status on the ledger, writes `report.json` with
+ * a plan was proposed for approval (#169), the agent made no changes, a
+ * required verifier did not pass, the plan was invalid, or a step errored. It records the status on the ledger, writes `report.json` with
  * what delivery needs and emits the outcome (#165); the reporter for the
  * item's source type tells the requester. Report itself speaks to no one.
  */
-import { artefactPrefix, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
+import { artefactPrefix, getTextArtefact, putJsonArtefact, redactSecrets } from '@factorial/artefacts';
 import { assertWorkItem, type WorkItem } from '@factorial/workitem';
 
 import type { WorkContext } from '../lib/context.ts';
@@ -13,13 +13,19 @@ import { builderIncomplete } from '../lib/incomplete.ts';
 import { runKey, unvalidatedId, type Logger, type RunKey } from '../lib/log.ts';
 import { emitOutcome, type OutcomeFacts } from '../lib/outcome.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
-import { REPORT_ARTEFACT, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
+import { REPORT_ARTEFACT, type ProposalFacts, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
+import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
+import { PROPOSED_STEPS_CHARS, ProposalHiddenTextError, ProposalTooLargeError, hasHiddenCharacters, planSha256, proposedSteps } from '../lib/proposal-view.ts';
+import { parsePlanJson } from '@factorial/plan';
 import { attemptRecord, recordProgress, type AttemptRecord } from '../lib/table.ts';
 import { continuedPullRequest } from '../lib/turn.ts';
 import { failedVerifierOf, verifyProblemsOf } from '../lib/verify.ts';
 
+/** `proposed` ends a propose turn with its plan; the rest end a turn that failed or found nothing to do. */
+export type ReportInputStatus = ReportStatus | 'proposed';
+
 export interface ReportInput extends ProgressInput {
-  status: ReportStatus;
+  status: ReportInputStatus;
   /** Present once Prepare has run. */
   ctx?: WorkContext;
   /** The raw WorkItem, for failures before Prepare completed. */
@@ -100,7 +106,7 @@ function savedWork(input: Pick<ReportInput, 'ctx' | 'saved'>): { branch: string;
 }
 
 /** What the requester is told, as facts: the reporter words them. Nothing from an error's cause beyond what is shown here. */
-export function reportFacts(input: ReportInput, workItemId?: string): ReportFacts {
+export function reportFacts(input: ReportInput & { status: ReportStatus }, workItemId?: string): ReportFacts {
   const rework = isRework(input);
   const branch = input.ctx?.branch;
   const sessionId = input.ctx?.sessionId;
@@ -135,8 +141,35 @@ export function reportFacts(input: ReportInput, workItemId?: string): ReportFact
   }
 }
 
-/** `report.json`: the outcome, a short reason, the redacted cause for the reviewer, and what delivery needs. */
-export function reportArtefact(input: ReportInput, workItemId?: string): ReportFile {
+/** A proposal's plan as Collect stored it: plan.json, which the build follows, and plan.md. */
+export interface ProposedPlan {
+  json: string;
+  markdown: string;
+}
+
+/**
+ * The proposal's facts: plan.json's steps rendered whole, the hash an
+ * approval is bound to, plan.md as context, and where the approval will
+ * build. A plan whose steps do not fit in a comment is not proposed
+ * (ProposalTooLarge): an approver must be able to read all of what is built.
+ */
+export function proposalFacts(input: Pick<ReportInput, 'ctx'>, plan: ProposedPlan): ProposalFacts {
+  if (!input.ctx) throw new Error('a proposal is reported only after Prepare');
+  const parsed = parsePlanJson(plan.json);
+  if (!parsed.ok) throw new Error(`the proposed plan.json is not a valid plan: ${parsed.errors.slice(0, 3).join('; ')}`);
+  if (hasHiddenCharacters(parsed.value)) throw new ProposalHiddenTextError();
+  const steps = proposedSteps(parsed.value);
+  if (steps.length > PROPOSED_STEPS_CHARS) throw new ProposalTooLargeError(steps.length);
+  return { steps, planSha256: planSha256(plan.json), plan: plan.markdown, branch: input.ctx.branch, sessionId: input.ctx.sessionId };
+}
+
+/** `report.json`: the outcome, a short reason, the redacted cause for the reviewer, and what delivery needs. `plan` is the proposal's stored plan, for `proposed`. */
+export function reportArtefact(input: ReportInput, workItemId?: string, plan?: ProposedPlan): ReportFile {
+  if (input.status === 'proposed') {
+    if (plan === undefined) throw new Error('a proposal is reported with its plan');
+    return { outcome: 'proposed', reason: 'The builder proposed a plan for approval and changed nothing.', delivery: { kind: 'proposal', proposal: proposalFacts(input, plan) } };
+  }
+  const status = input.status;
   const reasons = {
     'no-changes': 'The agent made no changes.',
     'tests-failed': "The change did not pass the repository's checks.",
@@ -148,11 +181,11 @@ export function reportArtefact(input: ReportInput, workItemId?: string): ReportF
     'invalid-plan': 'The builder did not produce a valid plan.',
   };
   return {
-    outcome: input.status,
-    reason: reasons[input.status],
+    outcome: status,
+    reason: reasons[status],
     ...(input.error ? { error: { Error: input.error.Error, Cause: input.error.Cause?.slice(0, 4000) } } : {}),
     ...(input.saved?.pushed ? { savedWork: true } : {}),
-    delivery: { kind: 'report', facts: reportFacts(input, workItemId) },
+    delivery: { kind: 'report', facts: reportFacts({ ...input, status }, workItemId) },
   };
 }
 
@@ -179,11 +212,23 @@ export function outcomeFacts(input: ReportInput, workItem: WorkItem, record: Att
     artefactPrefix: ctx?.artefactPrefix ?? record?.artefactPrefix ?? artefactPrefix(workItem.id, attempt),
     result: input.status,
     threadKey: ctx?.threadKey ?? record?.threadKey,
-    route: ctx ? 'change' : record?.route === 'change' ? 'change' : undefined,
+    route: ctx ? (ctx.route ?? 'change') : record?.route === 'change' || record?.route === 'propose' ? record.route : undefined,
     pullRequest: pr,
     branch: ctx?.branch ?? record?.branch,
     savedWork: saved,
   };
+}
+
+/** The proposed plan, which Collect stored before it ended the turn `proposed`, read back as stored: its hash binds the approval. */
+async function proposedPlan(input: ReportInput): Promise<ProposedPlan> {
+  if (!input.ctx) throw new Error('a proposal is reported only after Prepare');
+  const prefix = input.ctx.artefactPrefix;
+  const [json, markdown] = await Promise.all([
+    getTextArtefact(prefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES),
+    getTextArtefact(prefix, 'plan/plan.md', MAX_PLAN_ARTEFACT_BYTES),
+  ]);
+  if (json === undefined || markdown === undefined || json.truncated) throw new Error(`the proposed plan is not whole under ${prefix}plan/`);
+  return { json: json.text, markdown: markdown.text };
 }
 
 /** The run key from the context, or from the raw WorkItem when Prepare did not finish. */
@@ -207,11 +252,15 @@ export const handler = staged('report', reportKey, reportStage, async (input: Re
   const error = input.error ? { Error: input.error.Error, Cause: redactSecrets(input.error.Cause ?? '').slice(0, 4000) } : undefined;
   log.info('reporting', { status: input.status, error });
   if (!workItem) return;
-  await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true });
-  const facts = outcomeFacts(input, workItem, await recordFor(input, workItem, log));
+  // A proposal's plan is read and checked before the turn is recorded proposed: one that cannot be shown whole fails the turn instead.
+  const plan = input.status === 'proposed' ? await proposedPlan(input) : undefined;
   const redacted = { ...input, ...(error ? { error } : {}) };
+  const report = plan ? reportArtefact(redacted, workItem.id, plan) : undefined;
+  const bound = report?.delivery?.kind === 'proposal' ? { planSha256: report.delivery.proposal.planSha256 } : {};
+  await recordProgress(workItem.id, input.status, { error, savedWork: input.saved?.pushed === true, ...bound });
+  const facts = outcomeFacts(input, workItem, await recordFor(input, workItem, log));
   // The reporter reads report.json, so it is written before the outcome that points at it.
-  await putJsonArtefact(facts.artefactPrefix, REPORT_ARTEFACT, reportArtefact(redacted, workItem.id));
+  await putJsonArtefact(facts.artefactPrefix, REPORT_ARTEFACT, report ?? reportArtefact(redacted, workItem.id));
   const outcome = await emitOutcome(facts);
   log.info('outcome emitted', { result: outcome.result });
 });

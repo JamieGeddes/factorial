@@ -28,6 +28,12 @@ export interface DecideOptions {
   /** Label whose addition turns an issue into work. */
   triggerLabel: string;
   /**
+   * Label whose addition asks for a plan to approve first (#169). The item
+   * records which label it was, as its source type; Intake decides what it
+   * means. Absent: only the trigger label makes work.
+   */
+  planLabel?: string;
+  /**
    * Numeric GitHub user IDs trusted to request work. Both the issue author and
    * whoever applies the label must be in this set, because the issue body
    * becomes the agent's instructions. IDs, not logins, since a login can be
@@ -104,9 +110,11 @@ export function parseIssuesPayload(value: unknown): IssuesWebhookPayload {
 /**
  * Decide what an `issues` webhook means for Factorial.
  *
- * Only the `labeled` action with the trigger label creates work. Creating an
- * issue with the label already applied fires both `opened` and `labeled`, so
- * reacting to `labeled` alone handles both cases exactly once.
+ * Only the `labeled` action with the trigger label or the plan label creates
+ * work. Creating an issue with the label already applied fires both `opened`
+ * and `labeled`, so reacting to `labeled` alone handles both cases exactly
+ * once. The plan label gives the item the `github-issue-plan` source type;
+ * the adapter records which label it was and nothing more.
  */
 export function decideIssueEvent(payload: unknown, options: DecideOptions): IssueDecision {
   const event = parseIssuesPayload(payload);
@@ -114,8 +122,10 @@ export function decideIssueEvent(payload: unknown, options: DecideOptions): Issu
   if (event.action !== 'labeled') {
     return { kind: 'ignore', reason: `ignored action "${event.action}"` };
   }
-  if (event.label?.name !== options.triggerLabel) {
-    return { kind: 'ignore', reason: `ignored label "${event.label?.name ?? ''}"` };
+  const label = event.label?.name;
+  const forPlan = options.planLabel !== undefined && label === options.planLabel;
+  if (label !== options.triggerLabel && !forPlan) {
+    return { kind: 'ignore', reason: `ignored label "${label ?? ''}"` };
   }
   if (!options.allowedUserIds.has(event.sender.id)) {
     return { kind: 'ignore', reason: `label applied by untrusted user "${event.sender.login}"` };
@@ -133,7 +143,7 @@ export function decideIssueEvent(payload: unknown, options: DecideOptions): Issu
     schemaVersion: WORKITEM_SCHEMA_VERSION,
     id,
     source: {
-      type: TRIGGER_TYPES.githubIssue,
+      type: forPlan ? TRIGGER_TYPES.githubIssuePlan : TRIGGER_TYPES.githubIssue,
       id: String(event.issue.number),
       url: event.issue.html_url,
     },

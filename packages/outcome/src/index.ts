@@ -22,7 +22,7 @@ export const OUTCOME_SCHEMA_VERSION = 1 as const;
 export const OUTCOME_EVENT_SOURCE = 'factorial.outcome' as const;
 export const OUTCOME_DETAIL_TYPE = 'Outcome' as const;
 
-export const OUTCOME_RESULTS = ['pr-opened', 'pr-updated', 'no-changes', 'tests-failed', 'invalid-plan', 'failed', 'refused'] as const;
+export const OUTCOME_RESULTS = ['pr-opened', 'pr-updated', 'proposed', 'no-changes', 'tests-failed', 'invalid-plan', 'failed', 'refused'] as const;
 export type OutcomeResult = (typeof OUTCOME_RESULTS)[number];
 
 export const REFUSAL_REASONS = ['not-eligible', 'busy', 'rework-limit', 'covered-by-review'] as const;
@@ -33,7 +33,7 @@ export interface Outcome {
   workItemId: string;
   attempt: number;
   threadKey?: string;
-  route?: 'change' | 'refuse';
+  route?: 'change' | 'propose' | 'refuse';
   source: { type: string; id: string; url: string };
   inReplyTo?: { kind: 'pull-request'; number: number };
   repository: { provider: 'github'; owner: string; name: string };

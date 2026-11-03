@@ -10,6 +10,11 @@
  * valid plan pushes nothing and ends as InvalidPlan; a failed build's work
  * is saved whatever the plan, and a valid plan is kept for the next round.
  *
+ * On the propose route (#169) Collect pushes nothing, ever: a valid plan
+ * with no change to the repository is `proposed`, a builder that changed
+ * anything fails the turn (ProposalChanged), and a failed build saves
+ * nothing, since there is no work to save.
+ *
  * The agent's session is treated as hostile once the agent has run: it may
  * have planted git hooks, configuration or background processes. So no
  * credential ever enters it. The new commits leave the session as a git
@@ -53,6 +58,8 @@ export interface CollectResult {
   incomplete: boolean;
   /** The validated plan, as the state machine carries it to the pull request; absent when the plan was not valid. */
   plan?: PlanDigest;
+  /** On the propose route: the plan is valid and nothing changed, so the turn ends `proposed`. */
+  proposed?: boolean;
   /**
    * The verifiers the target's base branch declares (lib/verify.ts), for the
    * Verify stage: the list, why nothing runs (no settings file: the pull
@@ -261,6 +268,51 @@ async function verifyFor(ctx: WorkContext, salvage: boolean, deps: CollectDeps, 
   return { verify };
 }
 
+/** A builder on the propose route changed the repository: the turn fails, and nothing is pushed. */
+export class ProposalChangedError extends Error {
+  constructor(commitCount: number) {
+    super(`the builder changed the repository on the propose route (${commitCount} commit${commitCount === 1 ? '' : 's'}, counting anything left uncommitted); nothing was pushed`);
+    this.name = 'ProposalChanged';
+  }
+}
+
+/**
+ * The propose route's end: the plan is checked as on any route, and the
+ * repository must be as it was seeded. Nothing leaves the session but its
+ * stored files and the plan; no token is minted.
+ */
+async function collectProposal(
+  agentSession: SessionTarget,
+  ctx: WorkContext,
+  inspection: Inspection,
+  salvage: boolean,
+  log: Logger,
+): Promise<CollectResult> {
+  const { commitCount, itemCommitCount, headSha, summary } = inspection;
+  await storeSessionFiles(agentSession, ctx, log);
+  const plan = await collectPlan(agentSession, ctx, log);
+  const result = { pushed: false, commitCount, itemCommitCount, headSha, summary, incomplete: false };
+  // A failed build has nothing to save and does not continue: the failure is reported.
+  if (salvage) {
+    log.info('proposal build failed; nothing is saved', { commitCount });
+    await stopSessionQuietly(agentSession, log);
+    return result;
+  }
+  if (!plan.ok) {
+    log.error('plan invalid', { salvage, errors: plan.errors });
+    await recordProgress(ctx.workItem.id, 'plan-rejected', { planErrors: plan.errors });
+    throw new InvalidPlanError(plan.errors);
+  }
+  if (commitCount > 0) {
+    log.error('proposal changed the repository', { commitCount });
+    throw new ProposalChangedError(commitCount);
+  }
+  await recordProgress(ctx.workItem.id, 'plan-proposed', { planSteps: plan.plan.steps.length, planSize: planSize(plan.plan) });
+  log.info('plan proposed', { steps: plan.plan.steps.length });
+  await stopSessionQuietly(agentSession, log);
+  return { ...result, plan: planDigest(plan.plan), proposed: true };
+}
+
 export async function collect(input: CollectInput, log: Logger, deps: CollectDeps = { commitIdentity, repositoryToken }): Promise<CollectResult> {
   const { salvage = false, builderSessionId, failure, roundStart, ...ctx } = input;
   const incomplete = salvage && builderIncomplete(failure);
@@ -276,7 +328,9 @@ export async function collect(input: CollectInput, log: Logger, deps: CollectDep
   if (inspection.exitCode !== 0) {
     throw new Error(`Inspecting the session failed (${inspection.exitCode}): ${redactSecrets(inspection.stderr.slice(-2000))}`);
   }
-  const { commitCount, itemCommitCount, headSha, changedPaths, summary } = parseInspection(inspection.stdout);
+  const inspected = parseInspection(inspection.stdout);
+  if (ctx.route === 'propose') return collectProposal(agentSession, ctx, inspected, salvage, log);
+  const { commitCount, itemCommitCount, headSha, changedPaths, summary } = inspected;
   await storeSessionFiles(agentSession, ctx, log);
 
   const plan = await collectPlan(agentSession, ctx, log);

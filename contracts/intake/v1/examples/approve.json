@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "workItemId": "9a1b2c3d-4e5f-4a6b-8c7d-0e1f2a3b4c5d",
+  "route": "change",
+  "turn": "approve",
+  "reason": "Approves the plan proposed by work item 3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d.",
+  "threadKey": "jamiegeddes/factorial#factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "branch": "factorial/3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d",
+  "approves": "3c9e2b14-8f2a-4d6b-b1c7-5e8f9a0b1c2d"
+}

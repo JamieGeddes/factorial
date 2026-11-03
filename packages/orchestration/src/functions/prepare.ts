@@ -12,16 +12,25 @@
  * subagent, so no plan is written here; a later round (ContinueBuild) and the
  * reviewer's session are seeded the same way, from their own lists of providers.
  *
+ * A propose turn (#169) is seeded as a new request with /workspace/route.json
+ * added, so the host plans and changes nothing. A turn that approves a
+ * proposal is seeded with the proposal's stored plan.json, read back from
+ * the artefact store and checked against the hash of the plan its comment
+ * showed, and a plan.md rendered from it; the builder follows it without
+ * planning again, as a later round does.
+ *
  * The session is brand new at this point, so no agent code can be running.
  * The repository reaches it as a git bundle this function fetched with a
  * short-lived read-only token (`lib/repo-seed.ts`): the session never
  * contacts GitHub and no token enters it.
  */
-import { putJsonArtefact } from '@factorial/artefacts';
+import { getTextArtefact, putJsonArtefact } from '@factorial/artefacts';
 import type { GitHubClient } from '@factorial/github-app';
 import { assertWorkItem, type WorkItem, type WorkItemReviewDetail } from '@factorial/workitem';
 
-import type { ReworkTurn, WorkContext } from '../lib/context.ts';
+import { parsePlanJson } from '@factorial/plan';
+
+import type { Proposal, ReworkTurn, WorkContext } from '../lib/context.ts';
 import { unvalidatedId, type RunKey } from '../lib/log.ts';
 import { staged, type ProgressInput } from '../lib/progress.ts';
 import type { Attempt } from '../lib/resume.ts';
@@ -29,7 +38,9 @@ import { repositoryClient } from '../lib/github.ts';
 import { seedRepository, type SeedRepositoryDeps } from '../lib/repo-seed.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
-import { notesProvider, requestProvider, reworkProvider } from '../lib/seed-providers.ts';
+import { approvedPlanMarkdown, canonicalPlanJson, hasHiddenCharacters, planSha256 } from '../lib/proposal-view.ts';
+import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
+import { notesProvider, planProvider, requestProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
 import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
 import { assertGitBranch, assertUuid } from '../lib/shell.ts';
 import { transferKey } from '../lib/transfer.ts';
@@ -63,7 +74,7 @@ export interface SessionParams {
 }
 
 /** What a stage supplies to its providers beyond the item and the checkout. */
-export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive'>>;
+export type SeedExtras = Partial<Pick<SeedContext, 'round' | 'continuing' | 'previousNotes' | 'plan' | 'summary' | 'sensitive' | 'route' | 'approves'>>;
 
 export interface SeededCheckout {
   target: SessionTarget;
@@ -131,8 +142,41 @@ export async function seedSession(
   return { baseCommit, baseBranch, ...(seed.data.reworkPoints ? { reworkPoints: seed.data.reworkPoints } : {}) };
 }
 
-/** What a new session for a change is seeded with, in this order: the numbering of a rework's points depends on it. */
-export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider];
+/**
+ * What a new builder session is seeded with, in this order: the numbering of
+ * a rework's points depends on it. The plan is an approved proposal's; the
+ * route file is a propose turn's. Each gives nothing otherwise.
+ */
+export const PREPARE_PROVIDERS: readonly SeedProvider[] = [requestProvider, notesProvider, reworkProvider, planProvider, routeProvider];
+
+/** The approved proposal's plan cannot be read back as the plan its comment showed: the approval is not built. */
+export class ApprovedPlanMismatchError extends Error {
+  constructor(proposal: Proposal) {
+    super(`the plan proposed by work item ${proposal.workItemId} is not in the artefact store as the valid plan its comment showed`);
+    this.name = 'ApprovedPlanMismatch';
+  }
+}
+
+/**
+ * The plan a proposal stored, checked against what was approved: the
+ * plan.json its comment showed, by hash, and valid. Anything else is
+ * refused rather than built. The build is given the validated plan
+ * re-serialised, never the stored text, so it reads exactly the parsed plan
+ * that was shown. The planner's plan.md is not given to it either, since
+ * the comment may not have shown all of it: plan.md is the orchestrator's
+ * rendering of plan.json, the text the approver read.
+ */
+export function checkApprovedPlan(proposal: Proposal, json: string | undefined): { json: string; markdown: string } {
+  if (json === undefined || planSha256(json) !== proposal.planSha256) throw new ApprovedPlanMismatchError(proposal);
+  const parsed = parsePlanJson(json);
+  if (!parsed.ok || hasHiddenCharacters(parsed.value)) throw new ApprovedPlanMismatchError(proposal);
+  return { json: canonicalPlanJson(parsed.value), markdown: approvedPlanMarkdown(parsed.value, proposal.workItemId) };
+}
+
+async function approvedPlan(proposal: Proposal): Promise<{ json: string; markdown: string }> {
+  const json = await getTextArtefact(proposal.artefactPrefix, 'plan/plan.json', MAX_PLAN_ARTEFACT_BYTES);
+  return checkApprovedPlan(proposal, json?.truncated ? undefined : json?.text);
+}
 
 const prepareKey = (input: PrepareInput): RunKey => ({ workItemId: unvalidatedId(input.workItem) });
 
@@ -141,11 +185,12 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
   const workItem = input.workItem;
   assertUuid(workItem.id, 'WorkItem id');
   const { intake } = input;
-  if (intake.route !== 'change') throw new Error(`Prepare reached for route ${intake.route}`);
-  const { attempt, artefactPrefix: prefix, resumedFrom, rework } = intake;
+  if (intake.route === 'refuse') throw new Error(`Prepare reached for route ${intake.route}`);
+  const { route, attempt, artefactPrefix: prefix, resumedFrom, rework, approves } = intake;
   const log = stageLog.with({ attempt });
 
   const branch = assertGitBranch(intake.branch, 'work branch');
+  const plan = approves ? await approvedPlan(approves) : undefined;
   const { baseCommit, baseBranch, reworkPoints: points } = await seedSession({
     providers: PREPARE_PROVIDERS,
     role: 'builder',
@@ -155,6 +200,7 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     stage: 'prepare',
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(rework ? { rework } : {}),
+    extras: { route, ...(plan ? { plan } : {}), ...(approves ? { approves: approves.workItemId } : {}) },
   });
   await handOverWorkspace(sessionTarget(workItem.id, 'builder'));
 
@@ -162,7 +208,9 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     branch,
     baseSha: baseCommit,
     factorialVersion: input.factorialVersion,
+    route,
     ...(resumedFrom ? { resumedFromWorkItemId: resumedFrom.workItemId } : {}),
+    ...(approves ? { approves: approves.workItemId } : {}),
   });
 
   await recordProgress(workItem.id, 'prepared', {
@@ -172,7 +220,7 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     ...(rework ? { reworkOf: { previousWorkItemId: rework.previousWorkItemId, prNumber: rework.pullRequest.number } } : {}),
     ...(resumedFrom ? { resumedFrom: resumedFrom.workItemId } : {}),
   });
-  log.info('session prepared', { branch, baseBranch, threadKey: intake.threadKey, rework: rework !== undefined, resumedFrom: resumedFrom?.workItemId });
+  log.info('session prepared', { branch, baseBranch, route, threadKey: intake.threadKey, rework: rework !== undefined, resumedFrom: resumedFrom?.workItemId, approves: approves?.workItemId });
 
   return {
     workItem,
@@ -187,5 +235,7 @@ export const handler = staged('prepare', prepareKey, {}, async (input, stageLog)
     ...(resumedFrom ? { resumedFrom } : {}),
     ...(points ? { reworkPoints: pointOrigins(points) } : {}),
     ...(rework ? { rework } : {}),
+    route,
+    ...(approves ? { approves } : {}),
   };
 });

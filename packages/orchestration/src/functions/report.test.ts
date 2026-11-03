@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 
 import type { WorkContext } from '../lib/context.ts';
@@ -7,12 +8,14 @@ import { builderIncomplete } from '../lib/incomplete.ts';
 
 import { reportMessage as render, savedWorkNote as renderNote } from '../reporters/github/messages.ts';
 
+import type { ReportStatus } from '../lib/report-file.ts';
+
 import { invalidPlanProblems, outcomeFacts, reportArtefact, reportFacts, type ReportInput } from './report.ts';
 
 const repository = { owner: 'JamieGeddes', name: 'factorial' };
 
 /** What the GitHub reporter says for a Report input: the facts Report stores, worded as the reporter words them. */
-const reportMessage = (input: ReportInput & { sessionIdHint?: string }): string => render(reportFacts(input, input.sessionIdHint), repository);
+const reportMessage = (input: ReportInput & { status: ReportStatus; sessionIdHint?: string }): string => render(reportFacts(input, input.sessionIdHint), repository);
 const savedWorkNote = (input: Pick<ReportInput, 'ctx' | 'saved' | 'workItem'>): string => renderNote(reportFacts({ status: 'failed', ...input }), repository);
 
 const ctx: WorkContext = {
@@ -279,6 +282,55 @@ describe('the outcome Report emits', () => {
     assert.equal(facts.attempt, 1);
     assert.equal(facts.artefactPrefix, `${ctx.workItem.id}/1/`);
     assert.equal(facts.route, undefined);
+  });
+
+  it('ends a proposal on the propose route, with its branch and no saved work', () => {
+    const facts = outcomeFacts({ status: 'proposed', ctx: { ...ctx, route: 'propose' } }, ctx.workItem, undefined);
+    assert.equal(facts.result, 'proposed');
+    assert.equal(facts.route, 'propose');
+    assert.equal(facts.branch, ctx.branch);
+    assert.equal(facts.savedWork, undefined);
+    assert.equal(facts.pullRequest, undefined);
+  });
+
+  describe('a proposal', () => {
+    const input = { status: 'proposed' as const, ctx: { ...ctx, route: 'propose' as const } };
+    const step = (id: string, description: string) => ({ id, description, files: ['src/a.ts'], verification: 'npm test passes' });
+    const planJson = (steps: ReturnType<typeof step>[]) =>
+      JSON.stringify({ schemaVersion: 1, summary: 'Rename the helper.', steps, tests: { run: ['npm test'], add: [] }, risks: [], openQuestions: [] });
+
+    it('shows the approver plan.json\'s steps, whatever plan.md says, and binds the approval to plan.json\'s hash', () => {
+      const json = planJson([step('rename', 'Rename the helper and ping @someone.')]);
+      const record = reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n\nSomething harmless.\n' });
+      assert.equal(record.outcome, 'proposed');
+      assert.equal(record.delivery?.kind, 'proposal');
+      if (record.delivery?.kind !== 'proposal') return;
+      const { proposal } = record.delivery;
+      assert.match(proposal.steps, /^```text\n/);
+      assert.match(proposal.steps, /Step 1: rename\n  Rename the helper and ping @\u200bsomeone\./);
+      assert.match(proposal.steps, /  Files:\n    - src\/a\.ts/);
+      assert.match(proposal.steps, /Commands run once the change is made:\n  - npm test/);
+      assert.doesNotMatch(proposal.steps, /harmless/);
+      assert.equal(proposal.planSha256, createHash('sha256').update(json).digest('hex'));
+      assert.equal(proposal.plan, '# Plan\n\nSomething harmless.\n');
+      assert.equal(proposal.branch, ctx.branch);
+    });
+
+    it('is not proposed when its steps cannot be shown whole', () => {
+      const json = planJson(Array.from({ length: 15 }, (_, i) => step(`step-${i}`, 'x '.repeat(1990))));
+      assert.throws(() => reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n' }), (error: Error) => error.name === 'ProposalTooLarge');
+    });
+
+    it('is not proposed when its plan holds a hidden character, even one written as an escape', () => {
+      const json = planJson([step('rename', 'Rename it.HIDE')]).replace('HIDE', '\\u2066');
+      assert.ok(json.includes('\\u2066'));
+      assert.throws(() => reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n' }), (error: Error) => error.name === 'ProposalHiddenText');
+    });
+
+    it('is refused without its plan, or with an invalid one', () => {
+      assert.throws(() => reportArtefact(input, ctx.workItem.id), /with its plan/);
+      assert.throws(() => reportArtefact(input, ctx.workItem.id, { json: '{}', markdown: '# Plan\n' }), /not a valid plan/);
+    });
   });
 
   it('stores the facts the reporter words, never the cause', () => {

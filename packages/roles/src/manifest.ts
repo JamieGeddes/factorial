@@ -1,5 +1,7 @@
 import type { WorkItem } from '@factorial/workitem';
 
+import type { SessionRoute } from './route.ts';
+
 /** A changed file the orchestrator flagged for care, and why. */
 export interface SensitivePath {
   path: string;
@@ -13,6 +15,10 @@ export interface FirstMessageOptions {
   round?: number;
   /** Whether this attempt resumes an earlier one's branch. */
   resumed?: boolean;
+  /** The route Intake chose, from the ledger row: `propose` plans and changes nothing (#169). */
+  route?: SessionRoute;
+  /** For a turn that approves a proposed plan, the work item that proposed it. */
+  approves?: string;
 }
 
 /** A model a role uses beyond its main loop, read from `FACTORIAL_<PURPOSE>_MODEL` on the Runtime version. */

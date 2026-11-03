@@ -81,7 +81,7 @@ const COMMAND_START = String.raw`(?:^|[\n;&|(\`]|\$\()\s*(?:(?:xargs|sudo|env)(?
  * inside quotes. Matched against the command with quoted text removed, so a
  * search for `git commit` is not a commit.
  */
-const REVIEWER_DENIED_COMMANDS: RegExp[] = [
+export const REVIEWER_DENIED_COMMANDS: readonly RegExp[] = [
   new RegExp(`${GIT}(?:commit|checkout|switch|reset|restore|stash|add|rm|mv|apply|am|rebase|merge|cherry-pick|revert|clean)\\b`),
   /\b(?:npm|npx|pnpm|yarn|pip|pip3)\s+(?:install|i|ci|add|uninstall|remove)\b/,
   new RegExp(`${COMMAND_START}(?:tee|rm|mv|cp|touch|mkdir|rmdir|ln|chmod|chown|truncate|dd)(?:\\s|$)`),

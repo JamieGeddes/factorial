@@ -162,6 +162,13 @@ describe('the started notice: which events it acts on', () => {
     ]);
   });
 
+  it('says a plan will follow on an issue labelled for a plan', async () => {
+    const h = harness();
+    await handleEvent(progressEvent(progress({ source: { type: 'github-issue-plan', url: issueUrl } })), h.deps);
+    assert.equal(h.calls.at(-1), `comment JamieGeddes/factorial#205 ${startedComment(ID, 'github-issue-plan')}`);
+    assert.match(startedComment(ID, 'github-issue-plan'), /started planning this issue/);
+  });
+
   it('gives a rework turn nothing: Intake already reacts', async () => {
     for (const type of ['github-pull-request', 'github-pull-request-review', 'github-pull-request-review-comment', 'github-pull-request-comment']) {
       const h = harness();
@@ -245,6 +252,8 @@ describe('where an outcome is told', () => {
     assert.equal(commentTarget(example('pr-updated.json')), 230);
     assert.equal(commentTarget(example('refused.json')), 230);
     assert.equal(commentTarget(example('pr-opened.json')), 165);
+    // An issue labelled for a plan is the same issue.
+    assert.equal(commentTarget(example('proposed.json')), 169);
   });
 
   it('nowhere for a source that is neither', () => {
@@ -334,6 +343,35 @@ describe('delivering an outcome', () => {
     const [comment] = comments(h);
     assert.match(comment ?? '', /^comment JamieGeddes\/factorial#165 Factorial's builder reached its iteration or time limit in 3 sessions/);
     assert.match(comment ?? '', /\(3 commits\) was saved to \[`factorial\/x`\]\(https:\/\/github\.com\/JamieGeddes\/factorial\/tree\/factorial\/x\)/);
+  });
+
+  const proposal = (plan: string, steps = '```text\nStep 1: rename\n  Rename the helper.\n```') => ({ steps, planSha256: 'a'.repeat(64), plan, branch: 'factorial/x', sessionId: 's1' });
+
+  it('posts the plan an approved build follows whole, and plan.md collapsed as context, mentioning no one', async () => {
+    const h = harness();
+    const outcome = example('proposed.json');
+    h.reports.set(outcome.artefactPrefix, reportFile({ kind: 'proposal', proposal: proposal('# Plan\n\nAsk @someone first.\n') }));
+    await handleEvent(outcomeEvent(outcome), h.deps);
+    const [comment] = comments(h);
+    assert.match(comment ?? '', /^comment JamieGeddes\/factorial#169 Factorial proposes the plan below and has changed nothing/);
+    assert.match(comment ?? '', /\*\*The plan an approved build follows\*\* \(plan\.json, shown literally\):\n\n```text\nStep 1: rename\n  Rename the helper\.\n```/);
+    assert.match(comment ?? '', /<summary>The planner's notes \(plan\.md\): context only, not given to the build/);
+    assert.match(comment ?? '', /@​someone/);
+  });
+
+  it('keeps the steps whole and cuts only plan.md to fit the comment', () => {
+    const steps = `1. \`big\`: ${'word '.repeat(8000)}end-of-steps`;
+    const plan = planDelivery(example('proposed.json'), { kind: 'proposal', proposal: proposal(`# Plan\n${'note '.repeat(20_000)}`, steps) });
+    assert.ok(plan);
+    assert.match(plan.body, /end-of-steps/);
+    assert.ok(plan.body.length < 61_000);
+  });
+
+  it('refuses a proposal without its steps', async () => {
+    const h = harness();
+    const outcome = example('proposed.json');
+    h.reports.set(outcome.artefactPrefix, '{"outcome":"proposed","reason":"y","delivery":{"kind":"proposal","proposal":{"plan":"p","planSha256":"a","branch":"b","sessionId":"s"}}}');
+    await assert.rejects(handleEvent(outcomeEvent(outcome), h.deps), /proposal\.steps/);
   });
 
   it('caps what the agent said and stops it mentioning anyone', () => {

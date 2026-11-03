@@ -5,6 +5,7 @@
 import type { WorkItem } from '@factorial/workitem';
 
 import type { SensitivePath } from './manifest.ts';
+import type { SessionRoute } from './route.ts';
 
 /**
  * Whether the item is a turn on a pull request (`inReplyTo`, #163). The
@@ -24,10 +25,30 @@ export function reworkInstructions(): string[] {
   ];
 }
 
-/** The user message that starts the builder's session. The system prompt is the Runtime version's. */
-export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: string, round = 1, resumed = false): string {
-  const isRework = continuesPullRequest(workItem);
+/**
+ * The instructions for a propose turn (#169), in place of the build's: plan,
+ * change nothing. The host closes every tool once the plan is valid, so the
+ * prompt and the policy say the same thing.
+ */
+export function proposalInstructions(): string[] {
   return [
+    'This is a proposal: the requester asked for a plan to approve before anything is built. Run the plan subagent, which writes /workspace/plan.json and /workspace/plan.md, as your instructions describe, and check the plan against the Task section of /workspace/notes.md.',
+    'Change nothing in the repository: no edits, no new files and no commits, and do not write /workspace/summary.md. The plan is posted on the issue for the requester to approve, and a later session builds it as written.',
+    'Once /workspace/plan.json is valid, every tool closes: end the session with a one-line reply.',
+  ];
+}
+
+/** The user message that starts the builder's session. The system prompt is the Runtime version's. */
+export function buildPrompt(
+  workItem: WorkItem,
+  branch: string,
+  baseBranch: string,
+  round = 1,
+  resumed = false,
+  turn: { route?: SessionRoute; approves?: string } = {},
+): string {
+  const isRework = continuesPullRequest(workItem);
+  const head = [
     `# Work item ${workItem.source.id} (${workItem.source.type})`,
     '',
     `Source: ${workItem.source.url}`,
@@ -39,6 +60,17 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
     '',
     workItem.body.trim() || '_No further description was given._',
     '',
+  ];
+  if (turn.route === 'propose') {
+    return [
+      ...head,
+      '---',
+      'The repository is cloned at /workspace/repo and checked out on the branch above. The full work item is at /workspace/workitem.json, and /workspace/notes.md starts with this request under "# Task".',
+      ...proposalInstructions(),
+    ].join('\n');
+  }
+  return [
+    ...head,
     ...(isRework ? ['', ...reworkInstructions()] : []),
     '',
     '---',
@@ -52,6 +84,9 @@ export function buildPrompt(workItem: WorkItem, branch: string, baseBranch: stri
       : []),
     ...(round > 1
       ? [`This is round ${round}: an earlier session did part of the work. Read the "# Continuing (round ${round})" section at the end of /workspace/notes.md first, and do what it says before changing anything.`]
+      : []),
+    ...(turn.approves
+      ? [`The plan in /workspace/plan.json and /workspace/plan.md was proposed by work item ${turn.approves} and approved by the requester. Follow it as it is: do not run the plan subagent.`]
       : []),
     'Plan before changing any code: unless /workspace/plan.json already exists from an earlier round, run the plan subagent, which writes /workspace/plan.json and /workspace/plan.md, as your instructions describe. Then follow its `steps` in order, by `id`; where plan.json and plan.md disagree, plan.json wins, and note the disagreement under "# Plan" in /workspace/notes.md. Re-read the Task section before each commit and before writing the summary, checking the work against it.',
     'When you have finished, make sure everything is committed and write /workspace/summary.md as described in your instructions, including a "## Plan steps" section: one line per plan step, each starting with the step\'s `id` from plan.json, then done, skipped or changed, and why for any not done as planned. Use the summary.md headings and limits from your instructions.',

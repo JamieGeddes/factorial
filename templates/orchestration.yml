@@ -1025,6 +1025,11 @@ Resources:
               Effect: Allow
               Action: dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
+            # An approval's session is seeded with the plan.json its proposal showed (#169); plan.md is rendered from it.
+            - Sid: ReadPlanArtefacts
+              Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
         - !Ref SessionCommandPolicy
         - !Ref GitHubAppPolicy
         - !Ref WorkArtefactsWritePolicy
@@ -1294,6 +1299,13 @@ Resources:
                 - dynamodb:GetItem
                 - dynamodb:UpdateItem
               Resource: !GetAtt WorkItemsTable.Arn
+            # A proposal's plan (#169): plan.json's steps and plan.md go into its report.json for the reporter to post, and plan.json's hash binds the approval.
+            - Sid: ReadProposedPlan
+              Effect: Allow
+              Action: s3:GetObject
+              Resource:
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.json
+                - !Sub ${WorkArtefactsBucket.Arn}/*/plan/plan.md
         - !Ref WorkArtefactsWritePolicy
         - !Ref ProgressEventsPolicy
         - !Ref OutcomeEventsPolicy
@@ -1691,8 +1703,8 @@ Resources:
             },
             "Route": {
               "Type": "Choice",
-              "Comment": "The route Intake chose, from the enum in contracts/intake/v1. Anything but change runs nothing further.",
-              "Choices": [ { "Condition": "{% $intake.route = 'change' %}", "Next": "Prepare" } ],
+              "Comment": "The route Intake chose, from the enum in contracts/intake/v1. change and propose both start at Prepare (propose seeds the route for the host, and Collect ends it); refuse runs nothing further.",
+              "Choices": [ { "Condition": "{% $intake.route = 'change' or $intake.route = 'propose' %}", "Next": "Prepare" } ],
               "Default": "NotAdmitted"
             },
             "Prepare": {
@@ -1832,8 +1844,9 @@ Resources:
             },
             "HasChanges": {
               "Type": "Choice",
-              "Comment": "A pushed change is verified by the checks its target's base branch declares in .factorial/verifiers.json (Collect's verify). No file: it goes to review unverified, and its pull request says so. An invalid file ends the turn, so a typo cannot remove the gate.",
+              "Comment": "A proposal (the propose route, a valid plan and nothing changed) is reported with its plan. A pushed change is verified by the checks its target's base branch declares in .factorial/verifiers.json (Collect's verify). No file: it goes to review unverified, and its pull request says so. An invalid file ends the turn, so a typo cannot remove the gate.",
               "Choices": [
+                { "Condition": "{% $collect.proposed = true %}", "Next": "ReportProposed" },
                 { "Condition": "{% $collect.pushed = true and $exists($collect.verify.invalid) %}", "Next": "VerifyUnconfigured" },
                 { "Condition": "{% $collect.pushed = true and $exists($collect.verify.skipped) %}", "Next": "SkipVerify" },
                 { "Condition": "{% $collect.pushed = true %}", "Next": "Verify" }
@@ -2078,6 +2091,29 @@ Resources:
               "Next": "NoChanges"
             },
             "NoChanges": { "Type": "Succeed", "Comment": "The agent made no changes; the outcome tells the requester." },
+            "ReportProposed": {
+              "Type": "Task",
+              "Comment": "End a propose turn: record it proposed, store its plan in report.json and emit the outcome, which the reporter posts for approval. Nothing was pushed.",
+              "Resource": "arn:aws:states:::lambda:invoke",
+              "Arguments": {
+                "FunctionName": "${ReportFunctionAlias}",
+                "Payload": { "status": "proposed", "ctx": "{% $ctx %}", "progress": { "stage": "{% $states.context.State.Name %}", "round": "{% $buildRound %}" } }
+              },
+              "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "status": "proposed" },
+              "Retry": [
+                {
+                  "ErrorEquals": ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException", "Lambda.TooManyRequestsException"],
+                  "IntervalSeconds": 2,
+                  "MaxAttempts": 3,
+                  "BackoffRate": 2
+                }
+              ],
+              "Catch": [
+                { "ErrorEquals": ["States.ALL"], "Assign": { "failure": "{% $states.errorOutput %}" }, "Output": { "workItemId": "{% $ctx.workItem.id %}", "attempt": "{% $ctx.attempt %}", "error": "{% $states.errorOutput %}" }, "Next": "ReportFailure" }
+              ],
+              "Next": "Proposed"
+            },
+            "Proposed": { "Type": "Succeed", "Comment": "A plan was proposed and posted for approval; the trigger label on the issue approves it, as a new turn." },
             "ReportTestsFailed": {
               "Type": "Task",
               "Resource": "arn:aws:states:::lambda:invoke",
