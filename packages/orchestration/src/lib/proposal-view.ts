@@ -28,8 +28,42 @@ export function planSha256(json: string): string {
   return createHash('sha256').update(json, 'utf8').digest('hex');
 }
 
-/** Characters that render as nothing or reorder text: zero-width, bidirectional controls, soft hyphen, BOM, and C0/C1 controls other than newline and tab. */
-const HIDDEN = /[­؜᠎​-‏‪-‮⁠-⁤⁦-⁩﻿\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+/**
+ * Characters that render as nothing, render differently from what they are,
+ * or reorder text: format characters (zero-width, bidirectional controls,
+ * soft hyphen, BOM, tag characters), controls other than newline and tab,
+ * private-use and unassigned code points, variation selectors and the
+ * Hangul fillers. Written as escapes, so this file holds none of them.
+ */
+const HIDDEN_SOURCE = String.raw`(?![\n\t])[\p{Cf}\p{Cc}\p{Co}\p{Cn}\u{FE00}-\u{FE0F}\u{E0100}-\u{E01EF}\u{115F}\u{1160}\u{3164}\u{FFA0}]`;
+const HIDDEN = new RegExp(HIDDEN_SOURCE, 'gu');
+const HAS_HIDDEN = new RegExp(HIDDEN_SOURCE, 'u');
+
+/** Every string in a parsed value, keys included: what the build reads, escapes decoded. */
+function strings(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(strings);
+  if (typeof value === 'object' && value !== null) return Object.entries(value).flatMap(([key, v]) => [key, ...strings(v)]);
+  return [];
+}
+
+/** Whether any text in the plan holds a hidden character: such a plan is neither proposed nor built, so what is shown is all there is. */
+export function hasHiddenCharacters(plan: Plan): boolean {
+  return strings(plan).some((text) => HAS_HIDDEN.test(text));
+}
+
+/** The plan.json an approved build is given: the validated plan re-serialised, so it reads exactly as the parsed plan that was shown (no duplicate keys, no escapes). */
+export function canonicalPlanJson(plan: Plan): string {
+  return `${JSON.stringify(plan, null, 2)}\n`;
+}
+
+/** The plan holds hidden characters, so it cannot be shown as it is and is not proposed. */
+export class ProposalHiddenTextError extends Error {
+  constructor() {
+    super('the plan holds invisible, bidirectional or control characters, so it cannot be shown as it is; nothing is proposed');
+    this.name = 'ProposalHiddenText';
+  }
+}
 
 /** Agent text as it is shown: hidden characters removed, line endings unified, mentions broken. */
 export function visible(text: string): string {

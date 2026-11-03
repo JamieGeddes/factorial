@@ -15,7 +15,7 @@ import { emitOutcome, type OutcomeFacts } from '../lib/outcome.ts';
 import { stageError, staged, stepError, type ProgressInput, type StagePolicy } from '../lib/progress.ts';
 import { REPORT_ARTEFACT, type ProposalFacts, type ReportFacts, type ReportFile, type ReportStatus } from '../lib/report-file.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
-import { PROPOSED_STEPS_CHARS, ProposalTooLargeError, planSha256, proposedSteps } from '../lib/proposal-view.ts';
+import { PROPOSED_STEPS_CHARS, ProposalHiddenTextError, ProposalTooLargeError, hasHiddenCharacters, planSha256, proposedSteps } from '../lib/proposal-view.ts';
 import { parsePlanJson } from '@factorial/plan';
 import { attemptRecord, recordProgress, type AttemptRecord } from '../lib/table.ts';
 import { testResultArtefact } from '../lib/test-result.ts';
@@ -147,6 +147,7 @@ export function proposalFacts(input: Pick<ReportInput, 'ctx'>, plan: ProposedPla
   if (!input.ctx) throw new Error('a proposal is reported only after Prepare');
   const parsed = parsePlanJson(plan.json);
   if (!parsed.ok) throw new Error(`the proposed plan.json is not a valid plan: ${parsed.errors.slice(0, 3).join('; ')}`);
+  if (hasHiddenCharacters(parsed.value)) throw new ProposalHiddenTextError();
   const steps = proposedSteps(parsed.value);
   if (steps.length > PROPOSED_STEPS_CHARS) throw new ProposalTooLargeError(steps.length);
   return { steps, planSha256: planSha256(plan.json), plan: plan.markdown, branch: input.ctx.branch, sessionId: input.ctx.sessionId };

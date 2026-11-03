@@ -310,6 +310,12 @@ describe('the outcome Report emits', () => {
       assert.throws(() => reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n' }), (error: Error) => error.name === 'ProposalTooLarge');
     });
 
+    it('is not proposed when its plan holds a hidden character, even one written as an escape', () => {
+      const json = planJson([step('rename', 'Rename it.HIDE')]).replace('HIDE', '\\u2066');
+      assert.ok(json.includes('\\u2066'));
+      assert.throws(() => reportArtefact(input, ctx.workItem.id, { json, markdown: '# Plan\n' }), (error: Error) => error.name === 'ProposalHiddenText');
+    });
+
     it('is refused without its plan, or with an invalid one', () => {
       assert.throws(() => reportArtefact(input, ctx.workItem.id), /with its plan/);
       assert.throws(() => reportArtefact(input, ctx.workItem.id, { json: '{}', markdown: '# Plan\n' }), /not a valid plan/);

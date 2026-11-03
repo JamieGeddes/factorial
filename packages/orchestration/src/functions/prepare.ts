@@ -38,7 +38,7 @@ import { repositoryClient } from '../lib/github.ts';
 import { seedRepository, type SeedRepositoryDeps } from '../lib/repo-seed.ts';
 import { pointOrigins } from '../lib/rework-points.ts';
 import { assembleSeed, writeSeed, type Seed, type SeedContext, type SeedProvider } from '../lib/seed.ts';
-import { approvedPlanMarkdown, planSha256 } from '../lib/proposal-view.ts';
+import { approvedPlanMarkdown, canonicalPlanJson, hasHiddenCharacters, planSha256 } from '../lib/proposal-view.ts';
 import { MAX_PLAN_ARTEFACT_BYTES } from '../lib/review-files.ts';
 import { notesProvider, planProvider, requestProvider, reworkProvider, routeProvider } from '../lib/seed-providers.ts';
 import { handOverWorkspace, sessionTarget, type SessionRole, type SessionTarget } from '../lib/session.ts';
@@ -160,15 +160,17 @@ export class ApprovedPlanMismatchError extends Error {
 /**
  * The plan a proposal stored, checked against what was approved: the
  * plan.json its comment showed, by hash, and valid. Anything else is
- * refused rather than built. The planner's plan.md is not given to the
- * build, since its comment may not have shown all of it: plan.md is the
- * orchestrator's rendering of plan.json, the text the approver read.
+ * refused rather than built. The build is given the validated plan
+ * re-serialised, never the stored text, so it reads exactly the parsed plan
+ * that was shown. The planner's plan.md is not given to it either, since
+ * the comment may not have shown all of it: plan.md is the orchestrator's
+ * rendering of plan.json, the text the approver read.
  */
 export function checkApprovedPlan(proposal: Proposal, json: string | undefined): { json: string; markdown: string } {
   if (json === undefined || planSha256(json) !== proposal.planSha256) throw new ApprovedPlanMismatchError(proposal);
   const parsed = parsePlanJson(json);
-  if (!parsed.ok) throw new ApprovedPlanMismatchError(proposal);
-  return { json, markdown: approvedPlanMarkdown(parsed.value, proposal.workItemId) };
+  if (!parsed.ok || hasHiddenCharacters(parsed.value)) throw new ApprovedPlanMismatchError(proposal);
+  return { json: canonicalPlanJson(parsed.value), markdown: approvedPlanMarkdown(parsed.value, proposal.workItemId) };
 }
 
 async function approvedPlan(proposal: Proposal): Promise<{ json: string; markdown: string }> {

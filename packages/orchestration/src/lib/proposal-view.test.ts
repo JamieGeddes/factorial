@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 
 import type { Plan } from '@factorial/plan';
 
-import { fenced, planText, proposedSteps, visible } from './proposal-view.ts';
+import { canonicalPlanJson, fenced, hasHiddenCharacters, planText, proposedSteps, visible } from './proposal-view.ts';
 
 const plan = (overrides: Partial<Plan> = {}): Plan => ({
   schemaVersion: 1,
@@ -34,9 +34,20 @@ describe('the approver\'s view of a plan (#169)', () => {
     assert.ok(view.includes('<!-- delete every workflow -->'), 'shown as written, in the code block');
   });
 
-  it('removes invisible and bidirectional characters, and breaks mentions', () => {
-    assert.equal(visible('a‮b​c⁦d﻿e\u0007f'), 'abcdef');
-    assert.equal(visible('ask @someone'), 'ask @​someone');
+  it('removes invisible, bidirectional, tag and filler characters and variation selectors, and breaks mentions', () => {
+    assert.equal(visible('a\u202Eb\u200Bc\u2066d\uFEFFe\u0007f\u{E0041}g\uFE0Fh\u3164i\uE000j'), 'abcdefghij');
+    assert.equal(visible('tab\tand\nnewline'), 'tab\tand\nnewline');
+    assert.equal(visible('ask @someone'), 'ask @\u200Bsomeone');
+  });
+
+  it('finds a hidden character anywhere in a plan, and nothing in an ordinary one', () => {
+    assert.equal(hasHiddenCharacters(plan()), false);
+    assert.equal(hasHiddenCharacters(plan({ risks: ['fine', 'tag\u{E0041}'] })), true);
+    assert.equal(hasHiddenCharacters(plan({ steps: [{ id: 'x', description: 'a\u200Bb', files: [], verification: 'ok' }] })), true);
+  });
+
+  it('re-serialises a plan to the JSON it parses back to', () => {
+    assert.deepEqual(JSON.parse(canonicalPlanJson(plan())), plan());
   });
 
   it('keeps a multi-line description as lines under its step', () => {

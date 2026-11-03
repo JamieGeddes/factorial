@@ -282,9 +282,22 @@ describe('checkApprovedPlan (#169)', () => {
 
   it('seeds the plan.json the proposal showed, with a plan.md rendered from it rather than the planner\'s', () => {
     const seeded = checkApprovedPlan(proposal, json);
-    assert.equal(seeded.json, json);
+    assert.deepEqual(JSON.parse(seeded.json), JSON.parse(json));
     assert.match(seeded.markdown, /^# Approved plan\n/);
     assert.match(seeded.markdown, /Step 1: rename\n  Rename it\./);
+  });
+
+  it('gives the build the parsed plan re-serialised, not the stored text: a duplicate key reads as what was shown', () => {
+    const duplicated = json.replace('"summary":"Rename the helper."', '"summary":"Hidden.","summary":"Rename the helper."');
+    assert.notEqual(duplicated, json);
+    const seeded = checkApprovedPlan({ ...proposal, planSha256: planSha256(duplicated) }, duplicated);
+    assert.doesNotMatch(seeded.json, /Hidden/);
+  });
+
+  it('refuses a plan with a hidden character, even one written as an escape', () => {
+    const hidden = json.replace('Rename it.', 'Rename it.\\u202e');
+    assert.notEqual(hidden, json);
+    assert.throws(() => checkApprovedPlan({ ...proposal, planSha256: planSha256(hidden) }, hidden), ApprovedPlanMismatchError);
   });
 
   it('refuses any other plan.json, a missing file or an invalid plan', () => {
